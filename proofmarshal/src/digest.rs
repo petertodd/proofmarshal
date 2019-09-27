@@ -15,12 +15,12 @@ use persist::{Persist, MaybeValid, UninitBytes, Le};
 /// Typed hash digest.
 #[repr(transparent)]
 pub struct Digest<T: ?Sized, D = Sha256Digest> {
-    marker: PhantomData<*const T>,
+    marker: PhantomData<fn(T) -> ()>,
     raw: D,
 }
 
 // A type of cryptographic hash digest.
-pub trait CryptDigest : 'static + Default + Copy + Eq + Ord + hash::Hash + Send + Sync
+pub trait CryptDigest : 'static + Persist + NonZero + Default + Copy + Eq + Ord + hash::Hash + Send + Sync
 {
     const NAME: &'static str;
 
@@ -30,7 +30,7 @@ pub trait CryptDigest : 'static + Default + Copy + Eq + Ord + hash::Hash + Send 
 
 impl<T: ?Sized, D> Digest<T,D> {
     #[inline(always)]
-    pub const fn new(raw: D) -> Self {
+    pub fn new(raw: D) -> Self {
         Self { marker: PhantomData, raw }
     }
 
@@ -164,16 +164,13 @@ impl From<Sha256Digest> for [u8;32] {
     }
 }
 
-#[derive(Debug,Clone,Copy,PartialEq)]
-pub struct Sha256DigestTryFromError;
-
 impl TryFrom<[u8;32]> for Sha256Digest {
-    type Error = Sha256DigestTryFromError;
+    type Error = Sha256DigestValidateError;
 
     #[inline(always)]
     fn try_from(buf: [u8;32]) -> Result<Self, Self::Error> {
-        if buf == [0;32] {
-            Err(Sha256DigestTryFromError)
+        if (buf[0..16] == [0;16]) || (buf[16..32] == [0;16]) {
+            Err(Sha256DigestValidateError)
         } else {
             Ok(unsafe { Sha256Digest::new_unchecked(buf) })
         }
@@ -212,11 +209,13 @@ unsafe impl Persist for Sha256Digest {
 
     #[inline(always)]
     fn validate(maybe: &MaybeValid<Self>) -> Result<&Self, Self::Error> {
-        if maybe[..].iter().all(|x| *x == 0) {
-            Err(Sha256DigestValidateError)
-        } else {
-            unsafe { Ok(maybe.assume_valid()) }
-        }
+        let mut buf = [0;32];
+
+        buf.copy_from_slice(&maybe[..]);
+
+        Sha256Digest::try_from(buf)?;
+
+        unsafe { Ok(maybe.assume_valid()) }
     }
 
     #[inline(always)]
@@ -248,5 +247,29 @@ mod tests {
         assert_eq!(d.to_string(), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 
         assert_eq!(format!("{:?}", d), "Sha256Digest<e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855>");
+    }
+
+    #[test]
+    fn sha256_digest_error() {
+        let buf: [u8;32] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+
+        assert_eq!(Sha256Digest::try_from(buf).unwrap_err(),
+                   Sha256DigestValidateError);
+
+        let buf: [u8;32] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1];
+        assert_eq!(Sha256Digest::try_from(buf).unwrap_err(),
+                   Sha256DigestValidateError);
+
+        let buf: [u8;32] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+                            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+        assert_eq!(Sha256Digest::try_from(buf).unwrap_err(),
+                   Sha256DigestValidateError);
+
+        let buf: [u8;32] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+                            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1];
+        assert_eq!(Sha256Digest::try_from(buf).unwrap().to_string(),
+                   "00000000000000010000000000000001");
     }
 }
