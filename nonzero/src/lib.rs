@@ -34,3 +34,22 @@ unsafe impl<T: ?Sized> NonZero for Box<T> {}
 unsafe impl<T: ?Sized> NonZero for &'_ T {}
 unsafe impl<T: ?Sized> NonZero for &'_ mut T {}
 unsafe impl<T: ?Sized> NonZero for NonNull<T> {}
+
+
+macro_rules! array_impls {
+    ($($N:literal)+) => {
+        $(
+            assert_eq_size!([Box<()>; $N], Option<[Box<()>; $N]>);
+            unsafe impl<T: NonZero> NonZero for [T; $N] {}
+        )+
+    }
+}
+
+// Note how [T;0] is *not* implemented: NonZero types have to actually have some non-zero bytes in
+// them.
+array_impls! {
+        1  2  3  4  5  6  7  8  9
+    10 11 12 13 14 15 16 17 18 19
+    20 21 22 23 24 25 26 27 28 29
+    30 31 32
+}
