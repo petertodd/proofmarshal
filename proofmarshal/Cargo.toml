@@ -8,6 +8,6 @@ edition = "2018"
 
 [dependencies]
 nonzero = { path = "../nonzero" }
-leint = { path = "../leint" }
+persist = { path = "../persist" }
 
 sha2 = "0.8.0"

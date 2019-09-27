@@ -1,10 +1,12 @@
 /// Little-endian integers.
 
 use core::cmp;
-use core::fmt::{self, Display, Debug};
+use core::marker::PhantomData;
+use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::mem;
 use core::num::{
+    NonZeroU8,   NonZeroI8,
     NonZeroU16,  NonZeroI16,
     NonZeroU32,  NonZeroI32,
     NonZeroU64,  NonZeroI64,
@@ -14,19 +16,26 @@ use core::slice;
 
 use nonzero::NonZero;
 
+use super::{Persist, MaybeValid, UninitBytes};
+
 /// A little-endian integer.
 ///
 /// The actual memory representation of a `Le<T>` will be little-endian regardless of platform
 /// endianness.
 #[repr(packed)]
-pub struct Le<T: ToFromLe>(T);
+pub struct Le<T: sealed::ToFromLe>(T);
 
-pub trait ToFromLe
-    : 'static + Copy + Eq + Ord + Display + Debug
-{
-    fn to_le(this: Self) -> Self;
-    fn from_le(le_this: Self) -> Self;
+mod sealed {
+    use super::*;
+
+    pub trait ToFromLe
+        : 'static + Copy + Eq + Ord + fmt::Display + fmt::Debug
+    {
+        fn to_le(this: Self) -> Self;
+        fn from_le(le_this: Self) -> Self;
+    }
 }
+use self::sealed::ToFromLe;
 
 impl<T: ToFromLe> Le<T> {
     #[inline(always)]
@@ -47,13 +56,13 @@ impl<T: ToFromLe> From<T> for Le<T> {
     }
 }
 
-impl<T: ToFromLe> Debug for Le<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+impl<T: ToFromLe> fmt::Debug for Le<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Le({:?})", self.get())
     }
 }
-impl<T: ToFromLe> Display for Le<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+impl<T: ToFromLe> fmt::Display for Le<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&self.get(), f)
     }
 }
@@ -88,22 +97,103 @@ impl<T: ToFromLe> Hash for Le<T> {
     }
 }
 
-unsafe impl<T: NonZero + ToFromLe> NonZero for Le<T> {}
+
 
 macro_rules! impl_ints {
     ( $( $t:ident, )* ) => {
         $(
             impl_tofromle!($t, $t);
+
+            unsafe impl Persist for Le<$t> {
+                type Error = core::convert::Infallible;
+
+                #[inline(always)]
+                fn validate(maybe: &MaybeValid<Self>) -> Result<&Self, Self::Error> {
+                    unsafe { Ok(maybe.assume_valid()) }
+                }
+
+                #[inline(always)]
+                fn write_canonical<'b>(&self, mut dst: UninitBytes<'b, Self>) -> &'b mut [u8] {
+                    let buf = unsafe { slice::from_raw_parts(self as *const _ as *const u8,
+                                                             mem::size_of::<Self>()) };
+                    dst.write_bytes(buf);
+                    dst.done()
+                }
+            }
         )*
     };
 }
+
+unsafe impl<T: NonZero + ToFromLe> NonZero for Le<T> {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NonZeroNumValidateError<T>(PhantomData<T>);
 
 macro_rules! impl_nonzero_ints {
     ( $( $t:ident => $inner:ident; )* ) => {
         $(
             impl_tofromle!($t, $inner);
+
+            unsafe impl Persist for Le<$t> {
+                type Error = NonZeroNumValidateError<$t>;
+
+                #[inline(always)]
+                fn validate(maybe: &MaybeValid<Self>) -> Result<&Self, Self::Error> {
+                    if maybe[..].iter().all(|x| *x == 0) {
+                        Err(NonZeroNumValidateError(PhantomData))
+                    } else {
+                        unsafe { Ok(maybe.assume_valid()) }
+                    }
+                }
+
+                #[inline(always)]
+                fn write_canonical<'b>(&self, mut dst: UninitBytes<'b, Self>) -> &'b mut [u8] {
+                    let buf = unsafe { slice::from_raw_parts(self as *const _ as *const u8,
+                                                             mem::size_of::<Self>()) };
+                    dst.write_bytes(buf);
+                    dst.done()
+                }
+            }
         )*
     };
+}
+
+unsafe impl Persist for NonZeroU8 {
+    type Error = NonZeroNumValidateError<NonZeroU8>;
+
+    #[inline(always)]
+    fn validate(maybe: &MaybeValid<Self>) -> Result<&Self, Self::Error> {
+        if maybe[0] == 0 {
+            Err(NonZeroNumValidateError(PhantomData))
+        } else {
+            unsafe { Ok(maybe.assume_valid()) }
+        }
+    }
+
+    #[inline(always)]
+    fn write_canonical<'b>(&self, mut dst: UninitBytes<'b, Self>) -> &'b mut [u8] {
+        dst.write_bytes([self.get()]);
+        dst.done()
+    }
+}
+
+unsafe impl Persist for NonZeroI8 {
+    type Error = NonZeroNumValidateError<NonZeroI8>;
+
+    #[inline(always)]
+    fn validate(maybe: &MaybeValid<Self>) -> Result<&Self, Self::Error> {
+        if maybe[0] == 0 {
+            Err(NonZeroNumValidateError(PhantomData))
+        } else {
+            unsafe { Ok(maybe.assume_valid()) }
+        }
+    }
+
+    #[inline(always)]
+    fn write_canonical<'b>(&self, mut dst: UninitBytes<'b, Self>) -> &'b mut [u8] {
+        dst.write_bytes([self.get() as u8]);
+        dst.done()
+    }
 }
 
 macro_rules! impl_tofromle {
@@ -209,5 +299,14 @@ mod tests {
         assert_eq!(mem::align_of::<Le<i32>>(),  1);
         assert_eq!(mem::align_of::<Le<i64>>(),  1);
         assert_eq!(mem::align_of::<Le<i128>>(), 1);
+    }
+
+    #[test]
+    fn test() {
+        assert_eq!(Le::new(0x1234_5678_u32).canonical_bytes(),
+                   [0x78, 0x56, 0x34, 0x12]);
+
+        assert_eq!(Le::new(NonZeroU32::new(0x1234_5678_u32).unwrap()).canonical_bytes(),
+                   [0x78, 0x56, 0x34, 0x12]);
     }
 }

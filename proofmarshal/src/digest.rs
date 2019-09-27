@@ -10,7 +10,7 @@ use core::num::NonZeroU128;
 use core::slice;
 
 use nonzero::NonZero;
-use leint::Le;
+use persist::{Persist, MaybeValid, UninitBytes, Le};
 
 /// Typed hash digest.
 #[repr(transparent)]
@@ -92,6 +92,25 @@ impl<T: ?Sized, D: Ord> Ord for Digest<T,D> {
     #[inline]
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.raw.cmp(&other.raw)
+    }
+}
+
+unsafe impl<T: ?Sized, D: Persist> Persist for Digest<T,D> {
+    type Error = D::Error;
+
+    #[inline(always)]
+    fn validate(maybe: &MaybeValid<Self>) -> Result<&Self, Self::Error> {
+        unsafe {
+            Ok(maybe.validate_fields()
+                    .field::<D>()?
+                    .assume_valid())
+        }
+    }
+
+    #[inline(always)]
+    fn write_canonical<'b>(&self, mut dst: UninitBytes<'b, Self>) -> &'b mut [u8] {
+        dst.write(&self.raw);
+        dst.done()
     }
 }
 
@@ -182,6 +201,28 @@ impl fmt::Debug for Sha256Digest {
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Sha256Digest<{}>", self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sha256DigestValidateError;
+
+unsafe impl Persist for Sha256Digest {
+    type Error = Sha256DigestValidateError;
+
+    #[inline(always)]
+    fn validate(maybe: &MaybeValid<Self>) -> Result<&Self, Self::Error> {
+        if maybe[..].iter().all(|x| *x == 0) {
+            Err(Sha256DigestValidateError)
+        } else {
+            unsafe { Ok(maybe.assume_valid()) }
+        }
+    }
+
+    #[inline(always)]
+    fn write_canonical<'b>(&self, mut dst: UninitBytes<'b, Self>) -> &'b mut [u8] {
+        dst.write(self.as_bytes());
+        dst.done()
     }
 }
 
