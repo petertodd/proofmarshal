@@ -1,7 +1,5 @@
 //! Validation
 
-use core::borrow::Borrow;
-
 use crate::commit::Commit;
 
 pub trait Fact {

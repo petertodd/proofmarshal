@@ -1,5 +1,5 @@
 [package]
-name = "proofmarshal"
+name = "testpersist"
 version = "0.1.0"
 authors = ["Peter Todd <pete@petertodd.org>"]
 edition = "2018"
@@ -10,5 +10,3 @@ edition = "2018"
 nonzero = { path = "../nonzero" }
 persist = { path = "../persist" }
 persist_derive = { path = "../persist_derive" }
-
-sha2 = "0.8.0"

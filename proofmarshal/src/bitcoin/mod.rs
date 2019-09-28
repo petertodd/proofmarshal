@@ -1,33 +1,33 @@
-use std::collections::HashSet;
-
 use persist::Le;
+use persist_derive::Persist;
 
 pub mod state;
 
 #[repr(transparent)]
-#[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord)]
+#[derive(Persist,Debug,Clone,Copy,PartialEq,Eq)]
 pub struct Txid([u8;32]);
 
 #[repr(C)]
-#[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord)]
+#[derive(Persist,Debug,Clone,Copy,PartialEq,Eq)]
 pub struct OutPoint {
     txid: Txid,
     vout: Le<u32>,
 }
 
-
 /// A block hash.
-#[derive(Default,Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord)]
+#[repr(C)]
+#[derive(Persist,Default,Debug,Clone,Copy,PartialEq,Eq)]
 pub struct BlockHash([u8;32]);
 
-#[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord)]
+#[repr(C)]
+#[derive(Persist,Debug,Clone,Copy,PartialEq,Eq)]
 pub struct MerkleRoot([u8;32]);
 
 #[repr(C)]
-#[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord)]
+#[derive(Persist,Debug,Clone,Copy,PartialEq,Eq)]
 pub struct BlockHeader {
     version: Le<i32>,
-    prevblock: Option<BlockHash>,
+    prevblock: BlockHash,
     merkleroot: MerkleRoot,
     time: Le<u32>,
     nbits: Le<u32>,

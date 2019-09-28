@@ -1,4 +1,3 @@
-use std::cmp;
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 
@@ -89,11 +88,10 @@ mod tests {
 
     #[test]
     fn test() {
-        let mut state = ChainState::default();
+        let state = ChainState::default();
 
         state.try_extend(BlockHeight::new(10, Default::default())).unwrap();
 
         dbg!(state.bestblock());
-        //dbg!(&state);
     }
 }

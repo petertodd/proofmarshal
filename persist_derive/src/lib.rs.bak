@@ -1,0 +1,25 @@
+extern crate proc_macro;
+
+use proc_macro::TokenStream;
+use quote::quote;
+use syn::{parse_macro_input, DeriveInput};
+
+#[proc_macro_derive(Persist)]
+pub fn impl_persist(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    dbg!(&input);
+
+    let expanded = quote! {};
+
+    TokenStream::from(expanded)
+}
+
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_works() {
+        assert_eq!(2 + 2, 4);
+    }
+}

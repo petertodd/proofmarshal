@@ -2,5 +2,7 @@
 members = [
 	"nonzero",
 	"persist",
+	"persist_derive",
 	"proofmarshal",
+	"testpersist",
 ]
