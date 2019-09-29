@@ -34,6 +34,12 @@ pub unsafe trait Persist : Sized {
 
     fn write_canonical<'b>(&self, dst: UninitBytes<'b, Self>) -> &'b mut [u8];
 
+    fn write_canonical_bytes<'b>(&self, mut buf: impl AsMut<[u8]>) {
+        let mut buf = buf.as_mut();
+        let mut dst = UninitBytes::<Self>::from_bytes(&mut buf);
+        self.write_canonical(dst);
+    }
+
     fn canonical_bytes(&self) -> Vec<u8> {
         let mut r = vec![0; mem::size_of::<Self>()];
 

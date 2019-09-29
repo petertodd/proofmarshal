@@ -1,8 +1,15 @@
 [workspace]
 members = [
 	"nonzero",
+	"sliceinit",
+
+	"verbatim",
+	"verbatim_derive",
+	"verbatim_derive/test",
+
 	"persist",
 	"persist_derive",
-	"proofmarshal",
 	"testpersist",
+
+	"proofmarshal",
 ]

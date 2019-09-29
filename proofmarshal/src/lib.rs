@@ -2,12 +2,8 @@
 
 #![feature(never_type)]
 
-pub mod digest;
+pub mod fact;
 pub mod commit;
-
-pub mod bitcoin;
-
-pub mod maybe;
 
 #[cfg(test)]
 mod tests {
