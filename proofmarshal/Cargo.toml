@@ -13,3 +13,4 @@ persist_derive = { path = "../persist_derive" }
 
 sha2 = "0.8.0"
 hex-literal = "0.2.1"
+static_assertions = "0.3.4"

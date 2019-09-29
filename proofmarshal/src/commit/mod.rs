@@ -1,63 +1,56 @@
 use std::io;
 use std::any::type_name;
 
-mod digest;
-pub use self::digest::Digest;
-
-use crate::fact::{Fact, Valid};
+use crate::digest::Digest;
+use crate::fact::{Fact, Proof};
+use crate::arena::Coerce;
 
 pub trait Commit {
-    type Committed;
-
-    fn commit(&self) -> Digest<Self::Committed>;
+    fn commit(&self) -> Digest;
 }
 
-/// Digests commit to themselves
-impl<T: 'static + ?Sized> Commit for Digest<T> {
-    type Committed = Self;
-    fn commit(&self) -> Digest<Self::Committed> {
-        unimplemented!()
+pub type Commitment<T,A=()> = Proof<Digest<T>, A>;
+
+impl<T,A> Fact<A> for Digest<T>
+where T: Coerce<A>,
+      T::Coerced: Commit,
+{
+    type Evidence = T::Coerced;
+
+    fn derive(value: &T::Coerced) -> Digest<T> {
+        value.commit().cast()
     }
 }
 
-/// References commit to the referenced type.
-impl<T: ?Sized + Commit> Commit for &'_ T {
-    type Committed = T::Committed;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    fn commit(&self) -> Digest<T::Committed> {
-        (**self).commit()
+    /*
+    #[derive(Debug)]
+    struct Block<T,A> {
+        value: Proof<T, A>,
+        prev: Option<Commitment<Self, A>>,
     }
-}
 
-impl<T: ?Sized + Commit> Commit for &'_ mut T {
-    type Committed = T::Committed;
-
-    fn commit(&self) -> Digest<T::Committed> {
-        (**self).commit()
+    impl Commit for Foo {
+        fn commit(&self) -> Digest {
+            Digest::default()
+        }
     }
-}
 
-impl<T: ?Sized + Commit> Commit for Box<T> {
-    type Committed = T::Committed;
-    fn commit(&self) -> Digest<Self::Committed> {
-        (**self).commit()
+    impl<A> Coerce<A> for Foo {
+        type Coerced = Foo;
     }
-}
 
-//#[derive(Debug)]
-pub struct Error<T: ?Sized> {
-    actual: Digest<T>,
-    expected: Digest<T>,
-}
+    #[test]
+    fn test() {
+        let foo = Foo {a: 16, b: 32};
 
-impl<T> Fact for Digest<T> {
-    type Evidence = T;
-    type Context = ();
-    type Error = Error<T>;
+        let mut c: Commitment<Foo> = dbg!(Commitment::from_evidence(foo));
 
-    fn validate_in<'cx>(&self, evidence: &Self::Evidence, _: &'cx Self::Context)
-        -> Result<&Valid<'cx, Self>, Self::Error>
-    {
-        unimplemented!()
+        dbg!(c.unprune());
+        dbg!(c);
     }
+    */
 }
