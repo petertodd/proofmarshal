@@ -4,14 +4,16 @@
 #![feature(maybe_uninit_extra)]
 #![feature(manually_drop_take)]
 
-pub mod arena;
+pub mod ptr;
 
 pub mod digest;
 pub mod fact;
 pub mod commit;
 
+//pub mod collections;
+
 pub mod prelude {
-    pub use super::arena::{Own, Ptr, MutPtr, Alloc};
+    pub use super::ptr::{Ptr,Own,Alloc,TryGet,Get,TryGetMut,GetMut,heap::Heap,Ref,Type};
 }
 
 #[cfg(test)]

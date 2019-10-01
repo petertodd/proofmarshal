@@ -33,19 +33,22 @@ unsafe impl<T: ?Sized> PtrEncode<!> for T {}
 /// It's safe for anything to decode pointers that don't exist.
 unsafe impl<T: ?Sized> PtrDecode<!> for T {}
 
+unsafe impl PtrEncode<()> for () {}
+unsafe impl PtrDecode<()> for () {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn unit() {
-        let encoded = Verbatim::encode(&(), Vec::<u8>::new(), &mut ()).unwrap();
+        let encoded = Verbatim::<!>::encode(&(), Vec::<u8>::new(), &mut ()).unwrap();
         assert_eq!(encoded, &[]);
     }
 
     #[test]
     fn primitives() {
-        let encoded = Verbatim::encode(&42u8, Vec::<u8>::new(), &mut ()).unwrap();
+        let encoded = Verbatim::<!>::encode(&42u8, Vec::<u8>::new(), &mut ()).unwrap();
         assert_eq!(encoded, &[42]);
     }
 }

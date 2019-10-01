@@ -2,6 +2,7 @@
 members = [
 	"nonzero",
 	"sliceinit",
+	"pointee",
 
 	"verbatim",
 	"verbatim_derive",
@@ -12,4 +13,7 @@ members = [
 	"testpersist",
 
 	"proofmarshal",
+	"proofmarshal_derive",
+
+	"tests",
 ]

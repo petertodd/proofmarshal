@@ -6,20 +6,96 @@ use core::task;
 use core::fmt;
 use core::ops::{Deref, DerefMut};
 
-use std::borrow::Cow;
+use std::io;
+
+use crate::prelude::*;
 
 mod lazy;
 use self::lazy::Lazy;
 
-use crate::arena::{Own, Ptr, MutPtr, Load, Alloc};
+/// A fact that can be derived from evidence.
+///
+/// The derivation **must not fail**.
+pub trait Fact<P=()> : Type {
+    type Evidence : Type + Type<P>;
 
-/// A fact that can be directly derived from evidence.
-pub trait Fact<P = ()> : Sized {
-    type Evidence : Load<P>;
-
-    /// It must be always possible to derive the fact from the evidence without any further state.
-    fn derive(evidence: &Self::Evidence) -> Self;
+    fn from_evidence(evidence: &Self::Evidence) -> Self;
 }
+
+/// Computes a `Fact` lazily from (owned) evidence.
+///
+/// Implements `Deref` and `DerefMut` with `T::Evidence` as the `Target`. Mutable access
+/// automatically invalidates the derived fact, which is then lazily recomputed when needed.
+pub struct Cache<T: Fact<P>, P: Ptr = ()> {
+    fact: Lazy<T>,
+    evidence: Own<T::Evidence, P>,
+}
+
+impl<T: Fact<P>, P: Ptr> Cache<T,P> {
+    pub fn new(evidence: Own<T::Evidence, P>) -> Self {
+        Self {
+            evidence,
+            fact: Lazy::uninit(),
+        }
+    }
+}
+
+impl<T: Fact<P>, P: Get> Cache<T,P> {
+    pub fn fact(&self) -> &T {
+        if let Some(r) = self.fact.get() {
+            r
+        } else {
+            /*
+            let evidence = self.evidence.get();
+
+            let fact = T::from_evidence(own.get().deref());
+
+            // It's possible the set will fail if another thread is co-currently dereferencing this
+            // fact. That's ok and can be ignored.
+            let _ = self.fact.try_set(fact);
+
+            self.fact.get().expect("Derived fact available after setting it")
+            */
+            unimplemented!()
+        }
+    }
+}
+
+impl<T: Fact<P>, P: Ptr> Deref for Cache<T,P> {
+    type Target = Own<T::Evidence, P>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.evidence
+    }
+}
+
+impl<T: Fact<P>, P: Ptr> DerefMut for Cache<T,P> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let _ = self.fact.take();
+        &mut self.evidence
+    }
+}
+
+impl<T: Fact<P>, P: Get, Q> verbatim::Verbatim<Q> for Cache<T,P>
+where T: verbatim::Verbatim<Q>,
+      Own<T::Evidence, P>: verbatim::Verbatim<Q>,
+{
+    type Error = !;
+    const LEN: usize = <Own<T::Evidence, P> as verbatim::Verbatim<Q>>::LEN + T::LEN;
+    const NONZERO_NICHE: bool = <Own<T::Evidence, P> as verbatim::Verbatim<Q>>::NONZERO_NICHE || T::NONZERO_NICHE;
+
+    fn encode<W: io::Write>(&self, dst: W, ptr_encoder: &mut impl verbatim::PtrEncode<Q>) -> Result<W, io::Error> {
+        let dst = self.fact().encode(dst, ptr_encoder)?;
+        self.evidence.encode(dst, ptr_encoder)
+    }
+
+    fn decode(src: &[u8], ptr_decoder: &mut impl verbatim::PtrDecode<Q>) -> Result<Self, Self::Error> {
+        unimplemented!()
+    }
+}
+
+
+/*
 
 /// A proof that some fact is true.
 #[derive(Debug)]
@@ -348,4 +424,4 @@ mod tests {
     }
 }
 */
-*/
+*/*/
