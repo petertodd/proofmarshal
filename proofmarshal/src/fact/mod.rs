@@ -1,14 +1,19 @@
 //! Fact validation.
 
 use core::any::type_name;
-use core::marker::PhantomData;
-use core::task;
 use core::fmt;
+use core::marker::PhantomData;
+use core::mem;
 use core::ops::{Deref, DerefMut};
+use core::task;
 
 use std::io;
 
 use crate::prelude::*;
+
+use crate::commit::Commit;
+use crate::ptr::{Coerce, Coerced};
+use crate::digest::Digest;
 
 mod lazy;
 use self::lazy::Lazy;
@@ -16,10 +21,20 @@ use self::lazy::Lazy;
 /// A fact that can be derived from evidence.
 ///
 /// The derivation **must not fail**.
-pub trait Fact<P=()> : Type {
-    type Evidence : Type + Type<P>;
+pub trait Fact<P=()> : Type + Clone {
+    type Evidence : Type<P>;
 
     fn from_evidence(evidence: &Self::Evidence) -> Self;
+}
+
+impl<T, P> Fact<P> for Digest<T>
+where T: Type<P> + Commit,
+{
+    type Evidence = T;
+
+    fn from_evidence(evidence: &Self::Evidence) -> Self {
+        evidence.commit().cast()
+    }
 }
 
 /// Computes a `Fact` lazily from (owned) evidence.
@@ -45,18 +60,15 @@ impl<T: Fact<P>, P: Get> Cache<T,P> {
         if let Some(r) = self.fact.get() {
             r
         } else {
-            /*
             let evidence = self.evidence.get();
-
-            let fact = T::from_evidence(own.get().deref());
+            let evidence = T::Evidence::cast(&evidence);
+            let fact = T::from_evidence(&evidence);
 
             // It's possible the set will fail if another thread is co-currently dereferencing this
             // fact. That's ok and can be ignored.
             let _ = self.fact.try_set(fact);
 
             self.fact.get().expect("Derived fact available after setting it")
-            */
-            unimplemented!()
         }
     }
 }
@@ -94,71 +106,106 @@ where T: verbatim::Verbatim<Q>,
     }
 }
 
-
-/*
-
-/// A proof that some fact is true.
-#[derive(Debug)]
-pub struct Proof<T: Fact<P>, P: Ptr = ()> {
+/// A fact `T` that may or may not be true.
+///
+/// The fact itself is always available, and can be accessed with the `trust()` method. The
+/// evidence (potentially) proving the fact to be true may or may not be available.
+#[derive(Clone)]
+pub struct Maybe<T: Fact<P>, P: Ptr = ()> {
     trusted: bool,
-    evidence: Option<Own<T::Evidence, P>>,
+    evidence: State<T,P>,
     fact: Lazy<T>,
 }
 
-impl<T: Fact<P>, P: Ptr> Proof<T,P> {
-    /// Creates a `Proof` from the evidence.
-    ///
-    /// The fact will be lazily computed from the evidence.
-    pub fn new(evidence: T::Evidence) -> Self
-        where P: Default
-    {
-        Self::new_in(evidence, &mut P::allocator())
+/// The state of a `Maybe`.
+pub enum State<T: Fact<P>, P: Ptr> {
+    /// The evidence is missing.
+    Missing,
+
+    /// The evidence is available.
+    Avail(Own<T::Evidence, P>),
+
+    /// The evidence has been marked as pruned and can be made available.
+    Pruned(Own<T::Evidence, P>),
+}
+
+impl<T: Fact<P>, P: Ptr> Clone for State<T,P> {
+    fn clone(&self) -> Self {
+        match self {
+            State::Missing => State::Missing,
+            State::Avail(own) => State::Avail(own.clone()),
+            State::Pruned(own) => State::Pruned(own.clone()),
+        }
+    }
+}
+
+/// Evidence pruning.
+pub trait Prune {
+    /// Marks all evidence as pruned.
+    fn prune(&mut self);
+
+    /// Discards pruned evidence, keeping only the evidence that has actually been accessed.
+    fn fully_prune(&mut self);
+}
+
+impl<T: Fact<P>, P: Get> Prune for Maybe<T,P> {
+    fn prune(&mut self) {
+        let new_state = match mem::replace(&mut self.evidence, State::Missing) {
+            State::Missing => State::Missing,
+            State::Pruned(x) => State::Pruned(x),
+            State::Avail(x) => State::Pruned(x),
+        };
+        mem::replace(&mut self.evidence, new_state);
     }
 
-    /// Creates a `Proof`, allocating the evidence with the provided allocator.
-    pub fn new_in(evidence: T::Evidence, alloc: &mut impl Alloc<Ptr=P>) -> Self {
+    fn fully_prune(&mut self) {
+        if let State::Pruned(_) = &self.evidence {
+            // We're about to discard the evidence, so make sure the fact has been already derived.
+            let _ = self.trust();
+        };
+
+        let new_state = match mem::replace(&mut self.evidence, State::Missing) {
+            State::Missing | State::Pruned(_) => State::Missing,
+            State::Avail(x) => State::Avail(x),
+        };
+        mem::replace(&mut self.evidence, new_state);
+    }
+}
+
+impl<T: Fact<P>, P: Ptr> Maybe<T,P>
+{
+    /// Creates a new `Maybe` from the evidence.
+    pub fn from_evidence(evidence: Own<T::Evidence,P>) -> Self {
         Self {
             trusted: false,
-            evidence: Some(Own::new_in(evidence, alloc)),
+            evidence: State::Avail(evidence),
             fact: Lazy::uninit(),
         }
     }
 
-    /// Creates a `Proof` from a proven fact.
+    /// Creates a new `Maybe` from the fact.
     pub fn from_fact(fact: T) -> Self {
         Self {
             trusted: false,
-            evidence: None,
+            evidence: State::Missing,
             fact: Lazy::new(fact),
         }
     }
 
-    /*
-    pub fn unprune_then<'p, F, R>(&self, f: F) -> R
-        where F: FnOnce(Option<Cow<'_, T>>) -> R
+    /// Gets the fact, trusting that it's valid.
+    pub fn trust(&self) -> &T
+        where P: Get
     {
-        match self.evidence {
-            None => f(None),
-        }
-    }
-
-    pub fn unprune_mut(&mut self) -> Option<&mut T::Evidence> {
-        unimplemented!()
-    }
-    */
-}
-
-impl<T: Fact<P>, P: Ptr> Deref for Proof<T,P> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
         if let Some(r) = self.fact.get() {
             r
         } else {
-            let own = self.evidence.as_ref()
-                          .expect("Evidence available if derived fact uninitialized");
+            let evidence = match &self.evidence {
+                State::Missing => panic!("Evidence and derived fact both missing"),
+                State::Avail(own) | State::Pruned(own) => own.get(),
+            };
 
-            let fact = T::derive(own.get().deref());
+            let evidence = T::Evidence::cast(&evidence);
+            let fact = T::from_evidence(&evidence);
 
             // It's possible the set will fail if another thread is co-currently dereferencing this
             // fact. That's ok and can be ignored.
@@ -167,261 +214,127 @@ impl<T: Fact<P>, P: Ptr> Deref for Proof<T,P> {
             self.fact.get().expect("Derived fact available after setting it")
         }
     }
+
+    pub fn state(&self) -> &State<T,P> {
+        &self.evidence
+    }
+
+    /// Returns true if the evidence is available.
+    pub fn is_avail(&self) -> bool {
+        match &self.evidence {
+            State::Missing | State::Pruned(_) => false,
+            State::Avail(_) => true,
+        }
+    }
+
+    /// Get the evidence, if available.
+    ///
+    /// Evidence has been pruned is considered unavailable.
+    pub fn get(&self) -> Option<Ref<T::Evidence, P>>
+    where P: Get
+    {
+        match &self.evidence {
+            State::Missing | State::Pruned(_) => None,
+            State::Avail(r) => Some(r.get()),
+        }
+    }
+
+    /// Get the evidence, unpruning if necessary.
+    pub fn unprune(&mut self) -> Option<Ref<T::Evidence, P>>
+        where P: GetMut,
+              <T::Evidence as Coerce<P>>::Owned: Prune,
+    {
+        let new_state = match mem::replace(&mut self.evidence, State::Missing) {
+            State::Missing => State::Missing,
+            State::Avail(own) => State::Avail(own),
+            State::Pruned(mut own) => {
+                own.get_mut().prune();
+                State::Avail(own)
+            }
+        };
+        mem::replace(&mut self.evidence, new_state);
+
+        match &self.evidence {
+            State::Missing => None,
+            State::Avail(x) => Some(x.get()),
+            State::Pruned(_) => unreachable!("Evidence has been unpruned"),
+        }
+    }
+
+    /// Same as `unprune()`, but provides mutable access to the evidence.
+    pub fn unprune_mut(&mut self) -> Option<&mut <T::Evidence as Coerce<P>>::Owned>
+        where P: GetMut,
+              <T::Evidence as Coerce<P>>::Owned: Prune,
+    {
+        let _ = self.unprune();
+
+        match &mut self.evidence {
+            State::Missing => None,
+            State::Avail(own) => Some(own.get_mut()),
+            State::Pruned(_) => unreachable!("Evidence has been unpruned"),
+        }
+    }
+}
+
+macro_rules! impl_nop_prune {
+    ($($t:ty,)+) => {
+        $(
+            impl Prune for $t {
+                #[inline]
+                fn prune(&mut self) {}
+
+                #[inline]
+                fn fully_prune(&mut self) {}
+            }
+        )+
+    }
+}
+
+impl_nop_prune! {
+    (), bool,
+    u8, u16, u32, u64, u128,
+    i8, i16, i32, i64, i128,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /*
-    #[derive(Debug)]
-    struct Block {
-        value: usize,
-        next: Option<Proof<Blockchain>>,
-    }
+    use crate::prelude::*;
+    use hex_literal::hex;
 
-    #[derive(Debug)]
-    struct Blockchain {
-        digest: [u8;32],
-        sum: Option<usize>,
-    }
-
-    impl Fact for Blockchain {
-        type Evidence = Block;
-
-        fn derive(block: &Block) -> Blockchain {
-            Blockchain {
-                digest: [0;32],
-                sum: None,
-            }
-        }
+    #[test]
+    fn maybe() {
+        let maybe: Maybe<Digest<u8>, Heap> = Maybe::from_evidence(Own::new(0x23));
+        assert_eq!(maybe.trust().to_bytes(),
+                   hex!("ff23000000000000000000000000000000000000000000000000000000000000"));
     }
 
     #[test]
-    fn test() {
-        let block = Block {
-            value: 0,
-            next: None,
-        };
+    fn maybe_prune_simple() {
+        let mut maybe: Maybe<Digest<u8>, Heap> = Maybe::from_evidence(Own::new(0x23));
 
-        let mut chain_proof = Proof::<Blockchain>::from_evidence(block);
+        // Starts off available
+        assert!(maybe.is_avail());
 
-        dbg!(chain_proof);
-    }
-    */
-}
+        maybe.prune();
+        assert!(!maybe.is_avail());
 
+        assert_eq!(*maybe.unprune().unwrap(), 0x23);
+        assert!(maybe.is_avail());
 
-/*
-/// A mutable proof that some fact is true.
-///
-/// The opposite of a `Proof`: the evidence is always available, and the derived fact is
-/// constructed on demand.
-pub struct ProofMut<T: ?Sized + Fact<A>, A> {
-    evidence: T::Evidence,
-    fact: Cell<Option<T>>,
-}
+        // Fully prune does *not* make the evidence unavailable as it's currently available.
+        maybe.fully_prune();
+        assert!(maybe.is_avail());
 
+        // But prune followed by fully prune does.
+        maybe.prune();
+        maybe.fully_prune();
+        assert!(!maybe.is_avail());
+        assert_eq!(maybe.unprune(), None);
 
-
-
-
-pub enum Error<T: ?Sized + Fact<A>, A> {
-    Missing,
-    Invalid(T::Error),
-}
-pub use Error::{Missing, Invalid};
-
-*/
-
-
-
-
-
-/*
-
-impl<T: ?Sized + Fact<A>, A> fmt::Debug for Error<T,A>
-where T::Error: fmt::Debug
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Error::Missing => f.debug_tuple("Missing")
-                               .finish(),
-            Error::Invalid(err) => f.debug_tuple("Invalid")
-                                    .field(err)
-                                    .finish()
-        }
+        // Fully prune should have derived the fact prior to discarding the evidence.
+        assert_eq!(maybe.trust().to_bytes(),
+                   hex!("ff23000000000000000000000000000000000000000000000000000000000000"));
     }
 }
-
-impl<T: Fact<A>, A> Proof<T,A> {
-    pub fn new(fact: T) -> Self {
-        Self { fact, evidence: None, }
-    }
-
-    pub fn validate_in<'cx>(&self, cx: &'cx A) -> Result<&Valid<'cx, T>,
-                                                         Error<T,A>>
-    {
-        match &self.evidence {
-            None => Err(Missing),
-            Some(evidence) => self.fact.validate_in(evidence, cx)
-                                       .map_err(|err| Error::Invalid(err))
-        }
-    }
-
-    pub fn validate<'cx>(&self) -> Result<&Valid<'cx, T>, Error<T,A>>
-        where A: Default,
-    {
-        let cx = A::default();
-
-        match &self.evidence {
-            None => { return Err(Missing); },
-            Some(evidence) => self.fact.validate_in(evidence, &cx)
-                                       .map_err(|err| Invalid(err))?,
-        };
-
-        Ok(Valid::trust_ref(&self.fact))
-    }
-
-    pub fn poll<'cx>(&mut self, cx: &'cx A, task_cx: &mut task::Context)
-        -> task::Poll<Result<&Valid<'cx, T>, Error<T,A>>>
-    {
-        self.fact.poll(&mut self.evidence, cx, task_cx)
-    }
-}
-
-pub trait Fact<A> {
-    type Evidence : Sized;
-    type Error;
-
-    fn validate_in<'cx>(&self, evidence: &Self::Evidence, cx: &'cx A)
-        -> Result<&Valid<'cx, Self>, Self::Error>;
-
-    fn poll<'cx>(&mut self, evidence: &mut Option<Self::Evidence>, cx: &'cx A, task_cx: &mut task::Context)
-        -> task::Poll<Result<&Valid<'cx, Self>, Error<Self,A>>>
-    {
-        let _ = task_cx;
-        task::Poll::Ready(
-            match evidence {
-                None => Err(Missing),
-                Some(evidence) => self.validate_in(evidence, cx)
-                                      .map_err(|err| Invalid(err))
-            }
-        )
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Contextless;
-
-#[repr(transparent)]
-pub struct Valid<'cx, T: ?Sized> {
-    marker: PhantomData<&'cx ()>,
-    value: T,
-}
-
-impl<T> Valid<'_,T> {
-    pub fn trust(value: T) -> Self {
-        Self { marker: PhantomData, value }
-    }
-
-    pub fn into_inner(this: Self) -> T {
-        this.value
-    }
-}
-
-impl<T: ?Sized> Valid<'_,T> {
-    pub fn trust_ref(value: &T) -> &Self {
-        unsafe {
-            &*(value as *const T as *const Self)
-        }
-    }
-}
-
-/// `DerefMut` is *not* implemented, as changes to the value might invalidate it.
-impl<T: ?Sized> ops::Deref for Valid<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.value
-    }
-}
-
-
-/*
-impl<T: Fact> fmt::Debug for Valid<'_, T>
-where T: fmt::Debug
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple(type_name::<Self>())
-            .field(&self.value)
-            .finish()
-    }
-}
-*/
-
-impl<T: Fact<A>, A> fmt::Debug for Proof<T,A>
-where T: fmt::Debug,
-      T::Evidence: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct(type_name::<Self>())
-            .field("evidence", &self.evidence)
-            .field("fact", &self.fact)
-            .finish()
-    }
-}
-
-impl<A, F1, F2> Fact<A> for (F1,F2)
-where F1: Fact<A>,
-      F2: Fact<A, Evidence=<F1 as Fact<A>>::Evidence>,
-{
-    type Evidence = F1::Evidence;
-    type Error = !;
-
-    fn validate_in<'cx>(&self, evidence: &Self::Evidence, cx: &'cx A)
-        -> Result<&Valid<'cx, Self>, Self::Error>
-    {
-        unimplemented!()
-    }
-}
-
-/*
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Debug)]
-    pub struct Sum(usize);
-
-    #[derive(Debug)]
-    pub struct SumError;
-
-    impl Fact for Sum {
-        type Evidence = (usize, usize);
-        type Context = ();
-        type Error = SumError;
-
-        fn validate_in<'cx>(&self, (lhs, rhs): &Self::Evidence, cx: &'cx Self::Context)
-            -> Result<&Valid<'cx, Self>, Self::Error>
-        {
-            let actual_sum = lhs.checked_add(*rhs).ok_or(SumError)?;
-
-            if actual_sum == self.0 {
-                Ok(Valid::trust_ref(self))
-            } else {
-                Err(SumError)
-            }
-        }
-    }
-
-    #[test]
-    fn test() {
-        let mut sum_proof = dbg!(Proof::new(Sum(100)));
-        sum_proof.evidence = Some((50, 50));
-
-        let _ = dbg!(sum_proof.validate());
-    }
-}
-*/
-*/*/

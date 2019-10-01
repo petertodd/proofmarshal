@@ -37,6 +37,11 @@ impl<T> Digest<T> {
         unsafe { &*(self as *const _ as *const _) }
     }
 
+    #[inline(always)]
+    pub fn to_bytes(self) -> [u8;32] {
+        *self.as_bytes()
+    }
+
     pub fn cast<U>(&self) -> Digest<U> {
         let raw: [u8;32] = (*self).into();
         Digest::try_from(raw).unwrap()

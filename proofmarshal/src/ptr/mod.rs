@@ -2,10 +2,13 @@ use core::any::type_name;
 use core::fmt;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
+use std::borrow::{ToOwned, Borrow, BorrowMut};
+use std::io;
 
 use pointee::Pointee;
 
-use std::borrow::{ToOwned, Borrow, BorrowMut};
+use verbatim::{Verbatim, PtrEncode, PtrDecode};
+
 
 mod refs;
 pub use self::refs::*;
@@ -41,6 +44,11 @@ where T: Coerced<P>,
 
 /// A type whose values can exist behind a `Ptr`.
 pub trait Type<P=()> : 'static + Pointee + Coerce<P> {
+    fn cast(coerced: &Self::Type) -> Self
+        where Self: Sized,
+    {
+        unimplemented!()
+    }
 }
 
 /// Type erased generic pointer.
@@ -74,6 +82,21 @@ pub trait Ptr : Clone {
     /// This must not have side-effects!
     unsafe fn debug_get<T: ?Sized + Type<Self>>(&self) -> Option<&T::Type> {
         None
+    }
+
+    unsafe fn verbatim_encode<T, W, Q>(&self, dst: W, ptr_encoder: &mut impl PtrEncode<Q>) -> Result<W, io::Error>
+        where Self: Verbatim<Q>,
+              W: io::Write,
+              T: ?Sized + Type<Self>,
+    {
+        unimplemented!()
+    }
+
+    unsafe fn verbatim_decode<T, Q>(&self, src: &[u8], ptr_decoder: &mut impl PtrDecode<Q>) -> Result<Self, !>
+        where Self: Verbatim<Q>,
+              T: ?Sized + Type<Self>,
+    {
+        unimplemented!()
     }
 }
 
@@ -116,7 +139,7 @@ pub trait Alloc {
         where T: ?Sized + Type<Self::Ptr>;
 }
 
-/// An owned `T` value behind a `P` pointer.
+/// An owned value behind a pointer.
 pub struct Own<T: ?Sized + Type<P>, P: Ptr = ()> {
     marker: PhantomData<T::Type>,
     ptr: ManuallyDrop<P>,
@@ -258,6 +281,28 @@ where T: Type<Q>
 
 impl<T: ?Sized + Type + Type<P>, P: Ptr> Type<P> for Own<T>
 {
+    fn cast(coerced: &<Self as Coerce<P>>::Type) -> Self
+        where Self: Sized,
+    {
+        unsafe { Own::from_raw(()) }
+    }
+}
+
+impl<T: Type<P>, P: Ptr, Q> Verbatim<Q> for Own<T,P>
+where P: Verbatim<Q>
+{
+    type Error = !;
+
+    const LEN: usize = P::LEN;
+    const NONZERO_NICHE: bool = P::NONZERO_NICHE;
+
+    fn encode<W: io::Write>(&self, dst: W, ptr_encoder: &mut impl PtrEncode<Q>) -> Result<W, io::Error> {
+        unimplemented!()
+    }
+
+    fn decode(src: &[u8], ptr_decoder: &mut impl PtrDecode<Q>) -> Result<Self, Self::Error> {
+        unimplemented!()
+    }
 }
 
 #[cfg(test)]

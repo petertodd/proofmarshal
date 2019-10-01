@@ -14,7 +14,10 @@ pub trait Verbatim<P = !> : Sized {
     /// The length of the verbatim encoding.
     const LEN: usize;
 
-    /// Whether part of this encoding contains bytes that will never be nonzero.
+    /// Whether part of this encoding contains bytes that always have at least one non-zero byte.
+    ///
+    /// If `NONZERO_NICHE == true` containers like `Option<T>` can use an *all* zero encoding as
+    /// the absense of value.
     const NONZERO_NICHE: bool;
 
     fn encode<W: io::Write>(&self, dst: W, ptr_encoder: &mut impl PtrEncode<P>) -> Result<W, io::Error>;
