@@ -1,6 +1,3 @@
-use std::io;
-use std::any::type_name;
-
 use crate::digest::Digest;
 
 pub trait Commit {
@@ -46,5 +43,4 @@ impl Commit for ! {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 }

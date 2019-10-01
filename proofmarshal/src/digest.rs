@@ -13,16 +13,14 @@ use std::io;
 
 use verbatim::Verbatim;
 
-use crate::prelude::*;
-
 use crate::ptr::{Coerced, Type};
 
 /// Typed 32-byte hash digest.
 #[repr(packed)]
 pub struct Digest<T=!> {
     marker: PhantomData<fn(T) -> ()>,
-    nonzero: NonZeroU128,
-    rest: u128,
+    _nonzero: NonZeroU128,
+    _rest: u128,
 }
 
 impl<T> Digest<T> {
@@ -53,7 +51,7 @@ impl<T> Digest<T> {
         let mut stack = [0u8;128];
         let mut heap;
 
-        let mut buf = if T::LEN > stack.len() {
+        let buf = if T::LEN > stack.len() {
             heap = vec![0; T::LEN];
             &mut heap[..]
         } else {

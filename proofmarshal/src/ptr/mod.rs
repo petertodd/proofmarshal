@@ -1,7 +1,7 @@
 use core::any::type_name;
 use core::fmt;
 use core::marker::PhantomData;
-use core::mem::{self, ManuallyDrop};
+use core::mem::ManuallyDrop;
 use std::borrow::{ToOwned, Borrow, BorrowMut};
 use std::io;
 
@@ -14,8 +14,6 @@ mod refs;
 pub use self::refs::*;
 
 pub mod heap;
-use self::heap::Heap;
-
 pub mod missing;
 
 /*
@@ -44,7 +42,7 @@ where T: Coerced<P>,
 
 /// A type whose values can exist behind a `Ptr`.
 pub trait Type<P=()> : 'static + Pointee + Coerce<P> {
-    fn cast(coerced: &Self::Type) -> Self
+    fn cast(_coerced: &Self::Type) -> Self
         where Self: Sized,
     {
         unimplemented!()
@@ -89,6 +87,7 @@ pub trait Ptr : Clone {
               W: io::Write,
               T: ?Sized + Type<Self>,
     {
+        let _ = (dst, ptr_encoder);
         unimplemented!()
     }
 
@@ -96,6 +95,7 @@ pub trait Ptr : Clone {
         where Self: Verbatim<Q>,
               T: ?Sized + Type<Self>,
     {
+        let _ = (src, ptr_decoder);
         unimplemented!()
     }
 }
@@ -281,7 +281,7 @@ where T: Type<Q>
 
 impl<T: ?Sized + Type + Type<P>, P: Ptr> Type<P> for Own<T>
 {
-    fn cast(coerced: &<Self as Coerce<P>>::Type) -> Self
+    fn cast(_coerced: &<Self as Coerce<P>>::Type) -> Self
         where Self: Sized,
     {
         unsafe { Own::from_raw(()) }
@@ -296,18 +296,18 @@ where P: Verbatim<Q>
     const LEN: usize = P::LEN;
     const NONZERO_NICHE: bool = P::NONZERO_NICHE;
 
-    fn encode<W: io::Write>(&self, dst: W, ptr_encoder: &mut impl PtrEncode<Q>) -> Result<W, io::Error> {
+    fn encode<W: io::Write>(&self, _dst: W, _ptr_encoder: &mut impl PtrEncode<Q>) -> Result<W, io::Error> {
         unimplemented!()
     }
 
-    fn decode(src: &[u8], ptr_decoder: &mut impl PtrDecode<Q>) -> Result<Self, Self::Error> {
+    fn decode(_src: &[u8], _ptr_decoder: &mut impl PtrDecode<Q>) -> Result<Self, Self::Error> {
         unimplemented!()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{*, heap::Heap};
 
     #[test]
     fn test() {

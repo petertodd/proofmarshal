@@ -1,18 +1,14 @@
 //! Fact validation.
 
-use core::any::type_name;
-use core::fmt;
-use core::marker::PhantomData;
 use core::mem;
 use core::ops::{Deref, DerefMut};
-use core::task;
 
 use std::io;
 
 use crate::prelude::*;
 
 use crate::commit::Commit;
-use crate::ptr::{Coerce, Coerced};
+use crate::ptr::Coerce;
 use crate::digest::Digest;
 
 mod lazy;
@@ -101,7 +97,7 @@ where T: verbatim::Verbatim<Q>,
         self.evidence.encode(dst, ptr_encoder)
     }
 
-    fn decode(src: &[u8], ptr_decoder: &mut impl verbatim::PtrDecode<Q>) -> Result<Self, Self::Error> {
+    fn decode(_src: &[u8], _ptr_decoder: &mut impl verbatim::PtrDecode<Q>) -> Result<Self, Self::Error> {
         unimplemented!()
     }
 }
@@ -300,7 +296,6 @@ impl_nop_prune! {
 mod tests {
     use super::*;
 
-    use crate::prelude::*;
     use hex_literal::hex;
 
     #[test]

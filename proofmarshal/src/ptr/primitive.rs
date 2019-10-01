@@ -45,7 +45,7 @@ macro_rules! array_impls {
             impl<P, T: Type<P>> Type<P> for [T;$N] {
                 fn cast(coerced: &Self::Type) -> Self
                 {
-                    let a: &T::Owned = &coerced[0];
+                    let _a: &T::Owned = &coerced[0];
                     unimplemented!()
                 }
             }

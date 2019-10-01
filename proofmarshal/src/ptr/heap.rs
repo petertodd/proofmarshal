@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn sized_primitives() {
-        let own: Own<u8, Heap> = HeapAllocator.alloc(42u8);
+        let _own: Own<u8, Heap> = HeapAllocator.alloc(42u8);
     }
 
     #[test]
@@ -179,6 +179,6 @@ mod tests {
 
         assert_eq!(own.get().len(), 2);
 
-        let v: Vec<u8> = own.take();
+        let _: Vec<u8> = own.take();
     }
 }
