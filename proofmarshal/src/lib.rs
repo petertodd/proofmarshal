@@ -3,6 +3,7 @@
 #![feature(never_type)]
 #![feature(maybe_uninit_extra)]
 #![feature(manually_drop_take)]
+#![feature(specialization)]
 
 pub mod verbatim;
 
@@ -14,6 +15,8 @@ pub mod commit;
 pub mod fact;
 
 pub mod seal;
+pub mod validate;
+pub mod bitcoin;
 
 pub mod prelude {
     pub use super::{

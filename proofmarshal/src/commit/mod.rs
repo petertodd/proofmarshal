@@ -52,7 +52,7 @@ impl<T: Commit> Commit for &'_ T {
         (**self).commit()
     }
 
-    fn encode_commit_verbatim<W: io::Write>(&self, mut dst: W) -> Result<W, io::Error> {
+    fn encode_commit_verbatim<W: io::Write>(&self, dst: W) -> Result<W, io::Error> {
         (**self).encode_commit_verbatim(dst)
     }
 }
@@ -64,7 +64,7 @@ impl<T: Commit> Commit for &'_ mut T {
         (**self).commit()
     }
 
-    fn encode_commit_verbatim<W: io::Write>(&self, mut dst: W) -> Result<W, io::Error> {
+    fn encode_commit_verbatim<W: io::Write>(&self, dst: W) -> Result<W, io::Error> {
         (**self).encode_commit_verbatim(dst)
     }
 }

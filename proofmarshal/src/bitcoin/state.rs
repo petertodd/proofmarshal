@@ -3,19 +3,19 @@ use std::sync::RwLock;
 
 use super::*;
 
-use crate::maybe::Valid;
+use crate::validate::Valid;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 pub struct BlockHeight {
-    height: Le<u32>,
+    height: u32,
     hash: BlockHash,
 }
 
 impl BlockHeight {
-    pub fn new(height: impl Into<Le<u32>>, hash: BlockHash) -> Self {
+    pub fn new(height: u32, hash: BlockHash) -> Self {
         Self {
             hash,
-            height: height.into(),
+            height,
         }
     }
 }
@@ -25,10 +25,14 @@ pub trait BestBlockHeight {
     fn bestblock(&self) -> Valid<BlockHeight, &Self>;
 }
 
+/// Validates a `BlockHeight` against the chainstate.
 pub trait ValidateBlockhash : BestBlockHeight {
     type Error;
 
-    //fn validate_blockheight(&self, height: BlockHeight) -> Result<Valid<BlockHeight, &Self>, Self::Error>;
+    /// Performs the validation.
+    ///
+    /// If succesful, ties the `Valid` result to the lifetime of the chainstate.
+    fn validate_blockheight(&self, height: BlockHeight) -> Result<Valid<BlockHeight, &Self>, Self::Error>;
 }
 
 #[derive(Debug)]
@@ -57,7 +61,7 @@ impl BestBlockHeight for ChainState {
                                     .rev()
                                     .next().expect("missing genesis block");
 
-        Valid::trust(BlockHeight::new(*height, *hash), self)
+        Valid::from_trusted(BlockHeight::new(*height, *hash))
     }
 }
 
@@ -68,16 +72,18 @@ impl ChainState {
 
         let max_height = heights.keys().rev().next().expect("missing genesis block");
 
-        if *max_height < block.height.get() {
-            heights.insert(block.height.get(), block.hash);
+        if *max_height < block.height {
+            heights.insert(block.height, block.hash);
 
-            Ok(Valid::trust(block, self))
+            Ok(Valid::from_trusted(block))
         } else {
             Err(block)
         }
     }
 
     /// Do a reorg.
+    ///
+    /// Invalidates existing block facts due to requiring mutable access to the chainstate.
     pub fn reorg(&mut self, _block: BlockHeight) {
     }
 }
