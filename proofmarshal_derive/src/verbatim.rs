@@ -1,5 +1,3 @@
-extern crate proc_macro;
-
 use std::convert::TryFrom;
 
 use proc_macro2::{TokenStream, Span};
@@ -8,7 +6,6 @@ use syn::spanned::Spanned;
 use syn::{parse_macro_input, parse_quote, Data, DeriveInput, Fields, GenericParam, TypeParam, Generics, Index};
 use syn::parse_quote::ParseQuote;
 
-#[proc_macro_derive(Verbatim)]
 pub fn derive_verbatim(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     // Parse the input tokens into a syntax tree.
     let input = parse_macro_input!(input as DeriveInput);
@@ -26,7 +23,7 @@ pub fn derive_verbatim(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
     let (_, ty_generics, where_clause) = generics.split_for_impl();
 
 
-    generics2.params.push(parse_quote!(#ptr_ty));
+    generics2.params.push(parse_quote!(#ptr_ty: ::proofmarshal::ptr::Ptr));
     let (impl_generics, _, _) = generics2.split_for_impl();
 
     let encode = verbatim_encode(&input.data, &ptr_ty);
@@ -41,21 +38,25 @@ pub fn derive_verbatim(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
 
         // The generated impl.
         #[automatically_derived]
-        impl #impl_generics ::verbatim::Verbatim<#ptr_ty> for #name #ty_generics #where_clause {
+        impl #impl_generics ::proofmarshal::verbatim::Verbatim<#ptr_ty> for #name #ty_generics #where_clause {
             type Error = #errname;
 
             const LEN: usize = #verbatim_len;
             const NONZERO_NICHE: bool = #nonzero_niche;
 
             #[inline]
-            fn encode<__W: ::std::io::Write>(&self, __dst: __W, __ptr_encoder: &mut impl ::verbatim::PtrEncode<#ptr_ty>)
+            fn encode<__W: ::std::io::Write>(&self, __dst: __W,
+                                             __ptr_encoder: &mut impl ::proofmarshal::verbatim::PtrEncode<#ptr_ty>)
                 -> Result<__W, ::std::io::Error>
             {
                 #encode
             }
 
             #[inline]
-            fn decode(__src: &[u8], __ptr_decoder: &mut impl ::verbatim::PtrDecode<#ptr_ty>) -> Result<Self, Self::Error> {
+            fn decode(__src: &[u8],
+                      __ptr_decoder: &mut impl ::proofmarshal::verbatim::PtrDecode<#ptr_ty>)
+                -> Result<Self, Self::Error>
+            {
                 #decode
             }
         }
@@ -68,7 +69,7 @@ pub fn derive_verbatim(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
 fn add_trait_bounds(mut generics: Generics, ptr_ty: &syn::Ident) -> Generics {
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut type_param) = *param {
-            type_param.bounds.push(parse_quote!(::verbatim::Verbatim<#ptr_ty>));
+            type_param.bounds.push(parse_quote!(::proofmarshal::verbatim::Verbatim<#ptr_ty>));
         }
     }
     generics
@@ -79,7 +80,7 @@ fn len_for_fields(fields: &syn::Fields, ptr_ty: &syn::Ident) -> TokenStream {
     let per_field = |field: &syn::Field| {
             let ty = &field.ty;
             quote_spanned! {field.span()=>
-                <#ty as ::verbatim::Verbatim<#ptr_ty>>::LEN
+                <#ty as ::proofmarshal::verbatim::Verbatim<#ptr_ty>>::LEN
             }
     };
 
@@ -149,7 +150,7 @@ fn verbatim_nonzero_niche(data: &Data, ptr_ty: &syn::Ident) -> TokenStream {
                     let recurse = fields.named.iter().map(|f| {
                         let ty = &f.ty;
                         quote_spanned! {f.span()=>
-                            <#ty as ::verbatim::Verbatim<#ptr_ty>>::NONZERO_NICHE
+                            <#ty as ::proofmarshal::verbatim::Verbatim<#ptr_ty>>::NONZERO_NICHE
                         }
                     });
                     quote! {
@@ -160,7 +161,7 @@ fn verbatim_nonzero_niche(data: &Data, ptr_ty: &syn::Ident) -> TokenStream {
                     let recurse = fields.unnamed.iter().map(|f| {
                         let ty = &f.ty;
                         quote_spanned! {f.span()=>
-                            <#ty as ::verbatim::Verbatim<#ptr_ty>>::NONZERO_NICHE
+                            <#ty as ::proofmarshal::verbatim::Verbatim<#ptr_ty>>::NONZERO_NICHE
                         }
                     });
                     quote! {
@@ -249,7 +250,7 @@ fn verbatim_encode(data: &Data, ptr_ty: &syn::Ident) -> TokenStream {
         let per_field = fields.map(|(binding, field)| {
             let ty = &field.ty;
             quote! {
-                let __dst = <#ty as ::verbatim::Verbatim<#ptr_ty>>::encode(#binding, __dst, __ptr_encoder)?;
+                let __dst = <#ty as ::proofmarshal::verbatim::Verbatim<#ptr_ty>>::encode(#binding, __dst, __ptr_encoder)?;
             }
         });
 
@@ -311,8 +312,8 @@ fn verbatim_decode(data: &Data, errname: &syn::Ident, ptr_ty: &syn::Ident) -> To
         let per_field = fields.map(|(binding, field)| {
             let ty = &field.ty;
             quote! {
-                let (__field_buf, __src) = __src.split_at(<#ty as ::verbatim::Verbatim<#ptr_ty>>::LEN);
-                let #binding = <#ty as ::verbatim::Verbatim<#ptr_ty>>::decode(__field_buf, __ptr_decoder)
+                let (__field_buf, __src) = __src.split_at(<#ty as ::proofmarshal::verbatim::Verbatim<#ptr_ty>>::LEN);
+                let #binding = <#ty as ::proofmarshal::verbatim::Verbatim<#ptr_ty>>::decode(__field_buf, __ptr_decoder)
                                                                       .map_err(|_| #errname(::core::any::type_name::<#ty>()))?;
             }
         });
@@ -357,7 +358,7 @@ fn verbatim_decode(data: &Data, errname: &syn::Ident, ptr_ty: &syn::Ident) -> To
             });
 
             quote! {
-                assert_eq!(__src.len(), <Self as ::verbatim::Verbatim<__P>>::LEN);
+                assert_eq!(__src.len(), <Self as ::proofmarshal::verbatim::Verbatim<__P>>::LEN);
                 if __src.len() == 0 {
                     panic!("{} is uninhabited", ::core::any::type_name::<Self>())
                 }

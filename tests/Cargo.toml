@@ -8,8 +8,5 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-verbatim = { path = "../verbatim" }
-verbatim_derive = { path = "../verbatim_derive" }
-
 proofmarshal = { path = "../proofmarshal" }
 proofmarshal_derive = { path = "../proofmarshal_derive" }

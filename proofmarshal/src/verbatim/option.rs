@@ -4,7 +4,7 @@
 
 use super::*;
 
-use core::fmt;
+use std::fmt;
 
 impl<P, T> Verbatim<P> for Option<T>
 where T: Verbatim<P>

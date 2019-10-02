@@ -1,73 +1,55 @@
+//! Heap allocating pointer.
+
 use std::ptr::NonNull;
 use std::sync::Arc;
 
 use super::*;
 
+/// Wrapper around `Arc`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Heap(NonNull<()>);
 
+/// Allocator for `Heap`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HeapAllocator;
 
 impl Heap {
-    fn alloc<T>(value: T::Owned) -> Self
-        where T: ?Sized + Type<Heap>
-    {
+    fn alloc<T>(value: T) -> Self {
         let p = Arc::into_raw(Arc::new(value));
 
-        Heap(NonNull::new(p as *mut T::Owned as *mut ())
+        Heap(NonNull::new(p as *mut T as *mut ())
                      .expect("Arc raw pointer to be non-null"))
     }
 
-    unsafe fn clone_ptr<T>(&self) -> Own<T, Self>
-        where T: ?Sized + Type<Heap>
-    {
+    unsafe fn clone_ptr<T>(&self) -> Own<T, Self> {
         // Safe to create orig_t as it won't be dropped.
-        let orig_t: ManuallyDrop<Arc<T::Owned>>  = ManuallyDrop::new(Arc::from_raw(self.0.cast::<T::Owned>().as_ptr()));
+        let orig_t: ManuallyDrop<Arc<T>>  = ManuallyDrop::new(Arc::from_raw(self.0.cast::<T>().as_ptr()));
 
-        let cloned_t: Arc<T::Owned> = Arc::clone(&*orig_t);
+        let cloned_t: Arc<T> = Arc::clone(&*orig_t);
 
-        let ptr = Heap(NonNull::new(Arc::into_raw(cloned_t) as *mut T::Owned as *mut ())
+        let ptr = Heap(NonNull::new(Arc::into_raw(cloned_t) as *mut T as *mut ())
                                .expect("Arc raw pointer to be non-null"));
         Own::from_raw(ptr)
     }
 
-    unsafe fn dealloc<T>(self)
-        where T: ?Sized + Type<Heap>
-    {
+    unsafe fn dealloc<T>(self) {
         let _ = self.take::<T>();
     }
 
-    unsafe fn get<T>(&self) -> &T::Type
-        where T: ?Sized + Type<Heap>
-    {
-        let r: &T::Owned = self.get_owned::<T>();
-        let r: &T::Type = r.borrow();
-
-        // safe as we own the thing we're borrowing from
-        &*(r as *const T::Type)
+    unsafe fn get<T>(&self) -> &T {
+        &*self.0.cast().as_ptr()
     }
 
-    unsafe fn take<T>(self) -> Arc<T::Owned>
-        where T: ?Sized + Type<Heap>
-    {
+    unsafe fn take<T>(self) -> Arc<T> {
         let this = ManuallyDrop::new(self);
         Arc::from_raw(this.0.as_ptr().cast())
     }
 
-    unsafe fn get_owned<T>(&self) -> &T::Owned
-        where T: ?Sized + Type<Heap>
-    {
-        &*self.0.cast().as_ptr()
-    }
-
-    unsafe fn get_mut<'p, T>(&'p mut self) -> &'p mut T::Owned
-        where T: ?Sized + Type<Heap>
-    {
+    unsafe fn get_mut<T: Clone>(&mut self) -> &mut T {
         // Safe to create orig_t as it won't be dropped.
-        let mut orig_t: ManuallyDrop<Arc<T::Owned>>  = ManuallyDrop::new(Arc::from_raw(self.0.cast::<T::Owned>().as_ptr()));
+        let mut orig_t: ManuallyDrop<Arc<T>>  = ManuallyDrop::new(Arc::from_raw(self.0.cast::<T>().as_ptr()));
 
-        let ref_t: &mut T::Owned = Arc::make_mut(&mut *orig_t);
+        let ref_t: &mut T = Arc::make_mut(&mut *orig_t);
 
         // Extend the lifetime.
         //
@@ -80,26 +62,37 @@ impl Ptr for Heap {
     type Error = !;
     type Allocator = HeapAllocator;
 
-    unsafe fn clone_ptr<T: ?Sized + Type<Self>>(&self) -> Own<T, Self> {
+    unsafe fn clone_ptr<T>(&self) -> Own<T, Self> {
         self.clone_ptr::<T>()
     }
-    unsafe fn dealloc<T: ?Sized + Type<Self>>(self) {
+    unsafe fn dealloc<T>(self) {
         self.dealloc::<T>()
     }
     fn allocator() -> HeapAllocator {
         HeapAllocator
     }
+
+    unsafe fn debug_get<T>(&self) -> Option<&T> {
+        Some(self.get::<T>())
+    }
+}
+
+impl Alloc for HeapAllocator {
+    type Ptr = Heap;
+
+    fn alloc<T>(&mut self, value: T) -> Own<T, Heap>
+    {
+        let ptr = Heap::alloc::<T>(value);
+
+        unsafe { Own::from_raw(ptr) }
+    }
 }
 
 impl TryGet for Heap {
-    unsafe fn try_get<'p,T>(&'p self) -> Result<Ref<'p,T,Heap>, !>
-        where T: ?Sized + Type<Self>
-    {
-        Ok(Ref::Borrowed(self.get::<T>()))
+    unsafe fn try_get<'p,T: Clone>(&'p self) -> Result<Cow<'p, T>, !> {
+        Ok(Cow::Borrowed(self.get::<T>()))
     }
-    unsafe fn try_take<'p, T>(self) -> Result<T::Owned, !>
-        where T: ?Sized + Type<Self>
-    {
+    unsafe fn try_take<T: Clone>(self) -> Result<T, !> {
         let boxed = self.take::<T>();
 
         Ok(Arc::try_unwrap(boxed)
@@ -109,38 +102,27 @@ impl TryGet for Heap {
 }
 
 impl TryGetMut for Heap {
-    unsafe fn try_get_mut<'p, T>(&'p mut self) -> Result<&'p mut T::Owned, Self::Error>
-        where T: ?Sized + Type<Self>
-    {
+    unsafe fn try_get_mut<T: Clone>(&mut self) -> Result<&mut T, Self::Error> {
         Ok(self.get_mut::<T>())
     }
 }
 
 impl Get for Heap {
-    unsafe fn get<'p, T>(&'p self) -> Ref<'p,T,Heap>
-        where T: ?Sized + Type<Self>
-    {
-        self.try_get::<T>().unwrap()
+    unsafe fn get<'p, T: Clone>(&'p self) -> Cow<'p, T> {
+        Cow::Borrowed(self.get::<T>())
     }
-    unsafe fn take<'p, T>(self) -> T::Owned
-        where T: ?Sized + Type<Self>
-    {
-        self.try_take::<T>().unwrap()
+    unsafe fn take<T: Clone>(self) -> T {
+        let boxed = self.take::<T>();
+
+        Arc::try_unwrap(boxed)
+            .unwrap_or_else(|boxed| (&*boxed).clone())
     }
 
 }
 
 impl GetMut for Heap {
-    unsafe fn get_owned<T>(&self) -> &T::Owned
-        where T: ?Sized + Type<Self>
-    {
-        self.get_owned::<T>()
-    }
-
-    unsafe fn get_mut<T>(&mut self) -> &mut T::Owned
-        where T: ?Sized + Type<Self>
-    {
-        self.try_get_mut::<T>().unwrap()
+    unsafe fn get_mut<T: Clone>(&mut self) -> &mut T {
+        self.get_mut::<T>()
     }
 }
 
@@ -150,17 +132,6 @@ impl Default for Heap {
     }
 }
 
-impl Alloc for HeapAllocator {
-    type Ptr = Heap;
-
-    fn alloc<T>(&mut self, value: T::Owned) -> Own<T, Heap>
-        where T: ?Sized + Type<Heap>
-    {
-        let ptr = Heap::alloc::<T>(value);
-
-        unsafe { Own::from_raw(ptr) }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -169,16 +140,5 @@ mod tests {
     #[test]
     fn sized_primitives() {
         let _own: Own<u8, Heap> = HeapAllocator.alloc(42u8);
-    }
-
-    #[test]
-    fn unsized_primitives() {
-        let mut own: Own<[u8], Heap> = HeapAllocator.alloc::<[u8]>(vec![42;1]);
-
-        own.get_mut().push(11);
-
-        assert_eq!(own.get().len(), 2);
-
-        let _: Vec<u8> = own.take();
     }
 }

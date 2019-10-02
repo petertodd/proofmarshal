@@ -26,7 +26,7 @@ where T::Error: fmt::Debug,
 macro_rules! array_impls {
     ($($N:literal)+) => {
         $(
-            impl<T: Copy + Verbatim<P>, P> Verbatim<P> for [T;$N] {
+            impl<T: Verbatim<P>, P> Verbatim<P> for [T;$N] {
                 const LEN: usize = $N * T::LEN;
                 const NONZERO_NICHE: bool = T::NONZERO_NICHE;
 

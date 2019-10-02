@@ -4,14 +4,6 @@ members = [
 	"sliceinit",
 	"pointee",
 
-	"verbatim",
-	"verbatim_derive",
-	"verbatim_derive/test",
-
-	"persist",
-	"persist_derive",
-	"testpersist",
-
 	"proofmarshal",
 	"proofmarshal_derive",
 

@@ -4,16 +4,26 @@
 #![feature(maybe_uninit_extra)]
 #![feature(manually_drop_take)]
 
+pub mod verbatim;
+
 pub mod ptr;
 
 pub mod digest;
-pub mod fact;
 pub mod commit;
 
-//pub mod collections;
+pub mod fact;
+
+pub mod seal;
 
 pub mod prelude {
-    pub use super::ptr::{Ptr,Own,Alloc,TryGet,Get,TryGetMut,GetMut,heap::Heap,Ref,Type};
+    pub use super::{
+        ptr::{
+            Ptr,Own,Alloc,
+            TryGet,Get,TryGetMut,GetMut,
+            heap::Heap,
+        },
+        commit::Commit,
+    };
 }
 
 #[cfg(test)]

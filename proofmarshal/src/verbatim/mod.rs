@@ -1,8 +1,8 @@
 //! Verbatim encoding.
 
-#![feature(never_type)]
-
 use std::io;
+
+use crate::ptr::Ptr;
 
 pub mod primitive;
 pub mod option;
@@ -24,6 +24,20 @@ pub trait Verbatim<P = !> : Sized {
     fn decode(src: &[u8], ptr_decoder: &mut impl PtrDecode<P>) -> Result<Self, Self::Error>;
 }
 
+impl<P> Verbatim<P> for ! {
+    type Error = !;
+    const LEN: usize = 0;
+    const NONZERO_NICHE: bool = false;
+
+    fn encode<W: io::Write>(&self, _: W, _: &mut impl PtrEncode<P>) -> Result<W, io::Error> {
+        match *self {}
+    }
+    fn decode(_: &[u8], _: &mut impl PtrDecode<P>) -> Result<Self, Self::Error> {
+        unreachable!("! can't be decoded")
+    }
+}
+
+
 pub unsafe trait PtrDecode<P> {
 }
 
@@ -38,6 +52,13 @@ unsafe impl<T: ?Sized> PtrDecode<!> for T {}
 
 unsafe impl PtrEncode<()> for () {}
 unsafe impl PtrDecode<()> for () {}
+
+pub fn encode<T>(value: &T) -> Vec<u8>
+where T: Verbatim<()>
+{
+    let buf = vec![];
+    value.encode(buf, &mut ()).unwrap()
+}
 
 #[cfg(test)]
 mod tests {
