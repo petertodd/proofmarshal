@@ -1,4 +1,10 @@
 //! Generic pointers.
+//!
+//! Basic idea: this is meant to seamlessly integrate both volatile and persistent storage.
+//! This is why the various `get()` methods on pointers return `Cow`: depending on the type of
+//! pointer values may or may not have to be loaded into memory. Secondly, this is why types must
+//! be `Clone`: code using this functionality - especially container types - needs to be able to
+//! return owned values to callees.
 
 use core::any::type_name;
 use core::fmt;
