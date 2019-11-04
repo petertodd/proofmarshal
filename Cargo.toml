@@ -2,6 +2,7 @@
 members = [
 	"nonzero",
 	"sliceinit",
+	"persist",
 	"pointee",
 
 	"proofmarshal",

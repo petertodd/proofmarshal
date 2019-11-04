@@ -1,0 +1,11 @@
+[package]
+name = "persist"
+version = "0.1.0"
+authors = ["Peter Todd <pete@petertodd.org>"]
+edition = "2018"
+
+[dependencies]
+pointee = { path = "../pointee" }
+nonzero = { path = "../nonzero" }
+
+static_assertions = "1.1.0"
