@@ -25,8 +25,72 @@ pub use self::never::NeverAlloc;
 
 //pub mod primitive;
 
+/// An in-memory pointer.
+///
+/// Always associated with a lifetime.
+///
+/// `Mem<A>` can implement all the useful traits, independent of whether or not `A` does.
+#[repr(transparent)]
+pub struct Mem<A> {
+    arena: PhantomData<A>,
+    pub raw: NonNull<()>,
+}
+
+/// Persistent byte blob.
+#[repr(transparent)]
+pub struct Blob<A: blob::Arena> {
+    /// Entirely invariant?
+    arena: PhantomData<fn(A) -> A)>,
+    pub offset: A::Offset,
+}
+
+/// Rich object protocol.
+#[repr(transparent)]
+pub struct Obj<A: obj::Arena> {
+    /// Entirely invariant?
+    arena: PhantomData<fn(A) -> A>,
+    pub handle: A::Handle,
+}
+
+/// Anything can be loaded from a mem pointer, because it's just a dereference.
+impl<T: ?Sized, P: MemPtr> Load<Mem<P>> for T {
+}
+
+/// All sized types know how to store; trivial.
+impl<T, P: MemPtr> Store<Mem<P>> for T {
+}
+
+impl<P: MemPtr> Store<Mem<P>> for Foo<Mem<P>> {
+}
+
+impl<A> Ptr for Mem<A> {
+    type Arena = A;
+}
+
+impl<A> Ptr for Blob<A> {
+    type Arena = A;
+}
+
+impl<A> Ptr for Obj<A> {
+    type Arena = A;
+}
+
+pub trait Ptr {
+    /// The arena has to know how to deallocate.
+    type Arena : Dealloc<Self>;
+}
+
+/// Something that knows how to deallocate a type of pointer.
+pub trait Dealloc<P> {
+    fn dealloc<T>(&mut self, ptr: P, metadata: T::Metadata)
+        where T: ?Sized + Pointee;
+}
+
+
 /// Type erased generic pointer.
 pub trait Ptr : Clone {
+    type Arena;
+
     type Error : 'static + fmt::Debug;
     type Allocator : Alloc<Ptr=Self>;
 
