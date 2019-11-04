@@ -98,8 +98,11 @@ pub struct Valid<'a, T: ?Sized + Pointee> {
     metadata: T::Metadata,
 }
 
-impl<'a, T: ?Sized + Pointee> Valid<'a, T> {
-    pub fn to_ref(self) -> &'a T {
+impl<'a, T: ?Sized + Pointee> ops::Deref for Valid<'a, T> {
+    type Target = T;
+
+    #[inline(always)]
+    fn deref(&self) -> &T {
         unsafe {
             let fat: *const T = T::make_fat_non_null(self.thin, self.metadata).as_ptr();
             &*fat
