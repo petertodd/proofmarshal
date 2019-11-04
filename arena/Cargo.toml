@@ -1,0 +1,15 @@
+[package]
+name = "arena"
+version = "0.1.0"
+authors = ["Peter Todd <pete@petertodd.org>"]
+edition = "2018"
+
+[dependencies]
+pointee = { path = "../pointee" }
+owned = { path = "../owned" }
+persist = { path = "../persist" }
+
+memmap = "0.7.0"
+
+[dev-dependencies]
+tempfile = "3.1.0"

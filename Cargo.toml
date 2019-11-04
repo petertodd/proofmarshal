@@ -4,6 +4,9 @@ members = [
 	"sliceinit",
 	"persist",
 	"pointee",
+	"owned",
+
+	"arena",
 
 	"proofmarshal",
 	"proofmarshal_derive",
