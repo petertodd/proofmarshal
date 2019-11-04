@@ -6,7 +6,7 @@ members = [
 	"pointee",
 	"owned",
 
-	"arena",
+	"hoard",
 
 	"proofmarshal",
 	"proofmarshal_derive",
