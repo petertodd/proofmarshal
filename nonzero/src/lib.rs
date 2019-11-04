@@ -1,4 +1,4 @@
-/// Marker trait for non-zero types.
+//! Marker trait for non-zero types.
 
 use core::num;
 use core::ptr::NonNull;
