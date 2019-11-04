@@ -114,8 +114,8 @@ unsafe impl<T> Pointee for [T] {
     }
 
     #[inline(always)]
-    fn layout(len: Self::Metadata) -> Layout {
-        len.into()
+    fn align(_: Self::Metadata) -> usize {
+        mem::align_of::<T>()
     }
 
     #[inline(always)]
@@ -126,5 +126,12 @@ unsafe impl<T> Pointee for [T] {
     #[inline(always)]
     fn make_fat_ptr_mut(thin: *mut (), len: Self::Metadata) -> *mut [T] {
         ptr::slice_from_raw_parts_mut(thin as *mut T, len.into())
+    }
+}
+
+unsafe impl<T> DynSized for [T] {
+    #[inline(always)]
+    fn size(len: Self::Metadata) -> usize {
+        Layout::from(len).size()
     }
 }
