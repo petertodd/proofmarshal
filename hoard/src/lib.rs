@@ -4,35 +4,33 @@
 #![feature(manually_drop_take)]
 #![feature(never_type)]
 
-use core::borrow::Borrow;
+use std::borrow::{ToOwned, Cow};
 use core::fmt;
 use core::hash;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
+use core::task::Poll;
 
 use pointee::Pointee;
 //use owned::{Owned, Ref};
 
 pub mod never;
-pub mod heap;
-
-mod refs;
-pub use self::refs::*;
+//pub mod heap;
 
 pub mod pile;
-pub mod hoard;
+pub mod marshal;
 
-pub trait Zone : Sized {
+pub mod impls;
+
+//pub mod hoard;
+
+pub trait Zone : Clone {
     /// Raw pointer type.
-    type Ptr : fmt::Debug + Eq + Ord + hash::Hash;
+    type Ptr : fmt::Debug + Eq + Ord;
 
     /// Default allocator for this zone.
     type Allocator : Alloc<Zone=Self>;
 
-    /// Error returned when a pointer can't be loaded.
-    ///
-    /// Specifically, this is when the pointer itself is invalid, rather than the value behind the
-    /// pointer.
     type Error : fmt::Debug;
 
     /// Creates a new allocator for this zone.
@@ -46,15 +44,7 @@ pub trait Zone : Sized {
     }
 
     /// Clones a record in this zone.
-    ///
-    /// Any zone implementing `Clone` is expected to implement this to allow `#[derive(Clone)`
-    /// to work.
-    fn clone_rec<T: Clone>(r: &Rec<T,Self>) -> Rec<T,Self>
-        where Self: Clone
-    {
-        let _ = r;
-        unimplemented!()
-    }
+    fn clone_rec<T: ?Sized + Pointee>(r: &Rec<T,Self>) -> Rec<T,Self>;
 
     /// Deallocates a uniquely owned pointer.
     ///
@@ -64,25 +54,22 @@ pub trait Zone : Sized {
     unsafe fn dealloc<T: ?Sized + Pointee>(ptr: Ptr<T,Self>);
 }
 
-pub trait Get : Zone {
-    fn get<'p, T: ?Sized + Load<Self>>(&self, r: &'p Rec<T,Self>) -> Ref<'p, T, Self>;
-}
-
-/*
-pub trait GetMut : Zone {
-    fn get_mut<'p, T: ?Sized + Load<Self>>(&self, r: &'p mut Rec<T,Self>) -> &'p mut T;
-}
-*/
-
-pub trait Load<Z: Zone> : Pointee {
+pub trait Load<Z: Zone> : Pointee + ToOwned {
     type Error : fmt::Debug;
-    type Owned : Borrow<Self>;
 
-    fn load<'p>(zone: &Z, r: &'p Rec<Self,Z>) -> Result<Ref<'p, Self, Z>, Self::Error>;
+    fn pile_load<'p, L>(pile: &Z, rec: &'p Rec<Self, Z>) -> Result<Result<Cow<'p, Self>, Self::Error>, Z::Error>
+        where Z: pile::Pile;
 }
 
-pub trait Store<Z: Zone> : Pointee {
-    fn store(self, allocator: &mut Z::Allocator) -> Rec<Self,Z>;
+pub trait Store<Z: Zone> : Load<Z> {
+    unsafe fn alloc(owned: Self::Owned, dst: *mut ()) -> *mut Self;
+
+    fn pile_store<D: pile::Dumper<Pile=Z>>(owned: Self::Owned, dumper: D) -> Result<D::Done, D::Error>
+        where Z: pile::Pile;
+}
+
+pub trait Get : Zone {
+    fn get<'p, T: ?Sized + Load<Self>>(&self, r: &'p Rec<T,Self>) -> Cow<'p, T>;
 }
 
 /// An allocator for a zone.
@@ -128,12 +115,19 @@ pub struct Bag<T: ?Sized + Pointee, Z: Zone> {
     zone: Z,
 }
 
-impl<T: ?Sized + Pointee, A: Zone> Drop for Rec<T,A> {
+impl<T: ?Sized + Pointee, Z: Zone> Drop for Rec<T,Z> {
     fn drop(&mut self) {
         unsafe {
             let ptr = ManuallyDrop::take(&mut self.ptr);
-            A::dealloc(ptr);
+            Z::dealloc(ptr);
         }
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> Clone for Rec<T,Z> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Z::clone_rec(self)
     }
 }
 
@@ -179,7 +173,7 @@ impl<T: Store<Z>, Z: Zone> Bag<T,Z> {
 }
 
 impl<T: ?Sized + Load<Z>, Z: Get> Bag<T,Z> {
-    pub fn get(&self) -> Ref<T,Z> {
+    pub fn get<'p>(&'p self) -> Cow<'p, T> {
         self.zone.get(&self.rec)
     }
 }
@@ -196,7 +190,6 @@ impl<T: ?Sized + Pointee, Z: Zone> Bag<T,Z> {
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,4 +198,3 @@ mod tests {
     fn test() {
     }
 }
-*/

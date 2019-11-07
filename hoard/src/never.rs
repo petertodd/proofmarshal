@@ -29,7 +29,7 @@ impl Zone for ! {
     type Allocator = NeverAlloc<!>;
     type Error = !;
 
-    fn clone_rec<T: Clone>(r: &Rec<T,Self>) -> Rec<T,Self> {
+    fn clone_rec<T: ?Sized + Pointee>(r: &Rec<T,Self>) -> Rec<T,Self> {
         match r.ptr().raw {}
     }
 
