@@ -36,4 +36,8 @@ impl Zone for ! {
     unsafe fn dealloc<T: ?Sized + Pointee>(ptr: Ptr<T,Self>) {
         match ptr.raw {}
     }
+
+    fn fmt_debug_rec<T: ?Sized + Pointee>(rec: &Rec<T,Self>, _: &mut fmt::Formatter) -> fmt::Result {
+        match rec.ptr().raw {}
+    }
 }

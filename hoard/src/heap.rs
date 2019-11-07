@@ -8,13 +8,13 @@ use super::*;
 pub struct Heap;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
-pub struct Ptr(NonNull<()>);
+pub struct Raw(NonNull<()>);
 
-impl Ptr {
+impl Raw {
     #[inline]
     fn from_box<T: ?Sized>(b: Box<T>) -> Self {
         let nn = Box::into_raw_non_null(b);
-        Ptr(nn.cast())
+        Self(nn.cast())
     }
 
     #[inline]
@@ -45,7 +45,7 @@ impl Ptr {
 pub struct Allocator;
 
 impl Zone for Heap {
-    type Ptr = Ptr;
+    type Ptr = Raw;
     type Allocator = Allocator;
     type Error = !;
 
@@ -66,51 +66,34 @@ impl Zone for Heap {
     unsafe fn dealloc<T: ?Sized + Pointee>(ptr: super::Ptr<T,Self>) {
         ptr.raw.into_box::<T>(ptr.metadata);
     }
+
+    fn fmt_debug_rec<T: ?Sized + Pointee>(rec: &Rec<T,Self>, f: &mut fmt::Formatter) -> fmt::Result
+        where T: fmt::Debug
+    {
+        let value = unsafe { rec.ptr.raw.get::<T>(rec.ptr.metadata) };
+        fmt::Debug::fmt(value, f)
+    }
 }
 
 impl Alloc for Allocator {
     type Zone = Heap;
 
     #[inline]
-    fn alloc<T: Store<Heap>>(&mut self, value: T) -> Rec<T,Self::Zone> {
-        value.store(self)
+    fn alloc<T>(&mut self, value: T) -> Rec<T,Self::Zone> {
+        let raw = Raw::from_box(Box::new(self));
+        unsafe { Rec::from_ptr(super::Ptr { raw, metadata: () }) }
     }
 
     #[inline]
     fn zone(&self) -> Self::Zone { Heap }
 }
 
-impl<T: ?Sized + Pointee> Load<Heap> for T {
-    type Error = !;
-    type Owned = NeverOwned<T>;
-
-    fn load<'p>(_: &Heap, r: &'p Rec<Self,Heap>) -> Result<Ref<'p, Self, Heap>, Self::Error> {
+impl TryGet for Heap {
+    fn try_get<'p, T: ?Sized + Load<Self>>(&self, r: &'p Rec<T,Self>) -> Result<Ref<'p, T, Self>, !> {
         let r: &T = unsafe { r.ptr().raw.get::<T>(r.ptr().metadata) };
         Ok(Ref::Borrowed(r))
     }
 }
-
-impl<T> Store<Heap> for T {
-    fn store(self, _: &mut Allocator) -> Rec<Self,Heap> {
-        let raw = Ptr::from_box(Box::new(self));
-        unsafe { Rec::from_ptr(super::Ptr { raw, metadata: () }) }
-    }
-}
-
-impl Get for Heap {
-    fn get<'p, T: ?Sized + Load<Self>>(&self, r: &'p Rec<T,Self>) -> Ref<'p, T, Self> {
-        T::load(&Heap, r)
-          .expect("Loading from a Heap never fails")
-    }
-}
-
-/*
-impl GetMut for Heap {
-    fn get_mut<'p, T: ?Sized + Load<Self>>(&self, owned: &'p mut Own<T,Self>) -> &'p mut T {
-        unsafe { owned.ptr.raw.get_mut::<T>(owned.ptr.metadata) }
-    }
-}
-*/
 
 #[cfg(test)]
 mod tests {
@@ -121,7 +104,7 @@ mod tests {
 
     #[test]
     fn test() {
-        let bag = Bag::<_,Heap>::new(Foo(8,16));
-        dbg!(bag.get());
+        //let bag = Bag::<_,Heap>::new(Foo(8,16));
+        //dbg!(bag.get());
     }
 }

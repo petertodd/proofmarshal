@@ -1,22 +1,22 @@
 use super::*;
 
-use std::marker::PhantomData;
 use std::mem;
-use std::task::Poll;
+use std::any::Any;
 
 mod scalars;
 mod tuples;
+mod option;
 
 mod blob;
 pub use self::blob::Blob;
 
-pub trait Marshal<Z: Zone> : Clone {
+pub trait Marshal<Z: Zone> : Sized {
     type Error : fmt::Debug;
 
     fn pile_layout() -> pile::Layout
         where Z: pile::Pile;
 
-    fn pile_load<'p>(blob: Blob<'p, Self, Z>, pile: &Z) -> Result<Cow<'p, Self>, Self::Error>
+    fn pile_load<'p>(blob: Blob<'p, Self, Z>, pile: &Z) -> Result<Ref<'p, Self, Z>, Self::Error>
         where Z: pile::Pile;
 
     fn pile_store<D: pile::Dumper<Pile=Z>>(&self, dumper: D) -> Result<D::Done, D::Error>
@@ -25,9 +25,14 @@ pub trait Marshal<Z: Zone> : Clone {
 
 impl<Z: Zone, T: Marshal<Z>> Load<Z> for T {
     type Error = T::Error;
+    type Owned = T;
+
+    unsafe fn take(borrowed: &mut ManuallyDrop<Self>) -> T {
+        ManuallyDrop::take(borrowed)
+    }
 
     #[inline]
-    fn pile_load<'p, L>(pile: &Z, rec: &'p Rec<Self, Z>) -> Result<Result<Cow<'p, Self>, Self::Error>, Z::Error>
+    fn pile_load<'p, L>(pile: &Z, rec: &'p Rec<Self, Z>) -> Result<Result<Ref<'p, Self, Z>, Self::Error>, Z::Error>
         where Z: pile::Pile
     {
         let blob = pile.get_blob(&rec.ptr().raw, T::pile_layout().size())?;
@@ -55,28 +60,30 @@ impl<Z: Zone, T: Marshal<Z>> Store<Z> for T {
 #[derive(Debug)]
 pub struct LoadRecError;
 
-impl<T: ?Sized + Store<Z>, Z: Zone> Marshal<Z> for Rec<T,Z>
-where T::Metadata: Marshal<Z>,
+impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> Marshal<Y> for Rec<T,Z>
+where T: Store<Y>,
+      T::Metadata: Marshal<Y>,
+      Z: Marshal<Y>,
 {
     type Error = LoadRecError;
 
     #[inline(always)]
     fn pile_layout() -> pile::Layout
-        where Z: pile::Pile
+        where Y: pile::Pile
     {
-        Z::OFFSET_LAYOUT.extend(T::Metadata::pile_layout())
+        Y::OFFSET_LAYOUT.extend(T::Metadata::pile_layout())
     }
 
     #[inline(always)]
-    fn pile_load<'p>(blob: Blob<'p, Self, Z>, pile: &Z) -> Result<Cow<'p, Self>, Self::Error>
-        where Z: pile::Pile
+    fn pile_load<'p>(blob: Blob<'p, Self, Y>, pile: &Y) -> Result<Ref<'p, Self, Y>, Self::Error>
+        where Y: pile::Pile
     {
         todo!()
     }
 
     #[inline(always)]
-    fn pile_store<D: pile::Dumper<Pile=Z>>(&self, dumper: D) -> Result<D::Done, D::Error>
-        where Z: pile::Pile
+    fn pile_store<D: pile::Dumper<Pile=Y>>(&self, dumper: D) -> Result<D::Done, D::Error>
+        where Y: pile::Pile
     {
         let (dumper, offset) = dumper.dump_rec(self)?;
 
@@ -86,6 +93,35 @@ where T::Metadata: Marshal<Z>,
                      .dump_value(&offset)?
                      .dump_value(&self.ptr.metadata)?
                      .done()
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> Marshal<Y> for Bag<T,Z>
+where T: Store<Y>,
+      T::Metadata: Marshal<Y>,
+      Z: Marshal<Y>,
+{
+    type Error = LoadRecError;
+
+    #[inline(always)]
+    fn pile_layout() -> pile::Layout
+        where Y: pile::Pile
+    {
+        <Rec<T,Z> as Marshal<Y>>::pile_layout()
+    }
+
+    #[inline(always)]
+    fn pile_load<'p>(blob: Blob<'p, Self, Y>, pile: &Y) -> Result<Ref<'p, Self, Y>, Self::Error>
+        where Y: pile::Pile
+    {
+        todo!()
+    }
+
+    #[inline(always)]
+    fn pile_store<D: pile::Dumper<Pile=Y>>(&self, dumper: D) -> Result<D::Done, D::Error>
+        where Y: pile::Pile
+    {
+        self.rec.pile_store(dumper)
     }
 }
 
@@ -150,8 +186,10 @@ impl<D: pile::Dumper> pile::Dumper for FieldDumper<'_, D> {
     type Done = Self;
 
     #[inline(always)]
-    fn dump_rec<T: ?Sized + Store<Self::Pile>>(self, rec: &Rec<T, Self::Pile>)
+    fn dump_rec<T: ?Sized + Pointee, Z: Zone>(self, rec: &Rec<T,Z>)
         -> Result<(Self, <Self::Pile as pile::Pile>::Offset), Self::Error>
+    where T: Store<Self::Pile>,
+          Z: Marshal<Self::Pile>,
     {
         let (dumper, offset) = self.dumper.dump_rec(rec)?;
 
@@ -185,16 +223,41 @@ mod tests {
         unsafe fn dealloc<T: ?Sized + Pointee>(ptr: Ptr<T,Self>) {
             let _ = ptr.raw;
         }
+
+        fn fmt_debug_rec<T: ?Sized + Pointee>(_rec: &Rec<T,Self>, _f: &mut fmt::Formatter) -> fmt::Result {
+            todo!()
+        }
     }
 
     impl pile::Pile for SimplePile<'_> {
         const OFFSET_LAYOUT: pile::Layout = pile::Layout::new(8);
         type Offset = u64;
 
+        fn get_offset(ptr: &Self::Ptr) -> &Self::Offset {
+            ptr
+        }
+
         fn get_blob<'p>(&self, ptr: &'p Self::Ptr, size: usize) -> Result<&'p [u8], Self::Error> {
             todo!()
         }
     }
+
+    impl Marshal<Self> for SimplePile<'_> {
+        type Error = !;
+
+        fn pile_layout() -> pile::Layout {
+            pile::Layout::new(0)
+        }
+
+        fn pile_load<'p>(blob: Blob<'p, Self, Self>, pile: &Self) -> Result<Ref<'p, Self, Self>, Self::Error> {
+            todo!()
+        }
+
+        fn pile_store<D: pile::Dumper<Pile=Self>>(&self, dumper: D) -> Result<D::Done, D::Error> {
+            todo!()
+        }
+    }
+
 
     #[derive(Debug)]
     struct SimpleDumper<'a> {
@@ -207,7 +270,12 @@ mod tests {
         type Error = !;
         type Done = (Vec<u8>, u64);
 
-        fn dump_rec<T: ?Sized + Store<Self::Pile>>(self, rec: &Rec<T, Self::Pile>) -> Result<(Self, u64), Self::Error> {
+        fn dump_rec<T: ?Sized + Pointee, Z: Zone>(self, rec: &Rec<T,Z>)
+            -> Result<(Self, u64), Self::Error>
+        {
+            assert_eq!(std::any::type_name::<Z>(), std::any::type_name::<Self::Pile>());
+
+            let rec: &Rec<T, SimplePile<'a>> = unsafe { &*(rec as *const _ as *const _) };
             Ok((self, rec.ptr().raw))
         }
 

@@ -4,27 +4,26 @@
 #![feature(manually_drop_take)]
 #![feature(never_type)]
 
-use std::borrow::{ToOwned, Cow};
+use core::borrow::Borrow;
 use core::fmt;
-use core::hash;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
-use core::task::Poll;
 
 use pointee::Pointee;
 //use owned::{Owned, Ref};
 
 pub mod never;
-//pub mod heap;
+pub mod heap;
 
 pub mod pile;
 pub mod marshal;
 
-pub mod impls;
+mod refs;
+pub use self::refs::*;
 
-//pub mod hoard;
+pub mod linkedlist;
 
-pub trait Zone : Clone {
+pub trait Zone : Sized {
     /// Raw pointer type.
     type Ptr : fmt::Debug + Eq + Ord;
 
@@ -44,7 +43,8 @@ pub trait Zone : Clone {
     }
 
     /// Clones a record in this zone.
-    fn clone_rec<T: ?Sized + Pointee>(r: &Rec<T,Self>) -> Rec<T,Self>;
+    fn clone_rec<T: Clone>(r: &Rec<T,Self>) -> Rec<T,Self>
+        where Self: Clone;
 
     /// Deallocates a uniquely owned pointer.
     ///
@@ -52,12 +52,24 @@ pub trait Zone : Clone {
     /// with deallocation - and thus the risk of memory leaks - zones are expected to be able to
     /// perform deallocation without access to the zone object itself.
     unsafe fn dealloc<T: ?Sized + Pointee>(ptr: Ptr<T,Self>);
+
+    fn fmt_debug_rec<T: ?Sized + Pointee>(rec: &Rec<T,Self>, f: &mut fmt::Formatter) -> fmt::Result
+        where T: fmt::Debug;
+
+    fn fmt_debug<T: ?Sized + Pointee>(&self, rec: &Rec<T,Self>, f: &mut fmt::Formatter) -> fmt::Result
+        where T: fmt::Debug
+    {
+        Self::fmt_debug_rec(rec, f)
+    }
 }
 
-pub trait Load<Z: Zone> : Pointee + ToOwned {
+pub trait Load<Z: Zone> : Pointee {
     type Error : fmt::Debug;
+    type Owned : Borrow<Self>;
 
-    fn pile_load<'p, L>(pile: &Z, rec: &'p Rec<Self, Z>) -> Result<Result<Cow<'p, Self>, Self::Error>, Z::Error>
+    unsafe fn take(borrowed: &mut ManuallyDrop<Self>) -> Self::Owned;
+
+    fn pile_load<'p, L>(pile: &Z, rec: &'p Rec<Self, Z>) -> Result<Result<Ref<'p, Self, Z>, Self::Error>, Z::Error>
         where Z: pile::Pile;
 }
 
@@ -68,8 +80,40 @@ pub trait Store<Z: Zone> : Load<Z> {
         where Z: pile::Pile;
 }
 
+pub trait TryGet : Zone {
+    fn try_get<'p, T: ?Sized + Load<Self>>(&self, r: &'p Rec<T,Self>) -> Result<Ref<'p, T, Self>, Self::Error>;
+}
+
+pub trait TryTake : TryGet {
+    fn try_take<T: ?Sized + Load<Self>>(&self, r: Rec<T,Self>) -> Result<T::Owned, Self::Error>;
+}
+
 pub trait Get : Zone {
-    fn get<'p, T: ?Sized + Load<Self>>(&self, r: &'p Rec<T,Self>) -> Cow<'p, T>;
+    fn get<'p, T: ?Sized + Load<Self>>(&self, r: &'p Rec<T,Self>) -> Ref<'p, T, Self>;
+}
+
+pub trait Take : Get {
+    fn take<T: ?Sized + Load<Self>>(&self, r: Rec<T,Self>) -> T::Owned;
+}
+
+impl<Z: TryGet + Zone<Error=!>> Get for Z {
+    #[inline(always)]
+    fn get<'p, T: ?Sized + Load<Self>>(&self, r: &'p Rec<T,Self>) -> Ref<'p, T, Self> {
+        match self.try_get(r) {
+            Ok(r) => r,
+            Err(never) => never,
+        }
+    }
+}
+
+impl<Z: TryTake + Zone<Error=!>> Take for Z {
+    #[inline(always)]
+    fn take<T: ?Sized + Load<Self>>(&self, r: Rec<T,Self>) -> T::Owned {
+        match self.try_take(r) {
+            Ok(owned) => owned,
+            Err(never) => never,
+        }
+    }
 }
 
 /// An allocator for a zone.
@@ -110,6 +154,7 @@ pub struct Rec<T: ?Sized + Pointee, Z: Zone> {
 }
 
 /// Owned value and zone; the zone equivalent of a `Box`.
+#[derive(Clone)]
 pub struct Bag<T: ?Sized + Pointee, Z: Zone> {
     rec: Rec<T,Z>,
     zone: Z,
@@ -124,10 +169,18 @@ impl<T: ?Sized + Pointee, Z: Zone> Drop for Rec<T,Z> {
     }
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> Clone for Rec<T,Z> {
+impl<T: Clone, Z: Zone + Clone> Clone for Rec<T,Z> {
     #[inline]
     fn clone(&self) -> Self {
         Z::clone_rec(self)
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for Rec<T,Z>
+where T: fmt::Debug
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Z::fmt_debug_rec(self, f)
     }
 }
 
@@ -172,9 +225,29 @@ impl<T: Store<Z>, Z: Zone> Bag<T,Z> {
     }
 }
 
-impl<T: ?Sized + Load<Z>, Z: Get> Bag<T,Z> {
-    pub fn get<'p>(&'p self) -> Cow<'p, T> {
+impl<T: ?Sized + Load<Z>, Z: Zone> Bag<T,Z> {
+    pub fn get<'p>(&'p self) -> Ref<'p, T, Z>
+        where Z: Get
+    {
         self.zone.get(&self.rec)
+    }
+
+    pub fn try_get<'p>(&'p self) -> Result<Ref<'p, T, Z>, Z::Error>
+        where Z: TryGet
+    {
+        self.zone.try_get(&self.rec)
+    }
+
+    pub fn take(self) -> T::Owned
+        where Z: Take
+    {
+        self.zone.take(self.rec)
+    }
+
+    pub fn try_take(self) -> Result<T::Owned, Z::Error>
+        where Z: TryTake
+    {
+        self.zone.try_take(self.rec)
     }
 }
 
@@ -190,11 +263,33 @@ impl<T: ?Sized + Pointee, Z: Zone> Bag<T,Z> {
     }
 }
 
+impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for Bag<T,Z>
+where T: fmt::Debug
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.zone.fmt_debug(&self.rec, f)
+    }
+}
+
+impl<T, Z: Zone> Default for Bag<T,Z>
+where T: Default + Store<Z>,
+      Z: Default,
+{
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use heap::Heap;
+
     #[test]
     fn test() {
+        let b = Bag::<u8,Heap>::new(42u8);
+
+        dbg!(b);
     }
 }

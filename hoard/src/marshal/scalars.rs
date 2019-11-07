@@ -9,10 +9,10 @@ impl<Z: Zone> Marshal<Z> for () {
     }
 
     #[inline(always)]
-    fn pile_load<'p>(blob: Blob<'p, Self, Z>, _: &Z) -> Result<Cow<'p, Self>, Self::Error>
+    fn pile_load<'p>(blob: Blob<'p, Self, Z>, _: &Z) -> Result<Ref<'p, Self, Z>, Self::Error>
         where Z: pile::Pile
     {
-        Ok(Cow::Borrowed(unsafe { blob.assume_valid() }))
+        Ok(Ref::Borrowed(unsafe { blob.assume_valid() }))
     }
 
     #[inline(always)]
@@ -35,11 +35,11 @@ impl<Z: Zone> Marshal<Z> for bool {
     }
 
     #[inline(always)]
-    fn pile_load<'p>(blob: Blob<'p, Self, Z>, _: &Z) -> Result<Cow<'p, Self>, Self::Error>
+    fn pile_load<'p>(blob: Blob<'p, Self, Z>, _: &Z) -> Result<Ref<'p, Self, Z>, Self::Error>
         where Z: pile::Pile
     {
         match blob[0] {
-            0 | 1 => Ok(Cow::Borrowed(unsafe { blob.assume_valid() })),
+            0 | 1 => Ok(Ref::Borrowed(unsafe { blob.assume_valid() })),
             x => Err(LoadBoolError(x)),
         }
     }
@@ -65,10 +65,10 @@ macro_rules! impl_ints {
                 }
 
                 #[inline(always)]
-                fn pile_load<'p>(blob: Blob<'p, Self, Z>, _: &Z) -> Result<Cow<'p, Self>, Self::Error>
+                fn pile_load<'p>(blob: Blob<'p, Self, Z>, _: &Z) -> Result<Ref<'p, Self, Z>, Self::Error>
                     where Z: pile::Pile
                 {
-                    Ok(Cow::Borrowed(unsafe { blob.assume_valid() }))
+                    Ok(Ref::Borrowed(unsafe { blob.assume_valid() }))
                 }
 
                 #[inline(always)]

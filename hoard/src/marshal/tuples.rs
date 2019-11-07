@@ -12,7 +12,7 @@ impl<Z: Zone, A: Marshal<Z>, B: Marshal<Z>> Marshal<Z> for (A,B) {
     }
 
     #[inline(always)]
-    fn pile_load<'p>(blob: Blob<'p, Self, Z>, pile: &Z) -> Result<Cow<'p, Self>, Self::Error>
+    fn pile_load<'p>(blob: Blob<'p, Self, Z>, pile: &Z) -> Result<Ref<'p, Self, Z>, Self::Error>
         where Z: pile::Pile
     {
         unimplemented!()
