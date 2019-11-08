@@ -6,8 +6,6 @@ edition = "2018"
 
 [dependencies]
 pointee = { path = "../pointee" }
-owned = { path = "../owned" }
-persist = { path = "../persist" }
 
 memmap = "0.7.0"
 

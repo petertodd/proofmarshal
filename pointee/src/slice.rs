@@ -1,13 +1,14 @@
 use super::*;
 
-use core::marker::PhantomData;
 use core::cmp;
 use core::convert::TryFrom;
 use core::fmt;
 use core::hash;
+use core::marker::PhantomData;
 use core::mem;
 use core::ptr;
 
+/// The length of a slice.
 #[repr(transparent)]
 pub struct SliceLen<T> {
     marker: PhantomData<*const T>,
@@ -17,13 +18,28 @@ pub struct SliceLen<T> {
 }
 
 impl<T> SliceLen<T> {
+    /// Creates a new `SliceLen<T>`.
+    #[inline(always)]
+    pub fn new(len: usize) -> Option<Self> {
+        mem::size_of::<T>().checked_mul(len)
+            .and_then(|len_bytes| {
+                if len_bytes <= (isize::max_value() as usize) {
+                    Some(unsafe { SliceLen::new_unchecked(len) })
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// Creates a new `SliceLen<T>` without checking that the length is valid.
     #[inline(always)]
     pub const unsafe fn new_unchecked(len: usize) -> Self {
         Self { marker: PhantomData, len }
     }
 
+    /// Gets the underlying length.
     #[inline(always)]
-    pub fn get(self) -> usize {
+    pub const fn get(self) -> usize {
         self.len
     }
 }
@@ -88,18 +104,19 @@ impl<T> From<SliceLen<T>> for Layout {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SliceLenError(pub usize);
+unsafe impl<T> Sync for SliceLen<T> {}
+unsafe impl<T> Send for SliceLen<T> {}
+
+/// Error when a slice length is too large for a given type.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SliceLenError(());
 
 impl<T> TryFrom<usize> for SliceLen<T> {
     type Error = SliceLenError;
 
     #[inline]
     fn try_from(len: usize) -> Result<Self, Self::Error> {
-        match mem::size_of::<T>().checked_mul(len) {
-            Some(len_bytes) if len_bytes <= (isize::max_value() as usize) => Ok( unsafe { SliceLen::new_unchecked(len) } ),
-            _ => Err(SliceLenError(len)),
-        }
+        Self::new(len).ok_or(SliceLenError(()))
     }
 }
 
@@ -107,9 +124,10 @@ unsafe impl<T> Pointee for [T] {
     type Metadata = SliceLen<T>;
 
     #[inline(always)]
-    fn ptr_metadata(&self) -> Self::Metadata {
+    fn metadata(dropped: &MaybeDropped<Self>) -> Self::Metadata {
         unsafe {
-            SliceLen::new_unchecked(self.len())
+            let len = dropped.get_unchecked().len();
+            SliceLen::new_unchecked(len)
         }
     }
 
@@ -129,7 +147,7 @@ unsafe impl<T> Pointee for [T] {
     }
 }
 
-unsafe impl<T> DynSized for [T] {
+unsafe impl<T> PtrSized for [T] {
     #[inline(always)]
     fn size(len: Self::Metadata) -> usize {
         Layout::from(len).size()

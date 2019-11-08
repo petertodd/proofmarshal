@@ -2,9 +2,7 @@
 members = [
 	"nonzero",
 	"sliceinit",
-	"persist",
 	"pointee",
-	"owned",
 
 	"hoard",
 

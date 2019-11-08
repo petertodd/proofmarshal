@@ -3,7 +3,6 @@
 #![feature(slice_from_raw_parts)]
 #![feature(alloc_layout_extra)]
 
-
 use core::fmt;
 use core::hash::Hash;
 use core::ptr::NonNull;
@@ -11,7 +10,11 @@ use core::mem::{self, MaybeUninit};
 
 use core::alloc::Layout;
 
-pub mod slice;
+mod slice;
+pub use self::slice::*;
+
+mod maybedropped;
+pub use self::maybedropped::MaybeDropped;
 
 /// A target of a pointer.
 ///
@@ -22,7 +25,7 @@ pub unsafe trait Pointee {
     /// Fat pointer metadata.
     type Metadata : Sized + Copy + fmt::Debug + Eq + Ord + Hash;
 
-    fn ptr_metadata(&self) -> Self::Metadata;
+    fn metadata(dropped: &MaybeDropped<Self>) -> Self::Metadata;
 
     /// Makes the metadata for a sized type.
     ///
@@ -52,12 +55,32 @@ pub unsafe trait Pointee {
     fn align(metadata: Self::Metadata) -> usize;
 }
 
-/// A type whose size can be computed at runtime from pointer metadata.
+/// A type whose size can be computed at runtime from a dropped value.
 ///
 /// # Safety
 ///
 /// Other code can assume `DynSized` is implemented correctly.
 pub unsafe trait DynSized : Pointee {
+    /// Computes the size from a potentially dropped value.
+    fn size(dropped: &MaybeDropped<Self>) -> usize;
+
+    /// Computes a `Layout` from a potentially dropped value.
+    #[inline(always)]
+    fn layout(dropped: &MaybeDropped<Self>) -> Layout {
+        let size = Self::size(dropped);
+        let align = Self::align(Self::metadata(dropped));
+        unsafe {
+            Layout::from_size_align_unchecked(size, align)
+        }
+    }
+}
+
+/// A type whose size can be computed at runtime from pointer metadata.
+///
+/// # Safety
+///
+/// Other code can assume `PtrSized` is implemented correctly.
+pub unsafe trait PtrSized : Pointee {
     /// Computes the size from the metadata.
     fn size(metadata: Self::Metadata) -> usize;
 
@@ -72,10 +95,18 @@ pub unsafe trait DynSized : Pointee {
     }
 }
 
+unsafe impl<T: ?Sized> DynSized for T
+where T: PtrSized
+{
+    fn size(dropped: &MaybeDropped<Self>) -> usize {
+        <T as PtrSized>::size(T::metadata(dropped))
+    }
+}
+
 unsafe impl<T> Pointee for T {
     type Metadata = ();
 
-    fn ptr_metadata(&self) -> Self::Metadata {
+    fn metadata(_: &MaybeDropped<T>) -> Self::Metadata {
         Self::make_sized_metadata()
     }
 
@@ -101,7 +132,7 @@ unsafe impl<T> Pointee for T {
     }
 }
 
-unsafe impl<T> DynSized for T {
+unsafe impl<T> PtrSized for T {
     #[inline(always)]
     fn size(_: ()) -> usize {
         mem::size_of::<Self>()
@@ -114,6 +145,6 @@ mod tests {
 
     #[test]
     fn sized_metadata() {
-        let _:() = ().ptr_metadata();
+        let _:() = Pointee::metadata(MaybeDropped::from_ref(&()));
     }
 }
