@@ -23,7 +23,7 @@ pub use self::maybedropped::MaybeDropped;
 /// Other code can assume `Pointee` is implemented correctly.
 pub unsafe trait Pointee {
     /// Fat pointer metadata.
-    type Metadata : Sized + Copy + fmt::Debug + Eq + Ord + Hash;
+    type Metadata : Sized + Copy + fmt::Debug + Eq + Ord + Hash + Send + Sync;
 
     fn metadata(dropped: &MaybeDropped<Self>) -> Self::Metadata;
 
