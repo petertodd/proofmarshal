@@ -4,7 +4,7 @@ use core::mem;
 use super::*;
 
 mod offset;
-pub use self::offset::Offset;
+pub use self::offset::{Offset, OffsetMut};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Pile<'p> {
@@ -21,6 +21,7 @@ impl<'p> Pile<'p> {
 impl<'p> Zone for Pile<'p> {
     type Ptr = Offset<'p>;
     type PersistPtr = Offset<'static>;
+    type Allocator = !;
 }
 
 impl Encode<Self> for Pile<'_> {
@@ -76,7 +77,7 @@ impl<'p> Saver for Tx<'p> {
         let dst: &mut [MaybeUninit<u8>] = unsafe { mem::transmute(dst) };
         f(dst);
 
-        let offset = unsafe { Offset::new_unchecked(offset) };
+        let offset = Offset::new(offset as u64).unwrap();
         Ok(offset)
     }
 

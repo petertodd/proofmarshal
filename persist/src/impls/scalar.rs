@@ -3,6 +3,10 @@ use super::*;
 use core::marker::PhantomData;
 use core::mem;
 use core::slice;
+use core::num::{
+    NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64,
+    NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64,
+};
 
 #[derive(Debug)]
 pub struct ScalarEncoder<T, Z> {
@@ -99,6 +103,36 @@ macro_rules! impl_ints {
 impl_ints! {
     u8, u16, u32, u64, u128,
     i8, i16, i32, i64, i128,
+}
+
+macro_rules! impl_nonzero_ints {
+    ($( $t:ty, )+) => {
+        $(
+            impl<Z: Zone> Encode<Z> for $t {
+                const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
+
+                type Encode = ScalarEncoder<Self, Z>;
+                fn encode(self) -> Self::Encode {
+                    self.into()
+                }
+            }
+
+            impl<Z: Zone> EncodePoll for ScalarEncoder<$t, Z> {
+                type Zone = Z;
+                type Target = $t;
+
+                fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+                    dst.write_bytes(&self.value.get().to_le_bytes())?
+                       .done()
+                }
+            }
+        )+
+    }
+}
+
+impl_nonzero_ints! {
+    NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64,
+    NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64,
 }
 
 #[cfg(test)]

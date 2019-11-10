@@ -16,16 +16,22 @@ pub mod impls;
 pub mod own;
 use self::own::Own;
 
+mod refs;
+pub use self::refs::*;
+
 pub mod pile;
 
 pub trait Zone : Sized {
     type Ptr;
     type PersistPtr : Encode<Self> + Copy;
+
+    type Allocator;
 }
 
 impl Zone for ! {
     type Ptr = !;
     type PersistPtr = !;
+    type Allocator = !;
 }
 
 /// A *value* that can be saved in a zone.

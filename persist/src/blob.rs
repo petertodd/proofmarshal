@@ -214,9 +214,13 @@ impl BlobLayout {
         }
     }
 
+    pub const fn has_niche(self) -> bool {
+        self.inhabited & (self.niche_start != self.niche_end)
+    }
+
     /// Gets the non-zero niche, if present.
     pub fn niche(self) -> Option<Range<usize>> {
-        if (self.niche_start != self.niche_end) && self.inhabited {
+        if self.has_niche() {
             Some(self.niche_start .. self.niche_end)
         } else {
             None
