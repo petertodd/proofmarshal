@@ -1,58 +1,102 @@
-//! Generic borrowed references
+//! Targets of pointers.
 
-use core::ops::Deref;
 use core::borrow::Borrow;
+use core::cmp;
 use core::fmt;
+use core::hash;
+use core::ops;
 
-use crate::ptr::Pointee;
+use super::Owned;
 
-/// A (conceptually) borrowed reference to a value in an arena.
-///
-/// Implements `Deref<Target=T>`.
-///
-/// May actually have ownership of the value if the value had to be loaded into memory.
-pub struct Ref<'a, T: ?Sized + Pointee>(RefState<'a, T>);
+/// A reference that may be a true reference, or an owned value.
+pub enum Ref<'a, B: ?Sized + Owned> {
+    Borrowed(&'a B),
+    Owned(<B as Owned>::Owned),
+}
 
-impl<'a, T: ?Sized + Pointee> Ref<'a, T> {
-    #[inline(always)]
-    pub fn borrowed(r: &'a T) -> Self {
-        Ref(RefState::Borrowed(r))
-    }
-
-    #[inline(always)]
-    pub fn owned(owned: T::Owned) -> Self {
-        Ref(RefState::Owned(owned))
+impl<B: ?Sized + Owned> fmt::Debug for Ref<'_, B>
+where B: fmt::Debug
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        (**self).fmt(f)
     }
 }
 
-enum RefState<'a, T: ?Sized + Pointee> {
-    Owned(T::Owned),
-    Borrowed(&'a T),
+impl<B: ?Sized + Owned> fmt::Display for Ref<'_, B>
+where B: fmt::Display
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        (**self).fmt(f)
+    }
 }
 
-impl<'p, T: ?Sized + Pointee> Deref for Ref<'p, T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        match &self.0 {
-            RefState::Borrowed(r) => r,
-            RefState::Owned(owned) => owned.borrow(),
+impl<B: Clone> Clone for Ref<'_, B> {
+    fn clone(&self) -> Self {
+        match self {
+            Ref::Borrowed(r) => Ref::Borrowed(r),
+            Ref::Owned(owned) => Ref::Owned(owned.clone()),
         }
     }
 }
 
-impl<'a, T: ?Sized + Pointee + fmt::Debug> fmt::Debug for Ref<'a, T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match &self.0 {
-            RefState::Owned(owned) => {
-                f.debug_tuple("Ref::Owned")
-                    .field(&owned.borrow())
-                    .finish()
-            },
-            RefState::Borrowed(r) => {
-                f.debug_tuple("Ref::Borrowed")
-                    .field(&r)
-                    .finish()
-            },
+impl<B: ?Sized + Owned> ops::Deref for Ref<'_, B> {
+    type Target = B;
+
+    fn deref(&self) -> &B {
+        match self {
+            Ref::Borrowed(r) => r,
+            Ref::Owned(owned) => owned.borrow(),
         }
+    }
+}
+
+impl<'b,'c, B: ?Sized + Owned, C: ?Sized + Owned> cmp::PartialEq<Ref<'c, C>> for Ref<'b, B>
+where B: cmp::PartialEq<C>,
+{
+    fn eq(&self, other: &Ref<'c, C>) -> bool {
+        cmp::PartialEq::eq(&**self, &**other)
+    }
+}
+impl<B: ?Sized + Owned> cmp::Eq for Ref<'_, B>
+where B: cmp::Eq,
+{}
+
+impl<'b,'c, B: ?Sized + Owned, C: ?Sized + Owned> cmp::PartialOrd<Ref<'c, C>> for Ref<'b, B>
+where B: cmp::PartialOrd<C>,
+{
+    fn partial_cmp(&self, other: &Ref<'c, C>) -> Option<cmp::Ordering> {
+        cmp::PartialOrd::partial_cmp(&**self, &**other)
+    }
+}
+
+impl<B: ?Sized + Owned> cmp::Ord for Ref<'_, B>
+where B: cmp::Ord,
+{
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        cmp::Ord::cmp(&**self, &**other)
+    }
+}
+
+impl<B: ?Sized + Owned> hash::Hash for Ref<'_, B>
+where B: hash::Hash,
+{
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        hash::Hash::hash(&**self, state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sized_deref() {
+        let v = vec![1u8,2,3];
+        let r = Ref::Borrowed(&v);
+
+        assert_eq!(r.len(), 3);
+
+        let r: Ref<Vec<u8>> = Ref::Owned(v);
+        assert_eq!(r.len(), 3);
     }
 }

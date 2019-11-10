@@ -1,98 +1,71 @@
 //! Targets of pointers.
 
-use std::fmt;
-use std::borrow::Borrow;
-use std::ops;
-use std::cmp;
-use std::hash;
+use core::borrow::Borrow;
+use core::cell::Cell;
+use core::mem::ManuallyDrop;
+use core::ptr;
+use core::slice;
+
+mod take;
+pub use self::take::Take;
+
+mod refs;
+pub use self::refs::Ref;
 
 /// The owned form of a type.
-pub trait Owned {
+pub unsafe trait Owned {
     type Owned : Borrow<Self>;
+
+    unsafe fn to_owned(this: &mut ManuallyDrop<Self>) -> Self::Owned;
+
+    unsafe fn from_owned<'a>(owned: Self::Owned, dst: *mut ()) -> &'a mut Self;
 }
 
-impl<T> Owned for T {
+unsafe impl<T> Owned for T {
     type Owned = T;
+
+    unsafe fn to_owned(this: &mut ManuallyDrop<Self>) -> Self::Owned {
+        (this as *const _ as *const Self).read()
+    }
+
+    unsafe fn from_owned<'a>(owned: Self::Owned, dst: *mut ()) -> &'a mut Self {
+        let dst = dst.cast::<Self>();
+        dst.write(owned);
+        &mut *dst
+    }
 }
 
-impl<T> Owned for [T] {
+unsafe impl<T> Owned for [T] {
     type Owned = Vec<T>;
-}
 
-/// A reference that may be a true reference, or an owned value.
-pub enum Ref<'a, B: ?Sized + Owned> {
-    Borrowed(&'a B),
-    Owned(<B as Owned>::Owned),
-}
+    unsafe fn to_owned(this: &mut ManuallyDrop<[T]>) -> Self::Owned {
+        let len = this.len();
 
-impl<B: ?Sized + Owned> fmt::Debug for Ref<'_, B>
-where B: fmt::Debug
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (**self).fmt(f)
+        let mut r = Vec::<T>::with_capacity(len);
+
+        ptr::copy_nonoverlapping(this.as_ptr(), r.as_mut_ptr(), len);
+        r.set_len(len);
+
+        r
+    }
+
+    unsafe fn from_owned<'a>(mut owned: Vec<T>, dst: *mut ()) -> &'a mut Self {
+        let dst = dst as *mut T;
+        let len = owned.len();
+
+        owned.set_len(0);
+        ptr::copy_nonoverlapping(owned.as_ptr(), dst as *mut T, len);
+
+        slice::from_raw_parts_mut(dst, len)
     }
 }
 
-impl<B: ?Sized + Owned> fmt::Display for Ref<'_, B>
-where B: fmt::Display
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (**self).fmt(f)
-    }
-}
+#[derive(Debug)]
+struct CountDrops<'a>(&'a Cell<usize>);
 
-impl<B: Clone> Clone for Ref<'_, B> {
-    fn clone(&self) -> Self {
-        match self {
-            Ref::Borrowed(r) => Ref::Borrowed(r),
-            Ref::Owned(owned) => Ref::Owned(owned.clone()),
-        }
-    }
-}
-
-impl<B: ?Sized + Owned> ops::Deref for Ref<'_, B> {
-    type Target = B;
-
-    fn deref(&self) -> &B {
-        match self {
-            Ref::Borrowed(r) => r,
-            Ref::Owned(owned) => owned.borrow(),
-        }
-    }
-}
-
-impl<'b,'c, B: ?Sized + Owned, C: ?Sized + Owned> cmp::PartialEq<Ref<'c, C>> for Ref<'b, B>
-where B: cmp::PartialEq<C>,
-{
-    fn eq(&self, other: &Ref<'c, C>) -> bool {
-        cmp::PartialEq::eq(&**self, &**other)
-    }
-}
-impl<B: ?Sized + Owned> cmp::Eq for Ref<'_, B>
-where B: cmp::Eq,
-{}
-
-impl<'b,'c, B: ?Sized + Owned, C: ?Sized + Owned> cmp::PartialOrd<Ref<'c, C>> for Ref<'b, B>
-where B: cmp::PartialOrd<C>,
-{
-    fn partial_cmp(&self, other: &Ref<'c, C>) -> Option<cmp::Ordering> {
-        cmp::PartialOrd::partial_cmp(&**self, &**other)
-    }
-}
-
-impl<B: ?Sized + Owned> cmp::Ord for Ref<'_, B>
-where B: cmp::Ord,
-{
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        cmp::Ord::cmp(&**self, &**other)
-    }
-}
-
-impl<B: ?Sized + Owned> hash::Hash for Ref<'_, B>
-where B: hash::Hash,
-{
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        hash::Hash::hash(&**self, state)
+impl Drop for CountDrops<'_> {
+    fn drop(&mut self) {
+	self.0.set(self.0.get() + 1);
     }
 }
 
@@ -100,14 +73,16 @@ where B: hash::Hash,
 mod tests {
     use super::*;
 
+    use std::mem;
+
     #[test]
-    fn sized_deref() {
-        let v = vec![1u8,2,3];
-        let r = Ref::Borrowed(&v);
+    fn count_drops() {
+        let drops = Cell::new(0);
 
-        assert_eq!(r.len(), 3);
+        let _ = CountDrops(&drops);
+        assert_eq!(drops.get(), 1);
 
-        let r: Ref<Vec<u8>> = Ref::Owned(v);
-        assert_eq!(r.len(), 3);
+        mem::forget(CountDrops(&drops));
+        assert_eq!(drops.get(), 1);
     }
 }

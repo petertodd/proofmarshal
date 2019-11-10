@@ -2,6 +2,7 @@
 members = [
 	"nonzero",
 	"leint",
+	"owned",
 
 	"sliceinit",
 	"pointee",
