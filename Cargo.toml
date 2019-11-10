@@ -1,13 +1,10 @@
 [workspace]
 members = [
 	"nonzero",
+	"leint",
+
 	"sliceinit",
 	"pointee",
 
-	"hoard",
-
-	"proofmarshal",
-	"proofmarshal_derive",
-
-	"tests",
+	"persist",
 ]

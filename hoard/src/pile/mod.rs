@@ -1,59 +1,42 @@
-//! Efficient, append-only, persistence.
+use std::marker::PhantomData;
 
-use super::*;
-use marshal::Marshal;
+use crate::*;
+use crate::marshal::{*, de::*, en::*};
 
-mod layout;
-pub use self::layout::Layout;
-
-pub trait Pile : Zone {
-    const OFFSET_LAYOUT: Layout;
-    type Offset : 'static + Marshal<Self>;
-
-    fn get_offset(ptr: &Self::Ptr) -> &Self::Offset;
-
-    fn get_blob<'p>(&self, ptr: &'p Self::Ptr, size: usize) -> Result<&'p [u8], Self::Error>;
+pub struct Pile<'p> {
+    buf: &'p [u8],
 }
 
-pub trait Dumper : Sized {
-    type Pile : Pile;
-    type Error;
-    type Done;
-
-    fn dump_blob(self, buf: &[u8]) -> Result<Self::Done, Self::Error>;
-
-    fn dump_rec<T: ?Sized + Pointee, Z: Zone>(self, rec: &Rec<T,Z>) -> Result<(Self, <Self::Pile as Pile>::Offset), Self::Error>
-    where T: Store<Self::Pile>,
-          Z: Marshal<Self::Pile>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Offset<'p> {
+    marker: PhantomData<fn(&'p ()) -> &'p ()>,
+    raw: u64,
 }
 
-impl Pile for ! {
-    const OFFSET_LAYOUT: Layout = Layout::new(0);
-    type Offset = ();
+#[derive(Debug)]
+pub struct LoadOffsetError;
 
-    fn get_offset(ptr: &!) -> &Self::Offset {
-        match *ptr {}
-    }
+impl<'p> Zone for Pile<'p> {
+    type Error = LoadOffsetError;
 
-    fn get_blob<'p>(&self, _ptr: &'p Self::Ptr, _size: usize) -> Result<&'p [u8], Self::Error> {
-        match *self {}
+    type Ptr = Offset<'p>;
+    type PersistPtr = u64;
+}
+
+impl<'p> Encoding<Self> for Pile<'p> {
+    const PILE_ENCODING: PileEncoding = PileEncoding::new(0);
+}
+
+impl<'p> Encode<Self> for Pile<'p> {
+    fn encode<E: Encoder<Zone=Self>>(&self, encoder: E) -> Result<E::Done, E::Error> {
+        todo!()
     }
 }
 
-impl Dumper for Vec<u8> {
-    type Pile = !;
+impl<'p> Decode<Self> for Pile<'p> {
     type Error = !;
-    type Done = Self;
-
-    fn dump_rec<T: ?Sized + Pointee, Z: Zone>(self, rec: &Rec<T,Z>)
-        -> Result<(Self, ()), Self::Error>
-    {
-        unreachable!()
-    }
-
-    fn dump_blob(mut self, buf: &[u8]) -> Result<Self::Done, Self::Error> {
-        self.extend_from_slice(buf);
-        Ok(self)
+    fn decode<D: Decoder<Zone=Self>>(decoder: D) -> Result<(D::Done, Self), Self::Error> {
+        todo!()
     }
 }
 

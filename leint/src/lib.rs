@@ -5,15 +5,12 @@ use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::mem;
 use core::num::{
-    NonZeroU8,   NonZeroI8,
     NonZeroU16,  NonZeroI16,
     NonZeroU32,  NonZeroI32,
     NonZeroU64,  NonZeroI64,
     NonZeroU128, NonZeroI128,
 };
 use core::slice;
-
-use super::*;
 
 /// A little-endian integer.
 ///
@@ -98,24 +95,6 @@ macro_rules! impl_ints {
     ( $( $t:ident, )+ ) => {
         $(
             impl_tofromle!($t, $t);
-
-            impl Persist for Le<$t> {
-                #[inline(always)]
-                fn write_canonical<W: Write>(&self, mut dst: W) -> io::Result<W> {
-                    let buf = unsafe { slice::from_raw_parts(self as *const _ as *const u8,
-                                                             mem::size_of::<Self>()) };
-                    dst.write_all(buf)?;
-                    Ok(dst)
-                }
-            }
-
-            impl<V: ?Sized> Validate<V> for Le<$t> {
-                type Error = !;
-
-                fn validate<'a>(maybe: MaybeValid<'a, Self>, _validator: &mut V) -> Result<Valid<'a, Self>, Self::Error> {
-                    unsafe { Ok(maybe.assume_valid()) }
-                }
-            }
         )+
     };
 }
@@ -128,75 +107,8 @@ macro_rules! impl_nonzero_ints {
     ( $( $t:ident => $inner:ident; )+ ) => {
         $(
             impl_tofromle!($t, $inner);
-
-            impl Persist for Le<$t> {
-                #[inline(always)]
-                fn write_canonical<W: Write>(&self, mut dst: W) -> io::Result<W> {
-                    let buf = unsafe { slice::from_raw_parts(self as *const _ as *const u8,
-                                                             mem::size_of::<Self>()) };
-                    dst.write_all(buf)?;
-                    Ok(dst)
-                }
-            }
-
-            impl<V: ?Sized> Validate<V> for Le<$t> {
-                type Error = ValidateNonZeroNumError<Le<$t>>;
-
-                #[inline(always)]
-                fn validate<'a>(maybe: MaybeValid<'a, Self>, _validator: &mut V) -> Result<Valid<'a, Self>, Self::Error> {
-                    if maybe[..].iter().all(|x| *x == 0) {
-                        Err(ValidateNonZeroNumError::new())
-                    } else {
-                        unsafe { Ok(maybe.assume_valid()) }
-                    }
-                }
-            }
         )+
     };
-}
-
-impl Persist for NonZeroU8 {
-    #[inline(always)]
-    fn write_canonical<W: Write>(&self, mut dst: W) -> io::Result<W> {
-        dst.write_all(&[self.get()])?;
-        Ok(dst)
-    }
-}
-
-impl<V: ?Sized> Validate<V> for NonZeroU8 {
-    type Error = ValidateNonZeroNumError<NonZeroU8>;
-
-    #[inline(always)]
-    fn validate<'a>(maybe: MaybeValid<'a, Self>, _validator: &mut V) -> Result<Valid<'a, Self>, Self::Error> {
-        if maybe[0] == 0 {
-            Err(ValidateNonZeroNumError::new())
-        } else {
-            unsafe { Ok(maybe.assume_valid()) }
-        }
-    }
-
-}
-
-impl Persist for NonZeroI8 {
-    #[inline(always)]
-    fn write_canonical<W: Write>(&self, mut dst: W) -> io::Result<W> {
-        dst.write_all(&[self.get() as u8])?;
-        Ok(dst)
-    }
-}
-
-impl<V: ?Sized> Validate<V> for NonZeroI8 {
-    type Error = ValidateNonZeroNumError<NonZeroI8>;
-
-    #[inline(always)]
-    fn validate<'a>(maybe: MaybeValid<'a, Self>, _validator: &mut V) -> Result<Valid<'a, Self>, Self::Error> {
-        if maybe[0] == 0 {
-            Err(ValidateNonZeroNumError::new())
-        } else {
-            unsafe { Ok(maybe.assume_valid()) }
-        }
-    }
-
 }
 
 macro_rules! impl_tofromle {
@@ -302,14 +214,5 @@ mod tests {
         assert_eq!(mem::align_of::<Le<i32>>(),  1);
         assert_eq!(mem::align_of::<Le<i64>>(),  1);
         assert_eq!(mem::align_of::<Le<i128>>(), 1);
-    }
-
-    #[test]
-    fn test() {
-        assert_eq!(&Le::new(0x1234_5678_u32).canonical_bytes()[..],
-                   &[0x78, 0x56, 0x34, 0x12]);
-
-        assert_eq!(&Le::new(NonZeroU32::new(0x1234_5678_u32).unwrap()).canonical_bytes()[..],
-                   &[0x78, 0x56, 0x34, 0x12]);
     }
 }
