@@ -1,9 +1,10 @@
 use super::Owned;
 
-use core::mem::ManuallyDrop;
+use core::mem::{self, ManuallyDrop};
+use core::slice;
 
-pub trait Take<T: ?Sized> : Sized {
-    fn take(self) -> T
+pub unsafe trait Take<T: ?Sized> : Sized {
+    fn take_sized(self) -> T
         where T: Sized
     {
         self.take_unsized(|src| unsafe {
@@ -21,7 +22,7 @@ pub trait Take<T: ?Sized> : Sized {
         where F: FnOnce(&mut ManuallyDrop<T>) -> R;
 }
 
-impl<T> Take<T> for T {
+unsafe impl<T> Take<T> for T {
     fn take_unsized<F,R>(self, f: F) -> R
         where F: FnOnce(&mut ManuallyDrop<T>) -> R
     {
@@ -30,7 +31,7 @@ impl<T> Take<T> for T {
     }
 }
 
-impl<T> Take<T> for ManuallyDrop<T> {
+unsafe impl<T> Take<T> for ManuallyDrop<T> {
     fn take_unsized<F,R>(mut self, f: F) -> R
         where F: FnOnce(&mut ManuallyDrop<T>) -> R
     {
@@ -38,7 +39,7 @@ impl<T> Take<T> for ManuallyDrop<T> {
     }
 }
 
-impl<T: ?Sized> Take<T> for Box<T> {
+unsafe impl<T: ?Sized + Owned> Take<T> for Box<T> {
     fn take_unsized<F,R>(self, f: F) -> R
         where F: FnOnce(&mut ManuallyDrop<T>) -> R
     {
@@ -47,6 +48,19 @@ impl<T: ?Sized> Take<T> for Box<T> {
         unsafe {
             let mut this: Box<ManuallyDrop<T>> = Box::from_raw(ptr);
             f(&mut this)
+        }
+    }
+}
+
+unsafe impl<T> Take<[T]> for Vec<T> {
+    fn take_unsized<F,R>(mut self, f: F) -> R
+        where F: FnOnce(&mut ManuallyDrop<[T]>) -> R
+    {
+        unsafe {
+            let len = self.len();
+            self.set_len(0);
+            let src: &mut [T] = slice::from_raw_parts_mut(self.as_mut_ptr(), len);
+            f(mem::transmute(src))
         }
     }
 }
@@ -63,14 +77,14 @@ mod test {
     fn sized() {
         let drops = Cell::new(0);
         let checker = CountDrops(&drops);
-        let checker = checker.take();
+        let checker = checker.take_sized();
         assert_eq!(drops.get(), 0);
         drop(checker);
         assert_eq!(drops.get(), 1);
 
         let drops = Cell::new(0);
         let checker = CountDrops(&drops);
-        let checker = checker.take_owned();
+        let checker = checker.take_sized();
         assert_eq!(drops.get(), 0);
 
         drop(checker);
@@ -89,7 +103,7 @@ mod test {
         let drops = Cell::new(0);
 
         let checker = Box::new(CountDrops(&drops));
-        let checker: CountDrops = checker.take();
+        let checker: CountDrops = checker.take_sized();
         assert_eq!(drops.get(), 0);
 
         drop(checker);

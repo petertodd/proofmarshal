@@ -1,16 +1,66 @@
 use super::*;
 
-use core::any::type_name;
 use core::marker::PhantomData;
-use core::mem;
+use core::mem::ManuallyDrop;
+use core::fmt;
 
 /// An owned pointer to a value in a `Zone`.
 pub struct Own<T: ?Sized + Pointee, Z: Zone> {
     marker: PhantomData<T>,
-    ptr: Z::Ptr,
+    ptr: ManuallyDrop<Z::Ptr>,
     metadata: T::Metadata,
 }
 
+impl<T: ?Sized + Pointee, Z: Zone> Own<T,Z> {
+    pub unsafe fn from_raw_parts(ptr: Z::Ptr, metadata: T::Metadata) -> Self {
+        Self {
+            marker: PhantomData,
+            ptr: ManuallyDrop::new(ptr),
+            metadata,
+        }
+    }
+
+    pub fn into_raw_parts(self) -> (Z::Ptr, T::Metadata) {
+        let mut this = ManuallyDrop::new(self);
+        let ptr = unsafe { (&mut *this.ptr as *mut Z::Ptr).read() };
+        (ptr, this.metadata)
+    }
+
+    pub fn ptr(&self) -> &Z::Ptr {
+        &self.ptr
+    }
+
+    pub fn metadata(&self) -> T::Metadata {
+        self.metadata
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> Drop for Own<T,Z> {
+    fn drop(&mut self) {
+        unsafe {
+            let ptr = (&mut *self.ptr as *mut Z::Ptr).read();
+            Z::dealloc_own::<T>(ptr, self.metadata)
+        }
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for Own<T,Z>
+where T: fmt::Debug
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Z::fmt_debug_own(self, f)
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> fmt::Pointer for Own<T,Z>
+where Z::Ptr: fmt::Pointer,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Pointer::fmt(&*self.ptr, f)
+    }
+}
+
+/*
 impl<T: ?Sized + Pointee, Z: Zone> Own<T,Z> {
     pub unsafe fn from_raw_parts(ptr: Z::Ptr, metadata: T::Metadata) -> Self {
         Self {
@@ -85,3 +135,4 @@ where T: Save<Z>
         todo!()
     }
 }
+*/

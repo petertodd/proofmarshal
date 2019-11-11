@@ -8,12 +8,100 @@ use core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64,
 };
 
-#[derive(Debug)]
-pub struct ScalarEncoder<T, Z> {
-    marker: PhantomData<fn(Z) -> Z>,
-    pub value: T,
+impl<Z: Zone> Save<Z> for ! {
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::never();
+
+    type SavePoll = SaveScalar<Self, Z>;
+
+    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
+        match this.take_sized() {}
+    }
 }
 
+impl<Z: Zone> SavePoll for SaveScalar<!, Z> {
+    type Zone = Z;
+    type Target = !;
+
+    fn encode_blob<W: WriteBlob>(&self, _dst: W) -> Result<W::Done, W::Error> {
+        match self.value {}
+    }
+}
+
+impl<Z: Zone> Load<Z> for ! {
+}
+
+
+impl<Z: Zone> Save<Z> for () {
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
+
+    type SavePoll = SaveScalar<Self, Z>;
+
+    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
+        SaveScalar::new(this)
+    }
+}
+
+impl<Z: Zone> SavePoll for SaveScalar<(), Z> {
+    type Zone = Z;
+    type Target = ();
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        dst.done()
+    }
+}
+
+impl<Z: Zone> Load<Z> for () {
+}
+
+#[derive(Debug)]
+pub struct SaveScalar<T, Z> {
+    marker: PhantomData<fn(Z) -> Z>,
+    pub(crate) value: T,
+}
+
+impl<T,Z> SaveScalar<T,Z> {
+    pub(crate) fn new(value: impl Take<T>) -> Self {
+        SaveScalar {
+            marker: PhantomData,
+            value: value.take_sized(),
+        }
+    }
+}
+
+macro_rules! impl_ints {
+    ($( $t:ty, )+) => {
+        $(
+            impl<Z: Zone> Save<Z> for $t {
+                const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
+                type SavePoll = SaveScalar<Self, Z>;
+
+                fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
+                    SaveScalar::new(this)
+                }
+            }
+
+            impl<Z: Zone> SavePoll for SaveScalar<$t, Z> {
+                type Zone = Z;
+                type Target = $t;
+
+                fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+                    dst.write_bytes(&self.value.to_le_bytes())?
+                       .done()
+                }
+            }
+
+            impl<Z: Zone> Load<Z> for $t {
+            }
+        )+
+    }
+}
+
+impl_ints! {
+    u8, u16, u32, u64, u128,
+    i8, i16, i32, i64, i128,
+}
+
+/*
 impl<T, Z> From<T> for ScalarEncoder<T, Z> {
     fn from(value: T) -> Self {
         ScalarEncoder { marker: PhantomData, value }
@@ -100,10 +188,6 @@ macro_rules! impl_ints {
     }
 }
 
-impl_ints! {
-    u8, u16, u32, u64, u128,
-    i8, i16, i32, i64, i128,
-}
 
 macro_rules! impl_nonzero_ints {
     ($( $t:ty, )+) => {
@@ -145,3 +229,4 @@ mod tests {
         let e = Encode::<!>::encode(42u8);
     }
 }
+*/

@@ -10,7 +10,7 @@ pub trait WriteBlob : Sized {
 
     /// Write an encodable value.
     #[inline(always)]
-    fn write<E: EncodePoll>(self, encoder: &E) -> Result<Self, Self::Error> {
+    fn write<E: SavePoll>(self, encoder: &E) -> Result<Self, Self::Error> {
         let size = E::Target::BLOB_LAYOUT.size();
         let value_writer = ValueWriter::new(self, size);
         encoder.encode_blob(value_writer)

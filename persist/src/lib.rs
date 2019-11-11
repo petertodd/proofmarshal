@@ -3,140 +3,83 @@
 #![feature(never_type)]
 #![feature(associated_type_bounds)]
 
+use core::any::type_name;
 use core::task::Poll;
-use core::borrow::Borrow;
-use core::mem::{ManuallyDrop, MaybeUninit};
+use core::fmt;
 
 use pointee::Pointee;
+use owned::{Owned, Ref, Take};
 
+/*
 mod blob;
 pub use self::blob::*;
 
 pub mod impls;
+
+pub mod pile;
+*/
+
+pub mod marshal;
+use self::marshal::*;
+
 pub mod own;
 use self::own::Own;
 
-mod refs;
-pub use self::refs::*;
+pub mod bag;
 
+pub mod never;
+pub mod heap;
 pub mod pile;
 
+
 pub trait Zone : Sized {
-    type Ptr;
-    type PersistPtr : Encode<Self> + Copy;
+    type Ptr : fmt::Debug;
+    type PersistPtr : fmt::Debug + Copy + Save<Self>;
 
-    type Allocator;
-}
+    type Allocator : Alloc<Zone = Self>;
 
-impl Zone for ! {
-    type Ptr = !;
-    type PersistPtr = !;
-    type Allocator = !;
-}
+    fn allocator() -> Self::Allocator
+        where Self: Default;
 
-/// A *value* that can be saved in a zone.
-pub trait Save<Z: Zone> : Pointee<Metadata: Encode<Z>> {
-    type Owned : Borrow<Self>;
+    unsafe fn dealloc_own<T: ?Sized + Pointee>(ptr: Self::Ptr, metadata: T::Metadata);
 
-    unsafe fn to_owned(this: &mut ManuallyDrop<Self>) -> Self::Owned;
-
-    type Save : SavePoll<Zone = Z, Target = Self, PersistMetadata = Self::Metadata>;
-    fn save(owned: Self::Owned) -> Self::Save;
-}
-
-pub trait SavePoll : Sized {
-    type Zone : Zone;
-    type Target : ?Sized + Pointee;
-    type PersistMetadata : Encode<Self::Zone>;
-
-    fn poll<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(<Self::Zone as Zone>::PersistPtr, Self::PersistMetadata), P::Error>>
-        where P: Saver<Zone = Self::Zone>;
-}
-
-pub trait Encode<Z: Zone> : Sized {
-    const BLOB_LAYOUT: BlobLayout;
-
-    type Encode : EncodePoll<Zone = Z, Target=Self>;
-    fn encode(self) -> Self::Encode;
-}
-
-pub trait EncodePoll {
-    type Zone : Zone;
-    type Target : Encode<Self::Zone>;
-
-    fn poll<P>(&mut self, saver: &mut P) -> Poll<Result<(), P::Error>>
-        where P: Saver<Zone = Self::Zone>
+    fn fmt_debug_own<T: ?Sized + Pointee>(ptr: &Own<T, Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result
+        where T: fmt::Debug
     {
-        let _ = saver;
-        Ok(()).into()
+        f.debug_struct(type_name::<Own<T, Self>>())
+            .field("ptr", ptr.ptr())
+            .field("metadata", &ptr.metadata())
+            .finish()
+    }
+}
+
+pub trait Alloc : Sized {
+    type Zone : Zone;
+
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Zone>;
+    fn zone(&self) -> Self::Zone;
+}
+
+impl<A: Alloc> Alloc for &'_ mut A {
+    type Zone = A::Zone;
+
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Zone> {
+        (**self).alloc(src)
     }
 
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error>;
+    fn zone(&self) -> Self::Zone {
+        (**self).zone()
+    }
 }
 
-pub trait Saver {
-    type Zone : Zone;
+pub trait TryGet : Zone {
     type Error;
 
-    fn save_blob(&mut self, size: usize, f: impl FnOnce(&mut [MaybeUninit<u8>]))
-        -> Result<<Self::Zone as Zone>::PersistPtr, Self::Error>;
-
-    fn save_own<T: ?Sized + Pointee>(&mut self, own: Own<T, Self::Zone>) -> Result<<Self::Zone as Zone>::PersistPtr, Self::Error>
-        where T: Save<Self::Zone>;
+    fn get<'p, T: ?Sized + Load<Self>>(&self, ptr: &'p Own<T, Self>) -> Result<Ref<'p, T>, Self::Error>;
 }
 
-impl<Z: Zone, T: Encode<Z>> Save<Z> for T {
-    type Owned = T;
+pub trait Get : Zone {
+    fn get<'p, T: ?Sized + Load<Self>>(&self, ptr: &'p Own<T, Self>) -> Ref<'p, T>;
 
-    unsafe fn to_owned(this: &mut ManuallyDrop<Self>) -> Self::Owned {
-        (this as *const _ as *const Self).read()
-    }
-
-    type Save = SaveValue<T::Encode>;
-    fn save(owned: Self) -> Self::Save {
-        SaveValue {
-            encoder: owned.encode(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SaveValue<E> {
-    encoder: E,
-}
-
-impl<E: EncodePoll> SavePoll for SaveValue<E> {
-    type Zone = E::Zone;
-    type Target = E::Target;
-    type PersistMetadata = ();
-
-    fn poll<P>(&mut self, saver: &mut P) -> Poll<Result<(<Self::Zone as Zone>::PersistPtr, ()), P::Error>>
-        where P: Saver<Zone = Self::Zone>
-    {
-        match self.encoder.poll(saver)? {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(()) => {
-                let ptr = saver.save_blob(E::Target::BLOB_LAYOUT.size(), |dst| {
-                    self.encoder.encode_blob(dst)
-                                .unwrap_or_else(|never| never)
-                })?;
-                Ok((ptr, ())).into()
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test() {
-        let e = Encode::<!>::encode((42u8, true));
-
-        let mut dst = [0u8; 2];
-        e.encode_blob(&mut dst[..]).unwrap();
-
-        assert_eq!(dst, [42, 1]);
-    }
+    fn take<'p, T: ?Sized + Load<Self>>(&self, ptr: Own<T, Self>) -> T::Owned;
 }

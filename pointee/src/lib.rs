@@ -25,7 +25,11 @@ pub unsafe trait Pointee {
     /// Fat pointer metadata.
     type Metadata : Sized + Copy + fmt::Debug + Eq + Ord + Hash + Send + Sync;
 
-    fn metadata(dropped: &MaybeDropped<Self>) -> Self::Metadata;
+    fn metadata(this: &Self) -> Self::Metadata {
+        Self::metadata_from_dropped(MaybeDropped::from_ref(this))
+    }
+
+    fn metadata_from_dropped(dropped: &MaybeDropped<Self>) -> Self::Metadata;
 
     /// Makes the metadata for a sized type.
     ///
@@ -68,7 +72,7 @@ pub unsafe trait DynSized : Pointee {
     #[inline(always)]
     fn layout(dropped: &MaybeDropped<Self>) -> Layout {
         let size = Self::size(dropped);
-        let align = Self::align(Self::metadata(dropped));
+        let align = Self::align(Self::metadata_from_dropped(dropped));
         unsafe {
             Layout::from_size_align_unchecked(size, align)
         }
@@ -99,14 +103,14 @@ unsafe impl<T: ?Sized> DynSized for T
 where T: PtrSized
 {
     fn size(dropped: &MaybeDropped<Self>) -> usize {
-        <T as PtrSized>::size(T::metadata(dropped))
+        <T as PtrSized>::size(T::metadata_from_dropped(dropped))
     }
 }
 
 unsafe impl<T> Pointee for T {
     type Metadata = ();
 
-    fn metadata(_: &MaybeDropped<T>) -> Self::Metadata {
+    fn metadata_from_dropped(_: &MaybeDropped<T>) -> Self::Metadata {
         Self::make_sized_metadata()
     }
 

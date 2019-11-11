@@ -124,7 +124,7 @@ unsafe impl<T> Pointee for [T] {
     type Metadata = SliceLen<T>;
 
     #[inline(always)]
-    fn metadata(dropped: &MaybeDropped<Self>) -> Self::Metadata {
+    fn metadata_from_dropped(dropped: &MaybeDropped<Self>) -> Self::Metadata {
         unsafe {
             let len = dropped.get_unchecked().len();
             SliceLen::new_unchecked(len)

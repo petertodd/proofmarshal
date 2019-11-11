@@ -4,7 +4,6 @@ use core::borrow::Borrow;
 use core::cell::Cell;
 use core::mem::ManuallyDrop;
 use core::ptr;
-use core::slice;
 
 mod take;
 pub use self::take::Take;
@@ -14,11 +13,9 @@ pub use self::refs::Ref;
 
 /// The owned form of a type.
 pub unsafe trait Owned {
-    type Owned : Borrow<Self>;
+    type Owned : Borrow<Self> + Take<Self>;
 
     unsafe fn to_owned(this: &mut ManuallyDrop<Self>) -> Self::Owned;
-
-    unsafe fn from_owned<'a>(owned: Self::Owned, dst: *mut ()) -> &'a mut Self;
 }
 
 unsafe impl<T> Owned for T {
@@ -26,12 +23,6 @@ unsafe impl<T> Owned for T {
 
     unsafe fn to_owned(this: &mut ManuallyDrop<Self>) -> Self::Owned {
         (this as *const _ as *const Self).read()
-    }
-
-    unsafe fn from_owned<'a>(owned: Self::Owned, dst: *mut ()) -> &'a mut Self {
-        let dst = dst.cast::<Self>();
-        dst.write(owned);
-        &mut *dst
     }
 }
 
@@ -47,16 +38,6 @@ unsafe impl<T> Owned for [T] {
         r.set_len(len);
 
         r
-    }
-
-    unsafe fn from_owned<'a>(mut owned: Vec<T>, dst: *mut ()) -> &'a mut Self {
-        let dst = dst as *mut T;
-        let len = owned.len();
-
-        owned.set_len(0);
-        ptr::copy_nonoverlapping(owned.as_ptr(), dst as *mut T, len);
-
-        slice::from_raw_parts_mut(dst, len)
     }
 }
 
