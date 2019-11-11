@@ -29,12 +29,12 @@ pub mod bag;
 
 pub mod never;
 pub mod heap;
-pub mod pile;
+//pub mod pile;
 
 
 pub trait Zone : Sized {
     type Ptr : fmt::Debug;
-    type PersistPtr : fmt::Debug + Copy + Save<Self>;
+    type PersistPtr : fmt::Debug + Copy + Load<!> + Load<Self>;
 
     type Allocator : Alloc<Zone = Self>;
 

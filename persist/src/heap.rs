@@ -37,9 +37,6 @@ impl Get for Heap {
     }
 }
 
-impl Load<Heap> for Heap {
-}
-
 impl Alloc for Heap {
     type Zone = Heap;
 

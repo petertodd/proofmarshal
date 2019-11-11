@@ -23,10 +23,6 @@ pub trait Save<Z: Zone> : Owned + Pointee {
     fn save_poll(this: impl Take<Self>) -> Self::SavePoll;
 }
 
-pub trait Load<Z: Zone> : Owned + Pointee {
-}
-
-
 pub trait SavePoll : Sized {
     type Zone : Zone;
     type Target : ?Sized + Save<Self::Zone>;
@@ -46,27 +42,6 @@ pub trait SavePoll : Sized {
             unimplemented!()
         }
     }
-
-    //fn save_blob<P>(&mut self, ptr_saver: &mut P) -> Result<(<Self::Zone as Zone>::PersistPtr, Self::PersistMetadata), P::Error>
-    //    where P: Saver<Zone = Self::Zone>;
-}
-
-pub trait EncodePoll {
-    type Zone : Zone;
-    type Target : ?Sized + Pointee;
-
-    /*
-    type Zone : Zone;
-    type Target : Encode<Self::Zone>;
-
-    fn poll<P>(&mut self, saver: &mut P) -> Poll<Result<(), P::Error>>
-        where P: Saver<Zone = Self::Zone>
-    {
-        let _ = saver;
-        Ok(()).into()
-    }
-
-    */
 }
 
 pub trait PtrSaver {
@@ -79,6 +54,90 @@ pub trait PtrSaver {
     fn save_own<T: ?Sized + Save<Self::Zone>>(&mut self, own: Own<T, Self::Zone>)
         -> Result<<Self::Zone as Zone>::PersistPtr, T::SavePoll>;
 }
+
+impl PtrSaver for () {
+    type Zone = !;
+    type Error = !;
+
+    fn save_blob(&mut self, _: usize, _: impl FnOnce(&mut [u8]))
+        -> Result<!, Self::Error>
+    {
+        panic!()
+    }
+
+    fn save_own<T: ?Sized + Save<Self::Zone>>(&mut self, own: Own<T, Self::Zone>)
+        -> Result<!, T::SavePoll>
+    {
+        match *own.ptr() {}
+    }
+}
+
+pub trait ValidateChildren<Z: Zone> {
+    fn validate_children<V>(&mut self, ptr_validator: V) -> Poll<Result<(), V::Error>>
+        where V: ValidatePtr<Z>;
+}
+
+impl<Z: Zone> ValidateChildren<Z> for () {
+    fn validate_children<V>(&mut self, _ptr_validator: V) -> Poll<Result<(), V::Error>>
+        where V: ValidatePtr<Z>
+    {
+        Ok(()).into()
+    }
+}
+
+pub trait Load<Z: Zone> : Save<Z> {
+    type Error;
+
+    type ValidateChildren : ValidateChildren<Z>;
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error>;
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self::Owned;
+
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Ref<'p, Self> {
+        Ref::Owned(Self::decode_blob(blob, loader))
+    }
+}
+
+pub trait Loader<Z: Zone> {
+    fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: Z::PersistPtr, metadata: T::Metadata) -> Own<T,Z>;
+
+    fn allocator(&self) -> Z::Allocator;
+}
+
+impl Loader<!> for () {
+    fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: !, _: T::Metadata) -> Own<T,!> {
+        match persist_ptr {}
+    }
+
+    fn allocator(&self) -> crate::never::NeverAllocator<!> {
+        panic!()
+    }
+}
+
+impl<Z: Zone, L: Loader<Z>> Loader<Z> for &'_ L {
+    fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: Z::PersistPtr, metadata: T::Metadata) -> Own<T,Z> {
+        (&**self).load_ptr(persist_ptr, metadata)
+    }
+
+    fn allocator(&self) -> Z::Allocator {
+        (&**self).allocator()
+    }
+}
+
+pub trait ValidatePtr<Z: Zone> {
+    type Error;
+
+    //fn validate_ptr<T: ?Sized + Load<Self::Zone>>(&mut self, persist_ptr: Z::PersistPtr, metadata: T::Metadata)
+}
+
+impl ValidatePtr<!> for () {
+    type Error = !;
+}
+
+impl<'a, Z: Zone, T: ValidatePtr<Z>> ValidatePtr<Z> for &'a mut T {
+    type Error = T::Error;
+}
+
 
 #[derive(Debug)]
 pub enum SaveOwnPoll<T: ?Sized + Save<Z>, Z: Zone> {
@@ -94,7 +153,7 @@ pub enum SaveOwnPoll<T: ?Sized + Save<Z>, Z: Zone> {
 impl<T: ?Sized + Pointee, Z: Zone> Save<Z> for Own<T,Z>
 where T: Save<Z>
 {
-    const BLOB_LAYOUT: BlobLayout = <Z::PersistPtr as Save<Z>>::BLOB_LAYOUT;
+    const BLOB_LAYOUT: BlobLayout = <Z::PersistPtr as Save<!>>::BLOB_LAYOUT;
 
     type SavePoll = SaveOwnPoll<T, Z>;
     fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
@@ -166,57 +225,104 @@ where T: Save<Z>
             panic!()
         }
     }
+
 }
 
+pub enum ValidateOwnError<Z: Zone> {
+    Ptr(<Z::PersistPtr as Load<!>>::Error),
+    Metadata,
+}
+
+pub enum ValidateOwn<T: ?Sized + Load<Z>, Z: Zone> {
+    Own {
+        ptr: Z::PersistPtr,
+        metadata: T::Metadata,
+    },
+    Value(T::ValidateChildren),
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> Load<Z> for Own<T,Z>
+where T: Load<Z>
+{
+    type Error = ValidateOwnError<Z>;
+
+    type ValidateChildren = ValidateOwn<T,Z>;
+
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
+        /*
+        let mut v = blob.validate();
+        let ptr = v.field::<Z::PersistPtr>().map_err(|e| ValidateOwnError::Ptr(e))?;
+        let metadata = v.field::<Z::PersistPtr>().map_err(|e| ValidateOwnError::Ptr(e))?;
+        */
+        todo!()
+    }
+
+    /*
+    unsafe fn validate_children<'p, V: ValidatePtr<Zone = Z>>(
+            state: &mut Self::State,
+            blob: ValidBlob<'p, Self, Z>,
+            ptr_verifier: V,
+        ) -> Poll<Result<FullyValidBlob<'p, Self, Z>, V::Error>>
+    {
+        match state {
+            ValidateOwn::Own { ptr, metadata } => {
+                todo!()
+            },
+            ValidateOwn::Value(state) => {
+                todo!()
+            },
+        }
+    }
+    */
+
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Ref<'p, Self> {
+        todo!()
+    }
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+        todo!()
+    }
+}
+
+impl<T: ?Sized + Load<Z>, Z: Zone> ValidateChildren<Z> for ValidateOwn<T,Z> {
+    fn validate_children<V>(&mut self, ptr_validator: V) -> Poll<Result<(), V::Error>>
+        where V: ValidatePtr<Z>
+    {
+        match self {
+            ValidateOwn::Own { ptr, metadata } => {
+                todo!()
+            },
+            ValidateOwn::Value(v) => v.validate_children(ptr_validator),
+        }
+    }
+}
+
+pub fn encode<T: Save<!>>(value: T) -> Vec<u8> {
+    let mut saver = T::save_poll(value);
+
+    match saver.save_children(&mut ()) {
+        Poll::Ready(Ok(())) => {},
+        x => panic!(),
+    }
+
+    let mut dst = vec![0; T::BLOB_LAYOUT.size()];
+    saver.encode_blob(&mut dst[..]).unwrap();
+    dst
+}
+
+pub fn try_decode<'a, T: ?Sized + Load<!>>(blob: Blob<'a, T,!>) -> Result<Ref<'a, T>, T::Error> {
+    let mut validator = T::validate_blob(blob)?;
+
+    match validator.poll(()) {
+        Poll::Ready(Ok(fully_valid_blob)) => Ok(T::load_blob(fully_valid_blob, &mut ())),
+        _ => panic!(),
+    }
+}
 
 /*
-impl<Z: Zone, T: Encode<Z>> Save<Z> for T {
-    type Save = SaveValue<T::Encode>;
-    fn save(owned: Self) -> Self::Save {
-        SaveValue {
-            encoder: owned.encode(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SaveValue<E> {
-    encoder: E,
-}
-
-impl<E: EncodePoll> SavePoll for SaveValue<E> {
-    type Zone = E::Zone;
-    type Target = E::Target;
-    type PersistMetadata = ();
-
-    fn poll<P>(&mut self, saver: &mut P) -> Poll<Result<(<Self::Zone as Zone>::PersistPtr, ()), P::Error>>
-        where P: Saver<Zone = Self::Zone>
-    {
-        match self.encoder.poll(saver)? {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(()) => {
-                let ptr = saver.save_blob(E::Target::BLOB_LAYOUT.size(), |dst| {
-                    self.encoder.encode_blob(dst)
-                                .unwrap_or_else(|never| never)
-                })?;
-                Ok((ptr, ())).into()
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test() {
-        let e = Encode::<!>::encode((42u8, true));
-
-        let mut dst = [0u8; 2];
-        e.encode_blob(&mut dst[..]).unwrap();
-
-        assert_eq!(dst, [42, 1]);
-    }
+pub fn test_try_decode<'a>(blob: Blob<'a, u64, !>)
+    -> Result<Ref<'a, u64>, !>
+{
+    try_decode(blob)
 }
 */

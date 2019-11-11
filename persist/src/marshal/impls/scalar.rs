@@ -8,6 +8,21 @@ use core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64,
 };
 
+#[derive(Debug)]
+pub struct SaveScalar<T, Z> {
+    marker: PhantomData<fn(Z) -> Z>,
+    pub(crate) value: T,
+}
+
+impl<T,Z> SaveScalar<T,Z> {
+    pub(crate) fn new(value: impl Take<T>) -> Self {
+        SaveScalar {
+            marker: PhantomData,
+            value: value.take_sized(),
+        }
+    }
+}
+
 impl<Z: Zone> Save<Z> for ! {
     const BLOB_LAYOUT: BlobLayout = BlobLayout::never();
 
@@ -28,6 +43,20 @@ impl<Z: Zone> SavePoll for SaveScalar<!, Z> {
 }
 
 impl<Z: Zone> Load<Z> for ! {
+    type Error = !;
+
+    type ValidateChildren = ();
+    fn validate_blob<'p>(_blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
+        panic!()
+    }
+
+    fn load_blob<'p>(_: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Ref<'p, Self> {
+        panic!()
+    }
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+        panic!()
+    }
 }
 
 
@@ -51,22 +80,22 @@ impl<Z: Zone> SavePoll for SaveScalar<(), Z> {
 }
 
 impl<Z: Zone> Load<Z> for () {
-}
+    type Error = !;
 
-#[derive(Debug)]
-pub struct SaveScalar<T, Z> {
-    marker: PhantomData<fn(Z) -> Z>,
-    pub(crate) value: T,
-}
+    type ValidateChildren = ();
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
+        Ok(blob.assume_valid(()))
+    }
 
-impl<T,Z> SaveScalar<T,Z> {
-    pub(crate) fn new(value: impl Take<T>) -> Self {
-        SaveScalar {
-            marker: PhantomData,
-            value: value.take_sized(),
-        }
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Ref<'p, Self> {
+        unsafe { blob.assume_valid_ref() }
+    }
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+        unsafe { *blob.assume_valid() }
     }
 }
+
 
 macro_rules! impl_ints {
     ($( $t:ty, )+) => {
@@ -91,6 +120,21 @@ macro_rules! impl_ints {
             }
 
             impl<Z: Zone> Load<Z> for $t {
+                type Error = !;
+
+                fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
+                    Ok(blob.assume_valid(()))
+                }
+
+                type ValidateChildren = ();
+
+                fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Ref<'p, Self> {
+                    unsafe { blob.assume_valid_ref() }
+                }
+
+                fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+                    unsafe { *blob.assume_valid() }
+                }
             }
         )+
     }
@@ -101,132 +145,13 @@ impl_ints! {
     i8, i16, i32, i64, i128,
 }
 
-/*
-impl<T, Z> From<T> for ScalarEncoder<T, Z> {
-    fn from(value: T) -> Self {
-        ScalarEncoder { marker: PhantomData, value }
-    }
-}
-
-impl<Z: Zone> Encode<Z> for ! {
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::never();
-
-    type Encode = ScalarEncoder<Self, Z>;
-    fn encode(self) -> Self::Encode {
-        self
-    }
-}
-
-impl<Z: Zone> EncodePoll for ScalarEncoder<!, Z> {
-    type Zone = Z;
-    type Target = !;
-
-    fn encode_blob<W: WriteBlob>(&self, _dst: W) -> Result<W::Done, W::Error> {
-        match self.value {}
-    }
-}
-
-impl<Z: Zone> Encode<Z> for () {
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(0);
-
-    type Encode = ScalarEncoder<Self, Z>;
-    fn encode(self) -> Self::Encode {
-        self.into()
-    }
-}
-
-impl<Z: Zone> EncodePoll for ScalarEncoder<(), Z> {
-    type Zone = Z;
-    type Target = ();
-
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-        dst.done()
-    }
-}
-
-impl<Z: Zone> Encode<Z> for bool {
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(1);
-
-    type Encode = ScalarEncoder<Self, Z>;
-    fn encode(self) -> Self::Encode {
-        self.into()
-    }
-}
-
-impl<Z: Zone> EncodePoll for ScalarEncoder<bool, Z> {
-    type Zone = Z;
-    type Target = bool;
-
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-        dst.write_bytes(&[self.value as u8])?
-           .done()
-    }
-}
-
-macro_rules! impl_ints {
-    ($( $t:ty, )+) => {
-        $(
-            impl<Z: Zone> Encode<Z> for $t {
-                const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
-
-                type Encode = ScalarEncoder<Self, Z>;
-                fn encode(self) -> Self::Encode {
-                    self.into()
-                }
-            }
-
-            impl<Z: Zone> EncodePoll for ScalarEncoder<$t, Z> {
-                type Zone = Z;
-                type Target = $t;
-
-                fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-                    dst.write_bytes(&self.value.to_le_bytes())?
-                       .done()
-                }
-            }
-        )+
-    }
-}
-
-
-macro_rules! impl_nonzero_ints {
-    ($( $t:ty, )+) => {
-        $(
-            impl<Z: Zone> Encode<Z> for $t {
-                const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
-
-                type Encode = ScalarEncoder<Self, Z>;
-                fn encode(self) -> Self::Encode {
-                    self.into()
-                }
-            }
-
-            impl<Z: Zone> EncodePoll for ScalarEncoder<$t, Z> {
-                type Zone = Z;
-                type Target = $t;
-
-                fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-                    dst.write_bytes(&self.value.get().to_le_bytes())?
-                       .done()
-                }
-            }
-        )+
-    }
-}
-
-impl_nonzero_ints! {
-    NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64,
-    NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn ints() {
-        let buf = [0u8;8];
-        let e = Encode::<!>::encode(42u8);
+    fn test() {
+        assert_eq!(encode(42u8),
+                   &[42]);
     }
 }
-*/
