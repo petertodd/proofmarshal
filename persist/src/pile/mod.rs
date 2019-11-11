@@ -224,4 +224,13 @@ mod test {
 
         tx.save(Some(pile.alloc(Some(42u8))));
     }
+
+    #[test]
+    fn test_bag() {
+        let bag = Bag::<u8, PileMut>::new(42u8);
+        let mut tx = Tx::from(PileMut::default());
+
+        tx.save(bag);
+        dbg!(tx);
+    }
 }

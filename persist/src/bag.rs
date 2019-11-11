@@ -2,6 +2,9 @@ use super::*;
 
 use core::fmt;
 
+use crate::marshal::blob::WriteBlob;
+use crate::marshal::blob::BlobLayout;
+
 /// An owned pointer to a value in a `Zone`.
 #[derive(Debug)]
 pub struct Bag<T: ?Sized + Pointee, Z: Zone> {
@@ -35,6 +38,37 @@ impl<T: ?Sized + Load<Z>, Z: Zone> Bag<T,Z> {
         where Z: Get
     {
         self.zone.take(self.ptr)
+    }
+}
+
+pub struct BagSaver<T: ?Sized + Save<Z>, Z: Zone>(SaveOwnPoll<T,Z>);
+
+impl<T: ?Sized + Pointee, Z: Zone> Save<Z> for Bag<T,Z>
+where T: Save<Z>
+{
+    const BLOB_LAYOUT: BlobLayout = <Own<T,Z> as Save<Z>>::BLOB_LAYOUT;
+
+    type SavePoll = BagSaver<T,Z>;
+    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
+        let this = this.take_sized();
+        BagSaver(Own::save_poll(this.ptr))
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> SavePoll for BagSaver<T,Z>
+where T: Save<Z>
+{
+    type Zone = Z;
+    type Target = Bag<T,Z>;
+
+    fn save_children<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(), P::Error>>
+        where P: PtrSaver<Zone = Self::Zone>
+    {
+        self.0.save_children(ptr_saver)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        self.0.encode_blob(dst)
     }
 }
 
