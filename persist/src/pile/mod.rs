@@ -254,7 +254,7 @@ mod test {
     fn test_commit() {
         let anchor = vec![];
         let pile = unsafe { Pile::new_unchecked(&anchor[..]) };
-        let mut pile = PileMut::from(pile);
+        let pile = PileMut::from(pile);
 
         let bag = Bag::new_in((12u8, 13u8), pile);
         let bag = Bag::new_in((bag, 13u8), pile);
@@ -269,6 +269,8 @@ mod test {
             let bag = Bag::new_in((bag, (65u8, (Some(1234u16), Bag::new_in(42u8, pile)))), pile);
 
             let (pile, bag) = tx.commit(bag, &mut anchor2);
+
+            let r = bag.get();
 
             dbg!(pile);
             dbg!(bag.get());

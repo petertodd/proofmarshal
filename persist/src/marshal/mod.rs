@@ -1,5 +1,6 @@
 use super::*;
 
+use core::convert::TryFrom;
 use core::mem::{self, MaybeUninit};
 use core::slice;
 
@@ -99,12 +100,17 @@ pub trait Load<Z: Zone> : Save<Z> {
 pub trait Loader<Z: Zone> {
     fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: Z::PersistPtr, metadata: T::Metadata) -> Own<T,Z>;
 
+    fn zone(&self) -> Z;
     fn allocator(&self) -> Z::Allocator;
 }
 
 impl Loader<!> for () {
     fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: !, _: T::Metadata) -> Own<T,!> {
         match persist_ptr {}
+    }
+
+    fn zone(&self) -> ! {
+        panic!()
     }
 
     fn allocator(&self) -> crate::never::NeverAllocator<!> {
@@ -115,6 +121,10 @@ impl Loader<!> for () {
 impl<Z: Zone, L: Loader<Z>> Loader<Z> for &'_ L {
     fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: Z::PersistPtr, metadata: T::Metadata) -> Own<T,Z> {
         (&**self).load_ptr(persist_ptr, metadata)
+    }
+
+    fn zone(&self) -> Z {
+        (&**self).zone()
     }
 
     fn allocator(&self) -> Z::Allocator {
@@ -214,6 +224,7 @@ where T: Save<Z>
             }
 
             unsafe {
+                /// FIXME
                 dst.write_bytes(as_bytes(persist_ptr))?
                    .write_bytes(as_bytes(metadata))?
                    .done()
@@ -226,7 +237,7 @@ where T: Save<Z>
 }
 
 pub enum ValidateOwnError<Z: Zone> {
-    Ptr(<Z::PersistPtr as Load<!>>::Error),
+    Ptr(<Z::PersistPtr as Load<Z>>::Error),
     Metadata,
 }
 
@@ -246,38 +257,30 @@ where T: Load<Z>
     type ValidateChildren = ValidateOwn<T,Z>;
 
     fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
-        /*
+        // FIXME: validate metadata properly
+
         let mut v = blob.validate();
-        let ptr = v.field::<Z::PersistPtr>().map_err(|e| ValidateOwnError::Ptr(e))?;
-        let metadata = v.field::<Z::PersistPtr>().map_err(|e| ValidateOwnError::Ptr(e))?;
-        */
-        todo!()
-    }
+        let _ = v.field::<Z::PersistPtr>().map_err(|e| ValidateOwnError::Ptr(e))?;
 
-    /*
-    unsafe fn validate_children<'p, V: ValidatePtr<Zone = Z>>(
-            state: &mut Self::State,
-            blob: ValidBlob<'p, Self, Z>,
-            ptr_verifier: V,
-        ) -> Poll<Result<FullyValidBlob<'p, Self, Z>, V::Error>>
-    {
-        match state {
-            ValidateOwn::Own { ptr, metadata } => {
-                todo!()
-            },
-            ValidateOwn::Value(state) => {
-                todo!()
-            },
-        }
-    }
-    */
+        let blob = Blob::<(Z::PersistPtr, ()), !>::try_from(&blob[..]).unwrap();
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Ref<'p, Self> {
-        todo!()
+        let ptr = try_decode(blob).expect("FIXME").0;
+
+        assert_eq!(mem::size_of::<T::Metadata>(), 0);
+        let metadata = unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+        Ok(v.done(ValidateOwn::Own { ptr, metadata }))
     }
 
     fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
-        todo!()
+        let mut fields = blob.decode_struct(loader);
+        let ptr = fields.field::<Z::PersistPtr>();
+
+        // FIXME
+        assert_eq!(mem::size_of::<T::Metadata>(), 0);
+        let metadata = unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+        loader.load_ptr(ptr, metadata)
     }
 }
 

@@ -1,7 +1,7 @@
-//! In-place persistence.
-
 #![feature(never_type)]
 #![feature(associated_type_bounds)]
+#![feature(dropck_eyepatch)]
+
 
 use core::any::type_name;
 use core::task::Poll;
@@ -9,15 +9,6 @@ use core::fmt;
 
 use pointee::Pointee;
 use owned::{Owned, Ref, Take};
-
-/*
-mod blob;
-pub use self::blob::*;
-
-pub mod impls;
-
-pub mod pile;
-*/
 
 pub mod marshal;
 use self::marshal::*;
@@ -29,7 +20,7 @@ pub mod bag;
 
 pub mod never;
 pub mod heap;
-//pub mod pile;
+pub mod pile;
 
 
 pub trait Zone : Sized {

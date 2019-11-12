@@ -2,8 +2,8 @@ use super::*;
 
 use core::fmt;
 
-use crate::marshal::blob::WriteBlob;
-use crate::marshal::blob::BlobLayout;
+use crate::marshal::blob::*;
+use crate::marshal::*;
 
 /// An owned pointer to a value in a `Zone`.
 #[derive(Debug)]
@@ -55,14 +55,13 @@ where T: Save<Z>
     }
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> SavePoll for BagSaver<T,Z>
+impl<T: ?Sized + Pointee, Z: Zone> SavePoll<Z> for BagSaver<T,Z>
 where T: Save<Z>
 {
-    type Zone = Z;
     type Target = Bag<T,Z>;
 
     fn save_children<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(), P::Error>>
-        where P: PtrSaver<Zone = Self::Zone>
+        where P: SavePtr<Z>
     {
         self.0.save_children(ptr_saver)
     }
@@ -71,6 +70,31 @@ where T: Save<Z>
         self.0.encode_blob(dst)
     }
 }
+
+pub struct ValidateBag<T: ?Sized + Load<Z>, Z: Zone>(ValidateOwn<T,Z>);
+
+impl<T: ?Sized + Load<Z>, Z: Zone> Load<Z> for Bag<T,Z> {
+    type Error = ValidateOwnError<Z>;
+
+    type ValidateChildren = ValidateOwn<T,Z>;
+
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
+        let mut v = blob.validate();
+        let ptr = v.field::<Own<T,Z>>()?;
+
+        Ok(v.done(ptr))
+    }
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+        let mut blob = blob.decode_struct(loader);
+
+        Bag {
+            ptr: blob.field::<Own<T,Z>>(),
+            zone: loader.zone(),
+        }
+    }
+}
+
 
 impl<T: ?Sized + Pointee, Z: Zone> fmt::Pointer for Bag<T,Z>
 where Z::Ptr: fmt::Pointer,

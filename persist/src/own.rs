@@ -5,6 +5,7 @@ use core::mem::ManuallyDrop;
 use core::fmt;
 
 /// An owned pointer to a value in a `Zone`.
+#[repr(C)]
 pub struct Own<T: ?Sized + Pointee, Z: Zone> {
     marker: PhantomData<T>,
     ptr: ManuallyDrop<Z::Ptr>,
