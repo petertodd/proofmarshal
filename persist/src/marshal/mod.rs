@@ -19,17 +19,17 @@ pub trait Save<Z: Zone> : Owned + Pointee {
         Self::BLOB_LAYOUT
     }
 
-    type SavePoll : SavePoll<Zone = Z, Target = Self>;
+    type SavePoll : SavePoll<Z, Target = Self>;
     fn save_poll(this: impl Take<Self>) -> Self::SavePoll;
 }
 
-pub trait SavePoll : Sized {
-    type Zone : Zone;
-    type Target : ?Sized + Save<Self::Zone>;
+pub trait SavePoll<Z: Zone> : Sized {
+    type Target : ?Sized + Save<Z>;
 
     fn save_children<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(), P::Error>>
-        where P: PtrSaver<Zone = Self::Zone>
+        where P: SavePtr<Z>
     {
+        let _ = ptr_saver;
         Poll::Ready(Ok(()))
     }
 
@@ -44,19 +44,17 @@ pub trait SavePoll : Sized {
     }
 }
 
-pub trait PtrSaver {
-    type Zone : Zone;
+pub trait SavePtr<Z: Zone> {
     type Error;
 
     fn save_blob(&mut self, size: usize, f: impl FnOnce(&mut [u8]))
-        -> Result<<Self::Zone as Zone>::PersistPtr, Self::Error>;
+        -> Result<Z::PersistPtr, Self::Error>;
 
-    fn save_own<T: ?Sized + Save<Self::Zone>>(&mut self, own: Own<T, Self::Zone>)
-        -> Result<<Self::Zone as Zone>::PersistPtr, T::SavePoll>;
+    fn save_own<T: ?Sized + Save<Z>>(&mut self, own: Own<T, Z>)
+        -> Result<Z::PersistPtr, T::SavePoll>;
 }
 
-impl PtrSaver for () {
-    type Zone = !;
+impl SavePtr<!> for () {
     type Error = !;
 
     fn save_blob(&mut self, _: usize, _: impl FnOnce(&mut [u8]))
@@ -65,7 +63,7 @@ impl PtrSaver for () {
         panic!()
     }
 
-    fn save_own<T: ?Sized + Save<Self::Zone>>(&mut self, own: Own<T, Self::Zone>)
+    fn save_own<T: ?Sized + Save<!>>(&mut self, own: Own<T, !>)
         -> Result<!, T::SavePoll>
     {
         match *own.ptr() {}
@@ -73,12 +71,12 @@ impl PtrSaver for () {
 }
 
 pub trait ValidateChildren<Z: Zone> {
-    fn validate_children<V>(&mut self, ptr_validator: V) -> Poll<Result<(), V::Error>>
+    fn validate_children<V>(&mut self, validator: &mut V) -> Poll<Result<(), V::Error>>
         where V: ValidatePtr<Z>;
 }
 
 impl<Z: Zone> ValidateChildren<Z> for () {
-    fn validate_children<V>(&mut self, _ptr_validator: V) -> Poll<Result<(), V::Error>>
+    fn validate_children<V>(&mut self, _: &mut V) -> Poll<Result<(), V::Error>>
         where V: ValidatePtr<Z>
     {
         Ok(()).into()
@@ -161,14 +159,13 @@ where T: Save<Z>
     }
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> SavePoll for SaveOwnPoll<T, Z>
+impl<T: ?Sized + Pointee, Z: Zone> SavePoll<Z> for SaveOwnPoll<T, Z>
 where T: Save<Z>
 {
-    type Zone = Z;
     type Target = Own<T,Z>;
 
     fn save_children<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(), P::Error>>
-        where P: PtrSaver<Zone = Self::Zone>
+        where P: SavePtr<Z>
     {
         match self {
             Self::Done { .. } => Ok(()).into(),
@@ -285,44 +282,62 @@ where T: Load<Z>
 }
 
 impl<T: ?Sized + Load<Z>, Z: Zone> ValidateChildren<Z> for ValidateOwn<T,Z> {
-    fn validate_children<V>(&mut self, ptr_validator: V) -> Poll<Result<(), V::Error>>
+    fn validate_children<V>(&mut self, validator: &mut V) -> Poll<Result<(), V::Error>>
         where V: ValidatePtr<Z>
     {
         match self {
             ValidateOwn::Own { ptr, metadata } => {
                 todo!()
             },
-            ValidateOwn::Value(v) => v.validate_children(ptr_validator),
+            ValidateOwn::Value(v) => v.validate_children(validator),
         }
     }
 }
 
 pub fn encode<T: Save<!>>(value: T) -> Vec<u8> {
+    let mut dst = vec![0; T::BLOB_LAYOUT.size()];
+    encode_into(value, &mut dst[..]);
+    dst
+}
+
+pub fn encode_into<T: Save<!>>(value: T, dst: &mut [u8]) {
     let mut saver = T::save_poll(value);
 
     match saver.save_children(&mut ()) {
         Poll::Ready(Ok(())) => {},
-        x => panic!(),
+        _ => panic!(),
     }
 
-    let mut dst = vec![0; T::BLOB_LAYOUT.size()];
     saver.encode_blob(&mut dst[..]).unwrap();
-    dst
 }
 
 pub fn try_decode<'a, T: ?Sized + Load<!>>(blob: Blob<'a, T,!>) -> Result<Ref<'a, T>, T::Error> {
     let mut validator = T::validate_blob(blob)?;
 
-    match validator.poll(()) {
+    match validator.poll(&mut ()) {
         Poll::Ready(Ok(fully_valid_blob)) => Ok(T::load_blob(fully_valid_blob, &mut ())),
         _ => panic!(),
     }
 }
 
-/*
-pub fn test_try_decode<'a>(blob: Blob<'a, u64, !>)
-    -> Result<Ref<'a, u64>, !>
-{
+pub fn test_try_decode(blob: Blob<(u8,Option<(u8, Option<u16>)>), !>) -> Result<Ref<(u8, Option<(u8, Option<u16>)>)>, impls::TupleError> {
     try_decode(blob)
 }
-*/
+
+pub fn test_encode(v: (u8, Option<(u8, Option<u16>)>), dst: &mut [u8;6]) {
+    encode_into(v, dst)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use core::convert::TryFrom;
+
+    #[test]
+    fn test() {
+        let blob = Blob::<(u8, Option<(u8, Option<u8>)>),!>::try_from(&[0;5][..]).unwrap();
+
+        let _validator = <(u8, Option<(u8, Option<u8>)>)>::validate_blob(blob);
+    }
+}

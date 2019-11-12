@@ -18,14 +18,13 @@ impl<Z: Zone, T: Save<Z>> Save<Z> for Option<T> {
     }
 }
 
-impl<E: SavePoll> SavePoll for Option<E>
+impl<Z: Zone, E: SavePoll<Z>> SavePoll<Z> for Option<E>
 where E::Target: Sized,
 {
-    type Zone = E::Zone;
     type Target = Option<E::Target>;
 
     fn save_children<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(), P::Error>>
-        where P: PtrSaver<Zone = Self::Zone>
+        where P: SavePtr<Z>
     {
         match self {
             None => Ok(()).into(),
@@ -138,12 +137,12 @@ impl<Z: Zone, T: Load<Z>> Load<Z> for Option<T> {
 }
 
 impl<Z: Zone, T: ValidateChildren<Z>> ValidateChildren<Z> for Option<T> {
-    fn validate_children<V>(&mut self, ptr_validator: V) -> Poll<Result<(), V::Error>>
+    fn validate_children<V>(&mut self, validator: &mut V) -> Poll<Result<(), V::Error>>
         where V: ValidatePtr<Z>
     {
         match self {
             None => Ok(()).into(),
-            Some(inner) => inner.validate_children(ptr_validator),
+            Some(inner) => inner.validate_children(validator),
         }
     }
 }

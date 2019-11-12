@@ -1,44 +1,21 @@
 use super::*;
 
-use core::marker::PhantomData;
 use core::mem;
-use core::slice;
-use core::num::{
-    NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64,
-    NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64,
-};
-
-#[derive(Debug)]
-pub struct SaveScalar<T, Z> {
-    marker: PhantomData<fn(Z) -> Z>,
-    pub(crate) value: T,
-}
-
-impl<T,Z> SaveScalar<T,Z> {
-    pub(crate) fn new(value: impl Take<T>) -> Self {
-        SaveScalar {
-            marker: PhantomData,
-            value: value.take_sized(),
-        }
-    }
-}
-
 impl<Z: Zone> Save<Z> for ! {
     const BLOB_LAYOUT: BlobLayout = BlobLayout::never();
 
-    type SavePoll = SaveScalar<Self, Z>;
+    type SavePoll = Self;
 
     fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
         match this.take_sized() {}
     }
 }
 
-impl<Z: Zone> SavePoll for SaveScalar<!, Z> {
-    type Zone = Z;
+impl<Z: Zone> SavePoll<Z> for ! {
     type Target = !;
 
     fn encode_blob<W: WriteBlob>(&self, _dst: W) -> Result<W::Done, W::Error> {
-        match self.value {}
+        match *self {}
     }
 }
 
@@ -54,7 +31,7 @@ impl<Z: Zone> Load<Z> for ! {
         panic!()
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+    fn decode_blob<'p>(_: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Self {
         panic!()
     }
 }
@@ -63,15 +40,14 @@ impl<Z: Zone> Load<Z> for ! {
 impl<Z: Zone> Save<Z> for () {
     const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
 
-    type SavePoll = SaveScalar<Self, Z>;
+    type SavePoll = Self;
 
     fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
-        SaveScalar::new(this)
+        this.take_sized()
     }
 }
 
-impl<Z: Zone> SavePoll for SaveScalar<(), Z> {
-    type Zone = Z;
+impl<Z: Zone> SavePoll<Z> for () {
     type Target = ();
 
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
@@ -91,7 +67,7 @@ impl<Z: Zone> Load<Z> for () {
         unsafe { blob.assume_valid_ref() }
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Self {
         unsafe { *blob.assume_valid() }
     }
 }
@@ -102,19 +78,18 @@ macro_rules! impl_ints {
         $(
             impl<Z: Zone> Save<Z> for $t {
                 const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
-                type SavePoll = SaveScalar<Self, Z>;
+                type SavePoll = Self;
 
                 fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
-                    SaveScalar::new(this)
+                    this.take_sized()
                 }
             }
 
-            impl<Z: Zone> SavePoll for SaveScalar<$t, Z> {
-                type Zone = Z;
+            impl<Z: Zone> SavePoll<Z> for $t {
                 type Target = $t;
 
                 fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-                    dst.write_bytes(&self.value.to_le_bytes())?
+                    dst.write_bytes(&self.to_le_bytes())?
                        .done()
                 }
             }
@@ -132,7 +107,7 @@ macro_rules! impl_ints {
                     unsafe { blob.assume_valid_ref() }
                 }
 
-                fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+                fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Self {
                     unsafe { *blob.assume_valid() }
                 }
             }
