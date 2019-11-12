@@ -22,6 +22,15 @@ pub trait Save<Z: Zone> : Owned + Pointee {
 
     type SavePoll : SavePoll<Z, Target = Self>;
     fn save_poll(this: impl Take<Self>) -> Self::SavePoll;
+
+    /// Hook to allow zones to define how to save pointers.
+    fn save_ptr<T, S>(ptr: Own<T, Self>, saver: &mut S) -> Result<Z::PersistPtr, T::SavePoll>
+        where T: ?Sized + Save<Z>,
+              S: SavePtr<Z>,
+              Self: Zone,
+    {
+        unimplemented!()
+    }
 }
 
 pub trait SavePoll<Z: Zone> : Sized {
@@ -148,35 +157,37 @@ impl<'a, Z: Zone, T: ValidatePtr<Z>> ValidatePtr<Z> for &'a mut T {
 
 
 #[derive(Debug)]
-pub enum SaveOwnPoll<T: ?Sized + Save<Z>, Z: Zone> {
+pub enum SaveOwnPoll<T: ?Sized + Save<Y>, Z: Zone, Y: Zone> {
     Own(Own<T,Z>),
     Pending(T::SavePoll),
     Done {
-        persist_ptr: Z::PersistPtr,
+        persist_ptr: Y::PersistPtr,
         metadata: T::Metadata,
     },
     Poisoned,
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> Save<Z> for Own<T,Z>
-where T: Save<Z>
+impl<T: ?Sized, Z: Zone, Y: Zone> Save<Y> for Own<T,Z>
+where T: Save<Y>,
+      Z: Save<Y>,
 {
-    const BLOB_LAYOUT: BlobLayout = <Z::PersistPtr as Save<!>>::BLOB_LAYOUT
+    const BLOB_LAYOUT: BlobLayout = <Y::PersistPtr as Save<!>>::BLOB_LAYOUT
                                         .extend(<T::Metadata as Save<!>>::BLOB_LAYOUT);
 
-    type SavePoll = SaveOwnPoll<T, Z>;
+    type SavePoll = SaveOwnPoll<T, Z, Y>;
     fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
         SaveOwnPoll::Own(this.take_sized())
     }
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> SavePoll<Z> for SaveOwnPoll<T, Z>
-where T: Save<Z>
+impl<T: ?Sized, Z: Zone, Y: Zone> SavePoll<Y> for SaveOwnPoll<T, Z, Y>
+where T: Save<Y>,
+      Z: Save<Y>,
 {
     type Target = Own<T,Z>;
 
     fn save_children<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(), P::Error>>
-        where P: SavePtr<Z>
+        where P: SavePtr<Y>
     {
         match self {
             Self::Done { .. } => Ok(()).into(),
@@ -200,7 +211,7 @@ where T: Save<Z>
             Self::Own(_) => {
                 if let Self::Own(own) = mem::replace(self, Self::Poisoned) {
                     let metadata = own.metadata();
-                    match ptr_saver.save_own(own) {
+                    match Z::save_ptr(own, ptr_saver) {
                         Ok(persist_ptr) => {
                             *self = Self::Done { persist_ptr, metadata };
                             Ok(()).into()
@@ -251,7 +262,8 @@ pub enum ValidateOwn<T: ?Sized + Load<Z>, Z: Zone> {
 }
 
 impl<T: ?Sized + Pointee, Z: Zone> Load<Z> for Own<T,Z>
-where T: Load<Z>
+where T: Load<Z>,
+      Z: Load<Z>,
 {
     type Error = ValidateOwnError<T, Z>;
 

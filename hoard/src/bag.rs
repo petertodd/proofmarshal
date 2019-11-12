@@ -41,27 +41,29 @@ impl<T: ?Sized + Load<Z>, Z: Zone> Bag<T,Z> {
     }
 }
 
-pub struct BagSaver<T: ?Sized + Save<Z>, Z: Zone>(SaveOwnPoll<T,Z>);
+pub struct BagSaver<T: ?Sized + Save<Y>, Z: Zone, Y: Zone>(SaveOwnPoll<T,Z,Y>);
 
-impl<T: ?Sized + Pointee, Z: Zone> Save<Z> for Bag<T,Z>
-where T: Save<Z>
+impl<T: ?Sized, Z: Zone, Y: Zone> Save<Y> for Bag<T,Z>
+where T: Save<Y>,
+      Z: Save<Y>,
 {
-    const BLOB_LAYOUT: BlobLayout = <Own<T,Z> as Save<Z>>::BLOB_LAYOUT;
+    const BLOB_LAYOUT: BlobLayout = <Own<T,Z> as Save<Y>>::BLOB_LAYOUT;
 
-    type SavePoll = BagSaver<T,Z>;
+    type SavePoll = BagSaver<T,Z,Y>;
     fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
         let this = this.take_sized();
         BagSaver(Own::save_poll(this.ptr))
     }
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> SavePoll<Z> for BagSaver<T,Z>
-where T: Save<Z>
+impl<T: ?Sized, Z: Zone, Y: Zone> SavePoll<Y> for BagSaver<T,Z,Y>
+where T: Save<Y>,
+      Z: Save<Y>,
 {
     type Target = Bag<T,Z>;
 
     fn save_children<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(), P::Error>>
-        where P: SavePtr<Z>
+        where P: SavePtr<Y>
     {
         self.0.save_children(ptr_saver)
     }
@@ -73,7 +75,10 @@ where T: Save<Z>
 
 pub struct ValidateBag<T: ?Sized + Load<Z>, Z: Zone>(ValidateOwn<T,Z>);
 
-impl<T: ?Sized + Load<Z>, Z: Zone> Load<Z> for Bag<T,Z> {
+impl<T: ?Sized, Z: Zone> Load<Z> for Bag<T,Z>
+where T: Load<Z>,
+      Z: Load<Z>,
+{
     type Error = <Own<T,Z> as Load<Z>>::Error;
 
     type ValidateChildren = ValidateOwn<T,Z>;

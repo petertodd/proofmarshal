@@ -133,6 +133,51 @@ impl<'p> Get for PileMut<'p> {
     }
 }
 
+impl<'p, 'q, Z> Save<Z> for PileMut<'p>
+where Z: Zone<PersistPtr=Offset<'static>> + ::core::borrow::Borrow<PileMut<'q>>
+{
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(0);
+
+    type SavePoll = Self;
+    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
+        this.take_sized()
+    }
+
+    fn save_ptr<T, S>(ptr: Own<T, Self>, ptr_saver: &mut S) -> Result<Offset<'static>, T::SavePoll>
+        where T: ?Sized + Save<Z>,
+              S: SavePtr<Z>,
+    {
+        let (ptr, metadata) = ptr.into_raw_parts();
+        match unsafe { ptr.try_take::<T>(metadata) } {
+            Ok(owned) => Err(T::save_poll(owned)),
+            Err(offset) => Ok(offset.persist()),
+        }
+    }
+}
+
+impl<Z: Zone> SavePoll<Z> for PileMut<'_>
+where Self: Save<Z>
+{
+    type Target = Self;
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        dst.done()
+    }
+}
+
+impl<'p> Load<Self> for PileMut<'p> {
+    type Error = !;
+
+    type ValidateChildren = ();
+    fn validate_blob<'q>(blob: Blob<'q, Self, Self>) -> Result<ValidateBlob<'q, Self, Self>, Self::Error> {
+        Ok(blob.assume_valid(()))
+    }
+
+    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Self>, loader: &impl Loader<Self>) -> Self::Owned {
+        todo!()
+    }
+}
+
 impl<'p> Loader<Self> for PileMut<'p> {
     fn load_ptr<T: ?Sized + Pointee>(&self, offset: Offset<'static>, metadata: T::Metadata) -> Own<T,Self> {
         unsafe {

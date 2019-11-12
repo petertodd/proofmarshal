@@ -28,7 +28,7 @@ pub mod pile;
 
 pub trait Zone : Sized {
     type Ptr : fmt::Debug;
-    type PersistPtr : fmt::Debug + Copy + Load<!> + Load<Self>;
+    type PersistPtr : 'static + fmt::Debug + Copy + Load<!> + Load<Self>;
 
     type Allocator : Alloc<Zone = Self>;
 
