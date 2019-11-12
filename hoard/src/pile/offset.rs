@@ -16,6 +16,8 @@ use crate::marshal::blob::*;
 #[repr(transparent)]
 pub struct Offset<'p> {
     marker: PhantomData<fn(&'p ()) -> &'p ()>,
+
+    // FIXME: needs to be Le<NonZeroU64>
     raw: NonZeroU64,
 }
 
