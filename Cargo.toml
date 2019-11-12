@@ -6,5 +6,5 @@ members = [
 
 	"sliceinit",
 
-	"persist",
+	"hoard",
 ]

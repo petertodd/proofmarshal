@@ -5,9 +5,5 @@ authors = ["Peter Todd <pete@petertodd.org>"]
 edition = "2018"
 
 [dependencies]
-pointee = { path = "../pointee" }
-
-memmap = "0.7.0"
-
-[dev-dependencies]
-tempfile = "3.1.0"
+nonzero = { path = "../nonzero" }
+owned = { path = "../owned" }

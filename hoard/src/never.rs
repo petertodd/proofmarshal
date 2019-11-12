@@ -1,21 +1,18 @@
-use core::marker::PhantomData;
-
 use super::*;
 
-/// Dummy allocator for zones that can't actually allocate.
-///
-/// Implements `Alloc` for `Z`, but being an uninhabited type can't actually be created.
+use core::marker::PhantomData;
+
 #[allow(unreachable_code)]
-#[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
-pub struct NeverAlloc<Z> {
-    _marker: PhantomData<fn(Z)>,
+#[derive(Debug)]
+pub struct NeverAllocator<Z> {
+    marker: PhantomData<fn(Z) -> Z>,
     never: !,
 }
 
-impl<Z: Zone> Alloc for NeverAlloc<Z> {
+impl<Z: Zone> Alloc for NeverAllocator<Z> {
     type Zone = Z;
 
-    fn alloc<T>(&mut self, _value: T) -> Rec<T,Self::Zone> {
+    fn alloc<T: ?Sized + Pointee>(&mut self, _src: impl Take<T>) -> Own<T, Self::Zone> {
         match self.never {}
     }
 
@@ -26,18 +23,24 @@ impl<Z: Zone> Alloc for NeverAlloc<Z> {
 
 impl Zone for ! {
     type Ptr = !;
-    type Allocator = NeverAlloc<!>;
-    type Error = !;
+    type PersistPtr = !;
+    type Allocator = NeverAllocator<!>;
 
-    fn clone_rec<T: ?Sized + Pointee>(r: &Rec<T,Self>) -> Rec<T,Self> {
-        match r.ptr().raw {}
+    unsafe fn dealloc_own<T: ?Sized + Pointee>(ptr: Self::Ptr, _: T::Metadata) {
+        match ptr {}
     }
 
-    unsafe fn dealloc<T: ?Sized + Pointee>(ptr: Ptr<T,Self>) {
-        match ptr.raw {}
+    fn allocator() -> Self::Allocator {
+        panic!()
+    }
+}
+
+impl Get for ! {
+    fn get<'p, T: ?Sized + Owned + Pointee>(&self, _ptr: &'p Own<T, Self>) -> Ref<'p, T> {
+        match *self {}
     }
 
-    fn fmt_debug_rec<T: ?Sized + Pointee>(rec: &Rec<T,Self>, _: &mut fmt::Formatter) -> fmt::Result {
-        match rec.ptr().raw {}
+    fn take<T: ?Sized + Owned + Pointee>(&self, _ptr: Own<T, Self>) -> T::Owned {
+        match *self {}
     }
 }

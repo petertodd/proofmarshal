@@ -1,303 +1,346 @@
 use super::*;
 
-use std::mem;
-use std::any::Any;
+use core::convert::TryFrom;
+use core::mem::{self, MaybeUninit};
+use core::slice;
 
-mod scalars;
-mod tuples;
-mod option;
+pub mod impls;
 
-mod blob;
-pub use self::blob::Blob;
+pub mod blob;
+use self::blob::*;
 
-pub trait Marshal<Z: Zone> : Sized {
-    type Error : fmt::Debug;
-
-    fn pile_layout() -> pile::Layout
-        where Z: pile::Pile;
-
-    fn pile_load<'p>(blob: Blob<'p, Self, Z>, pile: &Z) -> Result<Ref<'p, Self, Z>, Self::Error>
-        where Z: pile::Pile;
-
-    fn pile_store<D: pile::Dumper<Pile=Z>>(&self, dumper: D) -> Result<D::Done, D::Error>
-        where Z: pile::Pile;
-}
-
-impl<Z: Zone, T: Marshal<Z>> Load<Z> for T {
-    type Error = T::Error;
-    type Owned = T;
-
-    unsafe fn take(borrowed: &mut ManuallyDrop<Self>) -> T {
-        ManuallyDrop::take(borrowed)
-    }
-
-    #[inline]
-    fn pile_load<'p, L>(pile: &Z, rec: &'p Rec<Self, Z>) -> Result<Result<Ref<'p, Self, Z>, Self::Error>, Z::Error>
-        where Z: pile::Pile
-    {
-        let blob = pile.get_blob(&rec.ptr().raw, T::pile_layout().size())?;
-        Ok(T::pile_load(Blob::new(blob), pile))
-    }
-}
-
-impl<Z: Zone, T: Marshal<Z>> Store<Z> for T {
-    #[inline]
-    unsafe fn alloc(owned: T, dst: *mut ()) -> *mut Self {
-        let dst = dst.cast::<T>();
-        dst.cast::<T>().write(owned);
-        dst
-    }
-
-    #[inline]
-    fn pile_store<D: pile::Dumper<Pile=Z>>(owned: T, dumper: D) -> Result<D::Done, D::Error>
-        where Z: pile::Pile
-    {
-        owned.pile_store(dumper)
-    }
-}
-
-
-#[derive(Debug)]
-pub struct LoadRecError;
-
-impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> Marshal<Y> for Rec<T,Z>
-where T: Store<Y>,
-      T::Metadata: Marshal<Y>,
-      Z: Marshal<Y>,
-{
-    type Error = LoadRecError;
+/// A *value* that can be saved in a zone.
+pub trait Save<Z: Zone> : Owned + Pointee {
+    const BLOB_LAYOUT: BlobLayout;
 
     #[inline(always)]
-    fn pile_layout() -> pile::Layout
-        where Y: pile::Pile
-    {
-        Y::OFFSET_LAYOUT.extend(T::Metadata::pile_layout())
+    fn blob_layout(metadata: Self::Metadata) -> BlobLayout {
+        assert_eq!(mem::size_of_val(&metadata), 0);
+
+        Self::BLOB_LAYOUT
     }
 
-    #[inline(always)]
-    fn pile_load<'p>(blob: Blob<'p, Self, Y>, pile: &Y) -> Result<Ref<'p, Self, Y>, Self::Error>
-        where Y: pile::Pile
-    {
-        todo!()
-    }
-
-    #[inline(always)]
-    fn pile_store<D: pile::Dumper<Pile=Y>>(&self, dumper: D) -> Result<D::Done, D::Error>
-        where Y: pile::Pile
-    {
-        let (dumper, offset) = dumper.dump_rec(self)?;
-
-        let dst = vec![0; Self::pile_layout().size()];
-
-        StructDumper::new(dumper, dst)
-                     .dump_value(&offset)?
-                     .dump_value(&self.ptr.metadata)?
-                     .done()
-    }
+    type SavePoll : SavePoll<Z, Target = Self>;
+    fn save_poll(this: impl Take<Self>) -> Self::SavePoll;
 }
 
-impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> Marshal<Y> for Bag<T,Z>
-where T: Store<Y>,
-      T::Metadata: Marshal<Y>,
-      Z: Marshal<Y>,
-{
-    type Error = LoadRecError;
+pub trait SavePoll<Z: Zone> : Sized {
+    type Target : ?Sized + Save<Z>;
 
-    #[inline(always)]
-    fn pile_layout() -> pile::Layout
-        where Y: pile::Pile
+    fn save_children<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(), P::Error>>
+        where P: SavePtr<Z>
     {
-        <Rec<T,Z> as Marshal<Y>>::pile_layout()
+        let _ = ptr_saver;
+        Poll::Ready(Ok(()))
     }
 
-    #[inline(always)]
-    fn pile_load<'p>(blob: Blob<'p, Self, Y>, pile: &Y) -> Result<Ref<'p, Self, Y>, Self::Error>
-        where Y: pile::Pile
-    {
-        todo!()
-    }
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error>;
 
-    #[inline(always)]
-    fn pile_store<D: pile::Dumper<Pile=Y>>(&self, dumper: D) -> Result<D::Done, D::Error>
-        where Y: pile::Pile
-    {
-        self.rec.pile_store(dumper)
-    }
-}
-
-#[derive(Debug)]
-pub struct StructDumper<D, B> {
-    dumper: D,
-    dst: B,
-    written: usize,
-}
-
-impl<D, B> StructDumper<D, B> {
-    #[inline]
-    pub fn new(dumper: D, dst: B) -> Self {
-        Self {
-            dumper, dst,
-            written: 0,
+    fn metadata(&self) -> <Self::Target as Pointee>::Metadata {
+        if mem::size_of::<<Self::Target as Pointee>::Metadata>() == 0 {
+            unsafe { MaybeUninit::uninit().assume_init() }
+        } else {
+            unimplemented!()
         }
     }
 }
 
-impl<D: pile::Dumper, B: AsMut<[u8]>> StructDumper<D, B> {
-    #[inline]
-    pub fn dump_value<T: Marshal<D::Pile>>(mut self, value: &T) -> Result<Self, D::Error> {
-        let value_size = T::pile_layout().size();
-        assert!(self.written + value_size <= self.dst.as_mut().len(),
-                "overflow");
+pub trait SavePtr<Z: Zone> {
+    type Error;
 
-        let (_, remaining) = self.dst.as_mut().split_at_mut(self.written);
-        let (field_dst, _) = remaining.split_at_mut(value_size);
+    fn save_blob(&mut self, size: usize, f: impl FnOnce(&mut [u8]))
+        -> Result<Z::PersistPtr, Self::Error>;
 
-        let field_dumper = value.pile_store(FieldDumper::new(self.dumper, field_dst))?;
-        Ok(Self {
-            dumper: field_dumper.dumper,
-            dst: self.dst,
-            written: self.written + value_size,
-        })
+    fn save_own<T: ?Sized + Save<Z>>(&mut self, own: Own<T, Z>)
+        -> Result<Z::PersistPtr, T::SavePoll>;
+}
+
+impl SavePtr<!> for () {
+    type Error = !;
+
+    fn save_blob(&mut self, _: usize, _: impl FnOnce(&mut [u8]))
+        -> Result<!, Self::Error>
+    {
+        panic!()
     }
 
-    #[inline]
-    pub fn done(mut self) -> Result<D::Done, D::Error> {
-        assert_eq!(self.written, self.dst.as_mut().len(),
-                   "not all bytes written");
-        self.dumper.dump_blob(self.dst.as_mut())
+    fn save_own<T: ?Sized + Save<!>>(&mut self, own: Own<T, !>)
+        -> Result<!, T::SavePoll>
+    {
+        match *own.ptr() {}
     }
 }
+
+pub trait ValidateChildren<Z: Zone> {
+    fn validate_children<V>(&mut self, validator: &mut V) -> Poll<Result<(), V::Error>>
+        where V: ValidatePtr<Z>;
+}
+
+impl<Z: Zone> ValidateChildren<Z> for () {
+    fn validate_children<V>(&mut self, _: &mut V) -> Poll<Result<(), V::Error>>
+        where V: ValidatePtr<Z>
+    {
+        Ok(()).into()
+    }
+}
+
+pub trait Load<Z: Zone> : Save<Z> {
+    type Error;
+
+    type ValidateChildren : ValidateChildren<Z>;
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error>;
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self::Owned;
+
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Ref<'p, Self> {
+        Ref::Owned(Self::decode_blob(blob, loader))
+    }
+}
+
+pub trait Loader<Z: Zone> {
+    fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: Z::PersistPtr, metadata: T::Metadata) -> Own<T,Z>;
+
+    fn zone(&self) -> Z;
+    fn allocator(&self) -> Z::Allocator;
+}
+
+impl Loader<!> for () {
+    fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: !, _: T::Metadata) -> Own<T,!> {
+        match persist_ptr {}
+    }
+
+    fn zone(&self) -> ! {
+        panic!()
+    }
+
+    fn allocator(&self) -> crate::never::NeverAllocator<!> {
+        panic!()
+    }
+}
+
+impl<Z: Zone, L: Loader<Z>> Loader<Z> for &'_ L {
+    fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: Z::PersistPtr, metadata: T::Metadata) -> Own<T,Z> {
+        (&**self).load_ptr(persist_ptr, metadata)
+    }
+
+    fn zone(&self) -> Z {
+        (&**self).zone()
+    }
+
+    fn allocator(&self) -> Z::Allocator {
+        (&**self).allocator()
+    }
+}
+
+pub trait ValidatePtr<Z: Zone> {
+    type Error;
+
+    //fn validate_ptr<T: ?Sized + Load<Self::Zone>>(&mut self, persist_ptr: Z::PersistPtr, metadata: T::Metadata)
+}
+
+impl ValidatePtr<!> for () {
+    type Error = !;
+}
+
+impl<'a, Z: Zone, T: ValidatePtr<Z>> ValidatePtr<Z> for &'a mut T {
+    type Error = T::Error;
+}
+
 
 #[derive(Debug)]
-struct FieldDumper<'a, D> {
-    dumper: D,
-    dst: &'a mut [u8],
+pub enum SaveOwnPoll<T: ?Sized + Save<Z>, Z: Zone> {
+    Own(Own<T,Z>),
+    Pending(T::SavePoll),
+    Done {
+        persist_ptr: Z::PersistPtr,
+        metadata: T::Metadata,
+    },
+    Poisoned,
 }
 
-impl<'a, D> FieldDumper<'a, D> {
-    fn new(dumper: D, dst: &'a mut [u8]) -> Self {
-        Self { dumper, dst }
+impl<T: ?Sized + Pointee, Z: Zone> Save<Z> for Own<T,Z>
+where T: Save<Z>
+{
+    const BLOB_LAYOUT: BlobLayout = <Z::PersistPtr as Save<!>>::BLOB_LAYOUT;
+
+    type SavePoll = SaveOwnPoll<T, Z>;
+    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
+        SaveOwnPoll::Own(this.take_sized())
     }
 }
 
-impl<D: pile::Dumper> pile::Dumper for FieldDumper<'_, D> {
-    type Pile = D::Pile;
-    type Error = D::Error;
-    type Done = Self;
+impl<T: ?Sized + Pointee, Z: Zone> SavePoll<Z> for SaveOwnPoll<T, Z>
+where T: Save<Z>
+{
+    type Target = Own<T,Z>;
 
-    #[inline(always)]
-    fn dump_rec<T: ?Sized + Pointee, Z: Zone>(self, rec: &Rec<T,Z>)
-        -> Result<(Self, <Self::Pile as pile::Pile>::Offset), Self::Error>
-    where T: Store<Self::Pile>,
-          Z: Marshal<Self::Pile>,
+    fn save_children<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(), P::Error>>
+        where P: SavePtr<Z>
     {
-        let (dumper, offset) = self.dumper.dump_rec(rec)?;
+        match self {
+            Self::Done { .. } => Ok(()).into(),
+            Self::Poisoned => panic!(),
 
-        Ok((Self::new(dumper, self.dst), offset))
+            Self::Pending(pending) =>
+                match pending.save_children(ptr_saver)? {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(()) => {
+                        let metadata = pending.metadata();
+                        let size = T::blob_layout(metadata).size();
+                        let persist_ptr = ptr_saver.save_blob(size, |dst| {
+                            pending.encode_blob(dst).unwrap()
+                        })?;
+
+                        *self = Self::Done { persist_ptr, metadata };
+
+                        Ok(()).into()
+                    },
+                },
+            Self::Own(_) => {
+                if let Self::Own(own) = mem::replace(self, Self::Poisoned) {
+                    let metadata = own.metadata();
+                    match ptr_saver.save_own(own) {
+                        Ok(persist_ptr) => {
+                            *self = Self::Done { persist_ptr, metadata };
+                            Ok(()).into()
+                        },
+                        Err(pending) => {
+                            *self = Self::Pending(pending);
+                            self.save_children(ptr_saver)
+                        },
+                    }
+                } else {
+                    unreachable!()
+                }
+            }
+        }
     }
 
-    #[inline(always)]
-    fn dump_blob(self, buf: &[u8]) -> Result<Self, Self::Error> {
-        assert_eq!(buf.len(), self.dst.len());
-        self.dst.copy_from_slice(buf);
-        Ok(self)
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        if let Self::Done { persist_ptr, metadata } = self {
+            unsafe fn as_bytes<T>(x: &T) -> &[u8] {
+                slice::from_raw_parts(x as *const T as *const u8,
+                                      mem::size_of::<T>())
+            }
+
+            unsafe {
+                /// FIXME
+                dst.write_bytes(as_bytes(persist_ptr))?
+                   .write_bytes(as_bytes(metadata))?
+                   .done()
+            }
+        } else {
+            panic!()
+        }
     }
+
+}
+
+pub enum ValidateOwnError<Z: Zone> {
+    Ptr(<Z::PersistPtr as Load<Z>>::Error),
+    Metadata,
+}
+
+pub enum ValidateOwn<T: ?Sized + Load<Z>, Z: Zone> {
+    Own {
+        ptr: Z::PersistPtr,
+        metadata: T::Metadata,
+    },
+    Value(T::ValidateChildren),
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> Load<Z> for Own<T,Z>
+where T: Load<Z>
+{
+    type Error = ValidateOwnError<Z>;
+
+    type ValidateChildren = ValidateOwn<T,Z>;
+
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
+        // FIXME: validate metadata properly
+
+        let mut v = blob.validate();
+        let _ = v.field::<Z::PersistPtr>().map_err(|e| ValidateOwnError::Ptr(e))?;
+
+        let blob = Blob::<(Z::PersistPtr, ()), !>::try_from(&blob[..]).unwrap();
+
+        let ptr = try_decode(blob).expect("FIXME").0;
+
+        assert_eq!(mem::size_of::<T::Metadata>(), 0);
+        let metadata = unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+        Ok(v.done(ValidateOwn::Own { ptr, metadata }))
+    }
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+        let mut fields = blob.decode_struct(loader);
+        let ptr = fields.field::<Z::PersistPtr>();
+
+        // FIXME
+        assert_eq!(mem::size_of::<T::Metadata>(), 0);
+        let metadata = unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+        loader.load_ptr(ptr, metadata)
+    }
+}
+
+impl<T: ?Sized + Load<Z>, Z: Zone> ValidateChildren<Z> for ValidateOwn<T,Z> {
+    fn validate_children<V>(&mut self, validator: &mut V) -> Poll<Result<(), V::Error>>
+        where V: ValidatePtr<Z>
+    {
+        match self {
+            ValidateOwn::Own { ptr, metadata } => {
+                todo!()
+            },
+            ValidateOwn::Value(v) => v.validate_children(validator),
+        }
+    }
+}
+
+pub fn encode<T: Save<!>>(value: T) -> Vec<u8> {
+    let mut dst = vec![0; T::BLOB_LAYOUT.size()];
+    encode_into(value, &mut dst[..]);
+    dst
+}
+
+pub fn encode_into<T: Save<!>>(value: T, dst: &mut [u8]) {
+    let mut saver = T::save_poll(value);
+
+    match saver.save_children(&mut ()) {
+        Poll::Ready(Ok(())) => {},
+        _ => panic!(),
+    }
+
+    saver.encode_blob(&mut dst[..]).unwrap();
+}
+
+pub fn try_decode<'a, T: ?Sized + Load<!>>(blob: Blob<'a, T,!>) -> Result<Ref<'a, T>, T::Error> {
+    let mut validator = T::validate_blob(blob)?;
+
+    match validator.poll(&mut ()) {
+        Poll::Ready(Ok(fully_valid_blob)) => Ok(T::load_blob(fully_valid_blob, &mut ())),
+        _ => panic!(),
+    }
+}
+
+pub fn test_try_decode(blob: Blob<(u8,Option<(u8, Option<u16>)>), !>) -> Result<Ref<(u8, Option<(u8, Option<u16>)>)>, impls::TupleError> {
+    try_decode(blob)
+}
+
+pub fn test_encode(v: (u8, Option<(u8, Option<u16>)>), dst: &mut [u8;6]) {
+    encode_into(v, dst)
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    struct SimplePile<'a>(&'a [u8]);
-
-    impl Zone for SimplePile<'_> {
-        type Ptr = u64;
-        type Allocator = crate::never::NeverAlloc<Self>;
-        type Error = !;
-
-        fn clone_rec<T: ?Sized + Pointee>(r: &Rec<T,Self>) -> Rec<T,Self> {
-            todo!()
-        }
-
-        unsafe fn dealloc<T: ?Sized + Pointee>(ptr: Ptr<T,Self>) {
-            let _ = ptr.raw;
-        }
-
-        fn fmt_debug_rec<T: ?Sized + Pointee>(_rec: &Rec<T,Self>, _f: &mut fmt::Formatter) -> fmt::Result {
-            todo!()
-        }
-    }
-
-    impl pile::Pile for SimplePile<'_> {
-        const OFFSET_LAYOUT: pile::Layout = pile::Layout::new(8);
-        type Offset = u64;
-
-        fn get_offset(ptr: &Self::Ptr) -> &Self::Offset {
-            ptr
-        }
-
-        fn get_blob<'p>(&self, ptr: &'p Self::Ptr, size: usize) -> Result<&'p [u8], Self::Error> {
-            todo!()
-        }
-    }
-
-    impl Marshal<Self> for SimplePile<'_> {
-        type Error = !;
-
-        fn pile_layout() -> pile::Layout {
-            pile::Layout::new(0)
-        }
-
-        fn pile_load<'p>(blob: Blob<'p, Self, Self>, pile: &Self) -> Result<Ref<'p, Self, Self>, Self::Error> {
-            todo!()
-        }
-
-        fn pile_store<D: pile::Dumper<Pile=Self>>(&self, dumper: D) -> Result<D::Done, D::Error> {
-            todo!()
-        }
-    }
-
-
-    #[derive(Debug)]
-    struct SimpleDumper<'a> {
-        pile: SimplePile<'a>,
-        dst: Vec<u8>,
-    }
-
-    impl<'a> pile::Dumper for SimpleDumper<'a> {
-        type Pile = SimplePile<'a>;
-        type Error = !;
-        type Done = (Vec<u8>, u64);
-
-        fn dump_rec<T: ?Sized + Pointee, Z: Zone>(self, rec: &Rec<T,Z>)
-            -> Result<(Self, u64), Self::Error>
-        {
-            assert_eq!(std::any::type_name::<Z>(), std::any::type_name::<Self::Pile>());
-
-            let rec: &Rec<T, SimplePile<'a>> = unsafe { &*(rec as *const _ as *const _) };
-            Ok((self, rec.ptr().raw))
-        }
-
-        fn dump_blob(mut self, buf: &[u8]) -> Result<Self::Done, Self::Error> {
-            let offset = self.dst.len() as u64;
-            self.dst.extend_from_slice(buf);
-            Ok((self.dst, offset))
-        }
-    }
+    use core::convert::TryFrom;
 
     #[test]
     fn test() {
-        let buf = &[];
-        let pile = SimplePile(buf);
+        let blob = Blob::<(u8, Option<(u8, Option<u8>)>),!>::try_from(&[0;5][..]).unwrap();
 
-        let ptr: Ptr<u8, SimplePile> = Ptr { raw: 0x1122_3344_5566_7788, metadata: () };
-        let rec = unsafe { Rec::from_ptr(ptr) };
-
-        let dumper = SimpleDumper { pile, dst: vec![] };
-
-        let r = (128u8, rec).pile_store(dumper).unwrap();
-
-        dbg!(r);
+        let _validator = <(u8, Option<(u8, Option<u8>)>)>::validate_blob(blob);
     }
 }
