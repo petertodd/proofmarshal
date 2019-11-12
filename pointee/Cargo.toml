@@ -1,5 +1,0 @@
-[package]
-name = "pointee"
-version = "0.1.0"
-authors = ["Peter Todd <pete@petertodd.org>"]
-edition = "2018"

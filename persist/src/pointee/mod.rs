@@ -1,8 +1,5 @@
 //! Targets of pointers.
 
-#![feature(slice_from_raw_parts)]
-#![feature(alloc_layout_extra)]
-
 use core::fmt;
 use core::hash::Hash;
 use core::ptr::NonNull;

@@ -5,7 +5,6 @@ members = [
 	"owned",
 
 	"sliceinit",
-	"pointee",
 
 	"persist",
 ]

@@ -1,7 +1,7 @@
 #![feature(never_type)]
 #![feature(associated_type_bounds)]
-#![feature(dropck_eyepatch)]
-
+#![feature(alloc_layout_extra)]
+#![feature(slice_from_raw_parts)]
 
 use core::any::type_name;
 use core::task::Poll;
@@ -9,6 +9,9 @@ use core::fmt;
 
 use pointee::Pointee;
 use owned::{Owned, Ref, Take};
+
+pub mod pointee;
+use self::pointee::*;
 
 pub mod marshal;
 use self::marshal::*;
