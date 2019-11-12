@@ -1,7 +1,10 @@
+use core::convert::TryFrom;
 use core::marker::PhantomData;
 use core::mem;
 
 use super::*;
+
+use crate::marshal::blob::*;
 
 mod offset;
 use self::offset::Kind;
@@ -89,7 +92,16 @@ impl<'p> Get for PileMut<'p> {
     fn get<'a, T: ?Sized + Load<Self>>(&self, own: &'a Own<T, Self>) -> Ref<'a, T> {
         match own.ptr().kind() {
             Kind::Offset(offset) => {
-                panic!("{:?}", offset)
+                let offset = usize::try_from(offset.get()).unwrap();
+                let range = offset .. offset + T::blob_layout(own.metadata()).size();
+                let words = self.words().get(range.clone())
+                                        .unwrap_or_else(|| panic!("{:?}", range));
+
+                let blob = Blob::<T, Self>::new(words, own.metadata()).unwrap();
+
+                let blob = unsafe { blob.assume_fully_valid() };
+
+                T::load_blob(blob, self)
             },
             Kind::Ptr(ptr) => {
                 let r: &'a T = unsafe {
@@ -106,8 +118,38 @@ impl<'p> Get for PileMut<'p> {
         match unsafe { ptr.try_take::<T>(metadata) } {
             Ok(owned) => owned,
             Err(offset) => {
-                todo!()
+                let offset = usize::try_from(offset.get()).unwrap();
+                let range = offset .. offset + T::blob_layout(metadata).size();
+                let words = self.words().get(range.clone())
+                                        .unwrap_or_else(|| panic!("{:?}", range));
+
+                let blob = Blob::<T, Self>::new(words, metadata).unwrap();
+
+                let blob = unsafe { blob.assume_fully_valid() };
+
+                T::decode_blob(blob, self)
             },
+        }
+    }
+}
+
+impl<'p> Loader<Self> for PileMut<'p> {
+    fn load_ptr<T: ?Sized + Pointee>(&self, offset: Offset<'static>, metadata: T::Metadata) -> Own<T,Self> {
+        unsafe {
+            let offset = OffsetMut::from_offset(offset.coerce());
+            Own::from_raw_parts(offset, metadata)
+        }
+    }
+
+    fn zone(&self) -> Self {
+        Self {
+            pile: self.pile,
+        }
+    }
+
+    fn allocator(&self) -> Self {
+        Self {
+            pile: self.pile,
         }
     }
 }
@@ -131,6 +173,29 @@ impl<'p> Tx<'p> {
             saver.encode_blob(dst).unwrap()
         }).unwrap()
     }
+
+    pub fn commit<'q: 'p, T>(&mut self, value: T, anchor: &'q mut Vec<u8>) -> (PileMut<'p>, T)
+        where T: Load<PileMut<'p>>
+    {
+        let offset = self.save(value);
+
+        anchor.clear();
+        anchor.extend_from_slice(self.pile.words());
+        anchor.extend_from_slice(&self.written);
+        self.written.clear();
+
+        unsafe {
+            self.pile = Pile::new_unchecked(&anchor[..]).into();
+
+            let pile: PileMut = Pile::new_unchecked(&anchor[..]).into();
+            let ptr = OffsetMut::from_offset(offset.coerce());
+
+            let own = Own::<T,PileMut<'p>>::from_raw_parts(ptr, T::make_sized_metadata());
+
+            let value = pile.take(own).take_sized();
+            (pile, value)
+        }
+    }
 }
 
 impl<'p> From<PileMut<'p>> for Tx<'p> {
@@ -142,12 +207,11 @@ impl<'p> From<PileMut<'p>> for Tx<'p> {
     }
 }
 
-impl<'p> PtrSaver for Tx<'p> {
-    type Zone = PileMut<'p>;
+impl<'p> SavePtr<PileMut<'p>> for Tx<'p> {
     type Error = !;
 
     fn save_blob(&mut self, size: usize, f: impl FnOnce(&mut [u8]))
-        -> Result<<Self::Zone as Zone>::PersistPtr, Self::Error>
+        -> Result<Offset<'static>, Self::Error>
     {
         let start = self.written.len();
         self.written.resize(self.written.len() + size, 0xfe);
@@ -160,8 +224,8 @@ impl<'p> PtrSaver for Tx<'p> {
         Ok(Offset::new(offset as u64).unwrap())
     }
 
-    fn save_own<T: ?Sized + Save<Self::Zone>>(&mut self, own: Own<T, Self::Zone>)
-        -> Result<<Self::Zone as Zone>::PersistPtr, T::SavePoll>
+    fn save_own<T: ?Sized + Save<PileMut<'p>>>(&mut self, own: Own<T, PileMut<'p>>)
+        -> Result<Offset<'static>, T::SavePoll>
     {
         let (ptr, metadata) = own.into_raw_parts();
         match unsafe { ptr.try_take::<T>(metadata) } {
@@ -171,11 +235,45 @@ impl<'p> PtrSaver for Tx<'p> {
     }
 }
 
+use crate::bag::Bag;
+pub fn test_bag<'p>(bag: &'p Bag<Bag<u8, PileMut<'p>>, PileMut<'p>>) -> Ref<'p, Bag<u8, PileMut<'p>>> {
+    bag.get()
+}
+
+pub fn test_bag2<'p>(bag: &'p Bag<(u8, Option<u64>), PileMut<'p>>) -> Ref<'p, (u8, Option<u64>)> {
+    bag.get()
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
     use crate::bag::Bag;
+
+    #[test]
+    fn test_commit() {
+        let anchor = vec![];
+        let pile = unsafe { Pile::new_unchecked(&anchor[..]) };
+        let mut pile = PileMut::from(pile);
+
+        let bag = Bag::new_in((12u8, 13u8), pile);
+        let bag = Bag::new_in((bag, 13u8), pile);
+
+        let mut anchor = vec![];
+        let mut anchor2 = vec![];
+        let mut tx = Tx::from(pile);
+
+        {
+            let (pile, bag) = tx.commit(bag, &mut anchor);
+
+            let bag = Bag::new_in((bag, (65u8, (Some(1234u16), Bag::new_in(42u8, pile)))), pile);
+
+            let (pile, bag) = tx.commit(bag, &mut anchor2);
+
+            dbg!(pile);
+            dbg!(bag.get());
+        }
+    }
 
     #[test]
     fn test_size() {

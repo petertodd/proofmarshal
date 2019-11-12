@@ -10,9 +10,7 @@ use std::alloc::Layout;
 
 use super::*;
 
-use crate::marshal::impls::scalar::SaveScalar;
-use crate::marshal::blob::BlobLayout;
-use crate::marshal::blob::WriteBlob;
+use crate::marshal::blob::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -45,6 +43,13 @@ impl<'p> Offset<'p> {
     pub fn get(self) -> u64 {
         self.raw.get() >> 1
     }
+
+    pub unsafe fn coerce<'q>(self) -> Offset<'q> {
+        Offset {
+            marker: PhantomData,
+            raw: self.raw,
+        }
+    }
 }
 
 impl fmt::Pointer for Offset<'_> {
@@ -53,22 +58,59 @@ impl fmt::Pointer for Offset<'_> {
     }
 }
 
-impl<Z: Zone> Save<Z> for Offset<'_> {
+impl<'p, Z: Zone> Save<Z> for Offset<'p> {
     const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(8);
 
-    type SavePoll = SaveScalar<Self, Z>;
+    type SavePoll = Offset<'p>;
     fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
-        SaveScalar::new(this)
+        this.take_sized()
     }
 }
 
-impl<'p, Z: Zone> SavePoll for SaveScalar<Offset<'p>, Z> {
-    type Zone = Z;
+impl<'p, Z: Zone> SavePoll<Z> for Offset<'p> {
     type Target = Offset<'p>;
 
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-        dst.write_bytes(&self.value.raw.get().to_le_bytes())?
+        dst.write_bytes(dbg!(&self.raw.get().to_le_bytes()))?
            .done()
+    }
+}
+
+#[derive(Debug)]
+pub struct OffsetError(());
+
+impl TryFrom<u64> for Offset<'static> {
+    type Error = OffsetError;
+
+    fn try_from(raw: u64) -> Result<Self, Self::Error> {
+        Offset::new(raw).ok_or(OffsetError(()))
+    }
+}
+
+impl<'p, Z: Zone> Load<Z> for Offset<'p> {
+    type Error = OffsetError;
+
+    type ValidateChildren = ();
+    fn validate_blob<'q>(blob: Blob<'q, Self, Z>) -> Result<ValidateBlob<'q, Self, Z>, Self::Error> {
+        let mut raw = [0;8];
+        raw.copy_from_slice(&blob[..]);
+        let raw = u64::from_le_bytes(raw);
+
+        if (raw & 1 != 1) {
+            Err(OffsetError(()))
+        } else {
+            Offset::try_from(raw >> 1)?;
+
+            Ok(blob.assume_valid(()))
+        }
+    }
+
+    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Z>, _: &impl Loader<Z>) -> Self::Owned {
+        let mut raw = [0;8];
+        raw.copy_from_slice(&blob[..]);
+        let raw = u64::from_le_bytes(raw) >> 1;
+
+        Offset::new(raw).unwrap()
     }
 }
 
