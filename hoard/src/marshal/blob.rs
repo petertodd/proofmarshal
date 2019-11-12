@@ -461,7 +461,7 @@ pub struct BlobLayout {
     size: usize,
     niche_start: usize,
     niche_end: usize,
-    inhabited: bool,
+    pub(crate) inhabited: bool,
 }
 
 impl BlobLayout {

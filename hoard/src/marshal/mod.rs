@@ -161,7 +161,8 @@ pub enum SaveOwnPoll<T: ?Sized + Save<Z>, Z: Zone> {
 impl<T: ?Sized + Pointee, Z: Zone> Save<Z> for Own<T,Z>
 where T: Save<Z>
 {
-    const BLOB_LAYOUT: BlobLayout = <Z::PersistPtr as Save<!>>::BLOB_LAYOUT;
+    const BLOB_LAYOUT: BlobLayout = <Z::PersistPtr as Save<!>>::BLOB_LAYOUT
+                                        .extend(<T::Metadata as Save<!>>::BLOB_LAYOUT);
 
     type SavePoll = SaveOwnPoll<T, Z>;
     fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
@@ -224,7 +225,7 @@ where T: Save<Z>
             }
 
             unsafe {
-                /// FIXME
+                // FIXME
                 dst.write_bytes(as_bytes(persist_ptr))?
                    .write_bytes(as_bytes(metadata))?
                    .done()
@@ -236,9 +237,9 @@ where T: Save<Z>
 
 }
 
-pub enum ValidateOwnError<Z: Zone> {
-    Ptr(<Z::PersistPtr as Load<Z>>::Error),
-    Metadata,
+pub enum ValidateOwnError<T: ?Sized + Pointee, Z: Zone> {
+    Ptr(<Z::PersistPtr as Load<!>>::Error),
+    Metadata(<T::Metadata as Load<!>>::Error),
 }
 
 pub enum ValidateOwn<T: ?Sized + Load<Z>, Z: Zone> {
@@ -252,33 +253,30 @@ pub enum ValidateOwn<T: ?Sized + Load<Z>, Z: Zone> {
 impl<T: ?Sized + Pointee, Z: Zone> Load<Z> for Own<T,Z>
 where T: Load<Z>
 {
-    type Error = ValidateOwnError<Z>;
+    type Error = ValidateOwnError<T, Z>;
 
     type ValidateChildren = ValidateOwn<T,Z>;
 
     fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
         // FIXME: validate metadata properly
 
-        let mut v = blob.validate();
+        let primitive_blob = Blob::<(Z::PersistPtr, T::Metadata), !>::try_from(&blob[..]).unwrap();
+
+        let mut v = primitive_blob.validate();
         let _ = v.field::<Z::PersistPtr>().map_err(|e| ValidateOwnError::Ptr(e))?;
+        let _ = v.field::<T::Metadata>().map_err(|e| ValidateOwnError::Metadata(e))?;
 
-        let blob = Blob::<(Z::PersistPtr, ()), !>::try_from(&blob[..]).unwrap();
+        let (ptr, metadata) = *try_decode(primitive_blob).unwrap();
 
-        let ptr = try_decode(blob).expect("FIXME").0;
-
-        assert_eq!(mem::size_of::<T::Metadata>(), 0);
-        let metadata = unsafe { core::mem::MaybeUninit::uninit().assume_init() };
-
-        Ok(v.done(ValidateOwn::Own { ptr, metadata }))
+        Ok(blob.assume_valid(ValidateOwn::Own { ptr, metadata }))
     }
 
     fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
         let mut fields = blob.decode_struct(loader);
         let ptr = fields.field::<Z::PersistPtr>();
 
-        // FIXME
-        assert_eq!(mem::size_of::<T::Metadata>(), 0);
-        let metadata = unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+        let primitive_blob = Blob::<(Z::PersistPtr, T::Metadata), !>::try_from(&blob[..]).unwrap();
+        let (ptr, metadata) = *try_decode(primitive_blob).unwrap();
 
         loader.load_ptr(ptr, metadata)
     }

@@ -1,12 +1,18 @@
 use super::*;
 
 use core::cmp;
-use core::convert::TryFrom;
+use core::convert::{TryFrom, TryInto};
 use core::fmt;
 use core::hash;
 use core::marker::PhantomData;
 use core::mem;
 use core::ptr;
+
+use owned::Take;
+use leint::Le;
+
+use crate::{Zone, Ref};
+use crate::marshal::{*, blob::*};
 
 /// The length of a slice.
 #[repr(transparent)]
@@ -14,7 +20,7 @@ pub struct SliceLen<T> {
     marker: PhantomData<*const T>,
 
     // FIXME: change this to Le<u64>
-    len: usize,
+    len: Le<u64>,
 }
 
 impl<T> SliceLen<T> {
@@ -24,6 +30,7 @@ impl<T> SliceLen<T> {
         mem::size_of::<T>().checked_mul(len)
             .and_then(|len_bytes| {
                 if len_bytes <= (isize::max_value() as usize) {
+                    let len = len.try_into().ok().unwrap();
                     Some(unsafe { SliceLen::new_unchecked(len) })
                 } else {
                     None
@@ -33,14 +40,17 @@ impl<T> SliceLen<T> {
 
     /// Creates a new `SliceLen<T>` without checking that the length is valid.
     #[inline(always)]
-    pub const unsafe fn new_unchecked(len: usize) -> Self {
-        Self { marker: PhantomData, len }
+    pub unsafe fn new_unchecked(len: usize) -> Self {
+        Self {
+            marker: PhantomData,
+            len: (len as u64).into(),
+        }
     }
 
     /// Gets the underlying length.
     #[inline(always)]
-    pub const fn get(self) -> usize {
-        self.len
+    pub fn get(self) -> usize {
+        self.len.get() as usize
     }
 }
 
@@ -88,14 +98,14 @@ impl<T> hash::Hash for SliceLen<T> {
 impl<T> From<SliceLen<T>> for usize {
     #[inline(always)]
     fn from(len: SliceLen<T>) -> usize {
-        len.len
+        len.get()
     }
 }
 
 impl<T> From<SliceLen<T>> for Layout {
     #[inline(always)]
     fn from(len: SliceLen<T>) -> Layout {
-        match Layout::array::<T>(len.len) {
+        match Layout::array::<T>(len.get()) {
             Ok(layout) => layout,
             Err(e) => {
                 panic!("Layout failed: {:?}", e)
@@ -119,6 +129,42 @@ impl<T> TryFrom<usize> for SliceLen<T> {
         Self::new(len).ok_or(SliceLenError(()))
     }
 }
+
+impl<T, Z: Zone> Save<Z> for SliceLen<T> {
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<u64>());
+
+    type SavePoll = Self;
+    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
+        this.take_sized()
+    }
+}
+
+impl<T, Z: Zone> SavePoll<Z> for SliceLen<T> {
+    type Target = Self;
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        dst.write_bytes(&self.len.get().to_le_bytes())?
+           .done()
+    }
+}
+
+impl<T, Z: Zone> Load<Z> for SliceLen<T> {
+    type Error = !;
+
+    type ValidateChildren = ();
+
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
+        Ok(blob.assume_valid(()))
+    }
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+        *Self::load_blob(blob, loader)
+    }
+
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Ref<'p, Self> {
+        unsafe { blob.assume_valid_ref() }
+    }
+}
+
 
 unsafe impl<T> Pointee for [T] {
     type Metadata = SliceLen<T>;

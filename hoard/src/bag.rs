@@ -74,7 +74,7 @@ where T: Save<Z>
 pub struct ValidateBag<T: ?Sized + Load<Z>, Z: Zone>(ValidateOwn<T,Z>);
 
 impl<T: ?Sized + Load<Z>, Z: Zone> Load<Z> for Bag<T,Z> {
-    type Error = ValidateOwnError<Z>;
+    type Error = <Own<T,Z> as Load<Z>>::Error;
 
     type ValidateChildren = ValidateOwn<T,Z>;
 
