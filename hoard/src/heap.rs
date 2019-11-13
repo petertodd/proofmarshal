@@ -8,45 +8,44 @@ use std::alloc::Layout;
 
 use super::*;
 
-use crate::marshal::{*, blob::*};
+//use crate::marshal::{*, blob::*};
 
 #[derive(Default,Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Heap;
 
 impl Zone for Heap {
-    type Ptr = Ptr;
-    type PersistPtr = !;
+    type Ptr = HeapPtr;
+    //type PersistPtr = !;
 
     type Allocator = Self;
 
     fn allocator() -> Self { Self }
 
-    fn drop_take<T: ?Sized + Pointee + Owned>(ptr: Own<T, Self>) -> Option<T::Owned> {
-        let (raw, metadata) = ptr.into_raw_parts();
-        Some(unsafe { raw.take::<T>(metadata) })
-    }
 }
 
+/*
 impl Get for Heap {
-    fn get<'p, T: ?Sized + Pointee + Owned>(&self, ptr: &'p Own<T, Self>) -> Ref<'p, T> {
+    fn get<'p, T: ?Sized + Pointee + Owned>(&self, ptr: &'p Own<T, Self::Ptr>) -> Ref<'p, T> {
         let r: &'p T = unsafe { ptr.ptr().get(ptr.metadata()) };
         Ref::Borrowed(r)
     }
 
-    fn take<T: ?Sized + Load<Self>>(&self, own: Own<T, Self>) -> T::Owned {
+    fn take<T: ?Sized + Load<Self>>(&self, own: Own<T, Self::Ptr>) -> T::Owned {
         let (ptr, metadata) = own.into_raw_parts();
 
         unsafe { ptr.take::<T>(metadata) }
     }
 }
+*/
 
 impl Alloc for Heap {
     type Zone = Heap;
+    type Ptr = HeapPtr;
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Zone> {
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Ptr> {
         src.take_unsized(|src| unsafe {
             let metadata = T::metadata(src);
-            Own::from_raw_parts(Ptr::alloc::<T>(src),
+            Own::from_raw_parts(HeapPtr::alloc::<T>(src),
                                 metadata)
         })
     }
@@ -56,6 +55,7 @@ impl Alloc for Heap {
     }
 }
 
+/*
 impl Save<Self> for Heap {
     const BLOB_LAYOUT: BlobLayout = BlobLayout::new(0);
 
@@ -86,24 +86,38 @@ impl Load<Heap> for Heap {
         unreachable!()
     }
 }
+*/
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
-pub struct Ptr(NonNull<()>);
+pub struct HeapPtr(NonNull<()>);
 
-impl Dealloc for Ptr {
-    unsafe fn dealloc_own<T: ?Sized + Pointee>(self, metadata: T::Metadata) {
-        let r: &mut T = &mut *T::make_fat_ptr_mut(self.0.as_ptr(), metadata);
-        let layout = Layout::for_value(r);
+impl Ptr for HeapPtr {
+    fn dealloc_own<T: ?Sized + Pointee>(owned: Own<T, Self>) {
+        Self::drop_take_unsized(owned, |value|
+            unsafe {
+                core::ptr::drop_in_place(value)
+            }
+        )
+    }
 
-        drop_in_place(r);
+    fn drop_take_unsized<T: ?Sized + Pointee>(owned: Own<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
+        let (Self(non_null), metadata) = owned.into_raw_parts();
 
-        if layout.size() > 0 {
-            std::alloc::dealloc(r as *mut _ as *mut u8, layout);
+        unsafe {
+            let r: &mut T = &mut *T::make_fat_ptr_mut(non_null.as_ptr(), metadata);
+            let r: &mut ManuallyDrop<T> = &mut *(r as *mut _ as *mut _);
+
+            f(r);
+
+            let layout = Layout::for_value(r);
+            if layout.size() > 0 {
+                std::alloc::dealloc(r as *mut _ as *mut u8, layout);
+            }
         }
     }
 }
 
-impl Ptr {
+impl HeapPtr {
     #[inline]
     unsafe fn alloc<T: ?Sized + Pointee>(src: &ManuallyDrop<T>) -> Self {
         let layout = Layout::for_value(src);
@@ -115,9 +129,9 @@ impl Ptr {
             copy_nonoverlapping(src as *const _ as *const u8, dst.as_ptr(),
                                 layout.size());
 
-            Ptr(dst.cast())
+            HeapPtr(dst.cast())
         } else {
-            Ptr(NonNull::new_unchecked(layout.align() as *mut ()))
+            HeapPtr(NonNull::new_unchecked(layout.align() as *mut ()))
         }
     }
 
@@ -154,7 +168,7 @@ impl Ptr {
     }
 }
 
-impl fmt::Pointer for Ptr {
+impl fmt::Pointer for HeapPtr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&self.0, f)
     }
@@ -166,16 +180,14 @@ mod tests {
 
     #[test]
     fn allocator() {
-        let _: Own<[u8], Heap> = Heap.alloc(vec![1,2,3]);
+        let _: Own<[u8], HeapPtr> = Heap.alloc(vec![1,2,3]);
     }
 
     #[test]
     fn empty_alloc() {
         unsafe {
-            let raw = Ptr::alloc(&ManuallyDrop::new(()));
+            let raw = HeapPtr::alloc(&ManuallyDrop::new(()));
             assert_eq!(raw.0, NonNull::dangling());
-
-            raw.dealloc_own::<()>(());
         }
     }
 }

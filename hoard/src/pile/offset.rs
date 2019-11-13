@@ -120,7 +120,7 @@ impl<'p, Z: Zone> Load<Z> for Offset<'p> {
 #[repr(transparent)]
 pub struct OffsetMut<'p>(Offset<'p>);
 
-impl Dealloc for OffsetMut<'_> {
+impl Ptr for OffsetMut<'_> {
     unsafe fn dealloc_own<T: ?Sized + Pointee>(self, metadata: T::Metadata) {
         let this = ManuallyDrop::new(self);
 

@@ -2,13 +2,13 @@ use super::*;
 
 use core::fmt;
 
-use crate::marshal::blob::*;
-use crate::marshal::*;
+//use crate::marshal::blob::*;
+//use crate::marshal::*;
 
 /// An owned pointer to a value in a `Zone`.
 #[derive(Debug)]
 pub struct Bag<T: ?Sized + Pointee, Z: Zone> {
-    ptr: Own<T,Z>,
+    ptr: Own<T,Z::Ptr>,
     zone: Z,
 }
 
@@ -19,7 +19,7 @@ impl<T: ?Sized + Pointee, Z: Zone> Bag<T,Z> {
         Self::new_in(value, Z::allocator())
     }
 
-    pub fn new_in(value: impl Take<T>, mut alloc: impl Alloc<Zone=Z>) -> Self {
+    pub fn new_in(value: impl Take<T>, mut alloc: impl Alloc<Zone=Z, Ptr=Z::Ptr>) -> Self {
         Self {
             ptr: alloc.alloc(value),
             zone: alloc.zone(),
@@ -27,6 +27,7 @@ impl<T: ?Sized + Pointee, Z: Zone> Bag<T,Z> {
     }
 }
 
+/*
 impl<T: ?Sized + Load<Z>, Z: Zone> Bag<T,Z> {
     pub fn get<'a>(&'a self) -> Ref<'a, T>
         where Z: Get
@@ -99,7 +100,7 @@ where T: Load<Z>,
         }
     }
 }
-
+*/
 
 impl<T: ?Sized + Pointee, Z: Zone> fmt::Pointer for Bag<T,Z>
 where Z::Ptr: fmt::Pointer,
@@ -124,7 +125,7 @@ mod test {
         let _bag = Bag::<[u8], Heap>::new(vec![1u8,2,3]);
 
         let bag = Bag::new_in(42u8, Heap);
-        assert_eq!(*bag.get(), 42u8);
-        assert_eq!(bag.take(), 42u8);
+        //assert_eq!(*bag.get(), 42u8);
+        //assert_eq!(bag.take(), 42u8);
     }
 }

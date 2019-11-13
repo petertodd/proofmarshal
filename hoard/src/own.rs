@@ -4,21 +4,23 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::fmt;
 
-use crate::marshal::Persist;
+// use crate::marshal::Persist;
 
 /// An owned pointer to a value in a `Zone`.
 #[repr(C)]
-pub struct Own<T: ?Sized + Pointee, Z: Zone> {
+pub struct Own<T: ?Sized + Pointee, P: Ptr> {
     marker: PhantomData<T>,
-    ptr: ManuallyDrop<Z::Ptr>,
+    ptr: ManuallyDrop<P>,
     metadata: T::Metadata,
 }
 
-unsafe impl<T: ?Sized + Pointee, Z: Zone> Persist for Own<T,Z>
-where Z: Persist {}
+/*
+unsafe impl<T: ?Sized + Pointee, P: Ptr> Persist for Own<T, P>
+where P: Persist {}
+*/
 
-impl<T: ?Sized + Pointee, Z: Zone> Own<T,Z> {
-    pub unsafe fn from_raw_parts(ptr: Z::Ptr, metadata: T::Metadata) -> Self {
+impl<T: ?Sized + Pointee, P: Ptr> Own<T,P> {
+    pub unsafe fn from_raw_parts(ptr: P, metadata: T::Metadata) -> Self {
         Self {
             marker: PhantomData,
             ptr: ManuallyDrop::new(ptr),
@@ -26,13 +28,13 @@ impl<T: ?Sized + Pointee, Z: Zone> Own<T,Z> {
         }
     }
 
-    pub fn into_raw_parts(self) -> (Z::Ptr, T::Metadata) {
+    pub fn into_raw_parts(self) -> (P, T::Metadata) {
         let mut this = ManuallyDrop::new(self);
-        let ptr = unsafe { (&mut *this.ptr as *mut Z::Ptr).read() };
+        let ptr = unsafe { (&mut *this.ptr as *mut P).read() };
         (ptr, this.metadata)
     }
 
-    pub fn ptr(&self) -> &Z::Ptr {
+    pub fn ptr(&self) -> &P {
         &self.ptr
     }
 
@@ -41,25 +43,23 @@ impl<T: ?Sized + Pointee, Z: Zone> Own<T,Z> {
     }
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> Drop for Own<T,Z> {
+impl<T: ?Sized + Pointee, P: Ptr> Drop for Own<T,P> {
     fn drop(&mut self) {
-        unsafe {
-            let ptr = (&mut *self.ptr as *mut Z::Ptr).read();
-            ptr.dealloc_own::<T>(self.metadata)
-        }
+        let this = unsafe { core::ptr::read(self) };
+        P::dealloc_own(this)
     }
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for Own<T,Z>
+impl<T: ?Sized + Pointee, P: Ptr> fmt::Debug for Own<T,P>
 where T: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Z::fmt_debug_own(self, f)
+        P::fmt_debug_own(self, f)
     }
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> fmt::Pointer for Own<T,Z>
-where Z::Ptr: fmt::Pointer,
+impl<T: ?Sized + Pointee, P: Ptr> fmt::Pointer for Own<T,P>
+where P: fmt::Pointer,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&*self.ptr, f)

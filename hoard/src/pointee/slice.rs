@@ -12,7 +12,7 @@ use owned::Take;
 use leint::Le;
 
 use crate::{Zone, Ref};
-use crate::marshal::{*, blob::*};
+//use crate::marshal::{*, blob::*};
 
 /// The length of a slice.
 #[repr(transparent)]
@@ -128,6 +128,7 @@ impl<T> TryFrom<usize> for SliceLen<T> {
     }
 }
 
+/*
 impl<T, Z: Zone> Save<Z> for SliceLen<T> {
     const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<u64>());
 
@@ -164,6 +165,7 @@ impl<T, Z: Zone> Load<Z> for SliceLen<T> {
 }
 
 unsafe impl<T> Persist for SliceLen<T> {}
+*/
 
 
 unsafe impl<T> Pointee for [T] {
