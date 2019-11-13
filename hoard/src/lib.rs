@@ -25,6 +25,8 @@ pub mod never;
 pub mod heap;
 pub mod pile;
 
+pub mod linkedlist;
+
 
 pub trait Zone : Sized {
     type Ptr : fmt::Debug;
@@ -45,6 +47,8 @@ pub trait Zone : Sized {
             .field("metadata", &ptr.metadata())
             .finish()
     }
+
+    fn drop_take<T: ?Sized + Pointee + Owned>(ptr: Own<T, Self>) -> Option<T::Owned>;
 }
 
 pub trait Alloc : Sized {

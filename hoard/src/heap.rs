@@ -8,6 +8,8 @@ use std::alloc::Layout;
 
 use super::*;
 
+use crate::marshal::{*, blob::*};
+
 #[derive(Default,Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Heap;
 
@@ -21,6 +23,11 @@ impl Zone for Heap {
 
     unsafe fn dealloc_own<T: ?Sized + Pointee>(ptr: Self::Ptr, metadata: T::Metadata) {
         ptr.dealloc::<T>(metadata)
+    }
+
+    fn drop_take<T: ?Sized + Pointee + Owned>(ptr: Own<T, Self>) -> Option<T::Owned> {
+        let (raw, metadata) = ptr.into_raw_parts();
+        Some(unsafe { raw.take::<T>(metadata) })
     }
 }
 
@@ -50,6 +57,37 @@ impl Alloc for Heap {
 
     fn zone(&self) -> Heap {
         Heap
+    }
+}
+
+impl Save<Self> for Heap {
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(0);
+
+    type SavePoll = Self;
+    fn save_poll(this: impl Take<Self>) -> Self {
+        this.take_sized()
+    }
+}
+
+impl SavePoll<Heap> for Heap {
+    type Target = Heap;
+
+    fn encode_blob<W: WriteBlob>(&self, _: W) -> Result<W::Done, W::Error> {
+        unreachable!()
+    }
+}
+
+impl Load<Heap> for Heap {
+    type Error = !;
+
+    type ValidateChildren = ();
+
+    fn validate_blob<'p>(_: Blob<'p, Self, Self>) -> Result<ValidateBlob<'p, Self, Self>, Self::Error> {
+        unreachable!()
+    }
+
+    fn decode_blob<'p>(_: FullyValidBlob<'p, Self, Self>, _: &impl Loader<Self>) -> Self::Owned {
+        unreachable!()
     }
 }
 

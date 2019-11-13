@@ -33,6 +33,10 @@ impl Zone for ! {
     fn allocator() -> Self::Allocator {
         panic!()
     }
+
+    fn drop_take<T: ?Sized + Pointee + Owned>(ptr: Own<T, Self>) -> Option<T::Owned> {
+        match *ptr.ptr() {}
+    }
 }
 
 impl Get for ! {

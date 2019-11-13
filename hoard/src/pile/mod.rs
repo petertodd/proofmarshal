@@ -70,6 +70,10 @@ impl<'p> Zone for PileMut<'p> {
     unsafe fn dealloc_own<T: ?Sized + Pointee>(ptr: Self::Ptr, metadata: T::Metadata) {
         ptr.dealloc::<T>(metadata)
     }
+
+    fn drop_take<T: ?Sized + Pointee + Owned>(ptr: Own<T, Self>) -> Option<T::Owned> {
+        todo!()
+    }
 }
 
 impl<'p> Alloc for PileMut<'p> {
