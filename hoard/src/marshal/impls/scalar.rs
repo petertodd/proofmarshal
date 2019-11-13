@@ -5,24 +5,54 @@ use core::mem;
 
 use leint::Le;
 
-impl<Z: Zone> Save<Z> for ! {
+impl<P> Encode<P> for ! {
     const BLOB_LAYOUT: BlobLayout = BlobLayout::never();
 
-    type SavePoll = Self;
-
-    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
-        match this.take_sized() {}
-    }
+    type EncodePoll = Self;
+    fn encode_poll(self) -> Self { self }
 }
 
-impl<Z: Zone> SavePoll<Z> for ! {
-    type Target = !;
-
-    fn encode_blob<W: WriteBlob>(&self, _dst: W) -> Result<W::Done, W::Error> {
+impl<P> EncodePoll<P> for ! {
+    type Target = Self;
+    fn encode_blob<W: WriteBlob>(&self, _: W) -> Result<W::Ok, W::Error> {
         match *self {}
     }
 }
 
+impl<P> Encode<P> for () {
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(0);
+
+    type EncodePoll = Self;
+    fn encode_poll(self) -> Self { self}
+}
+
+impl<P> EncodePoll<P> for () {
+    type Target = Self;
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        dst.finish()
+    }
+}
+
+impl<P> Decode<P> for () {
+    type Error = !;
+
+    type ValidateChildren = ();
+    fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
+        todo!() //Ok(blob.assume_valid(()))
+    }
+
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl Loader<P>) -> Ref<'p, Self> {
+        todo!() //unsafe { blob.assume_valid_ref() }
+    }
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl Loader<P>) -> Self {
+        todo!() //unsafe { *blob.assume_valid() }
+    }
+}
+
+unsafe impl Persist for () {}
+
+/*
 impl<Z: Zone> Load<Z> for ! {
     type Error = !;
 
@@ -45,76 +75,35 @@ impl<Z: Zone> Load<Z> for ! {
 }
 
 unsafe impl Persist for ! {}
-
-impl<Z: Zone> Save<Z> for () {
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
-
-    type SavePoll = Self;
-
-    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
-        this.take_sized()
-    }
-}
-
-impl<Z: Zone> SavePoll<Z> for () {
-    type Target = ();
-
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-        dst.done()
-    }
-}
-
-impl<Z: Zone> Load<Z> for () {
-    type Error = !;
-
-    type ValidateChildren = ();
-    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
-        Ok(blob.assume_valid(()))
-    }
-
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Ref<'p, Self> {
-        unsafe { blob.assume_valid_ref() }
-    }
-
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Self {
-        unsafe { *blob.assume_valid() }
-    }
-}
-
-unsafe impl Persist for () {}
-
+*/
 
 macro_rules! impl_aligned_ints {
     ($( $t:ty, )+) => {
         $(
-            impl<Z: Zone> Save<Z> for $t {
+            impl<P> Encode<P> for $t {
                 const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
-                type SavePoll = Self;
-
-                fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
-                    this.take_sized()
-                }
+                type EncodePoll = Self;
+                fn encode_poll(self) -> Self::EncodePoll { self }
             }
 
-            impl<Z: Zone> SavePoll<Z> for $t {
+            impl<P> EncodePoll<P> for $t {
                 type Target = $t;
-
-                fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+                fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
                     dst.write_bytes(&self.to_le_bytes())?
-                       .done()
+                       .finish()
                 }
             }
 
-            impl<Z: Zone> Load<Z> for $t {
+            impl<P> Decode<P> for $t {
                 type Error = !;
 
-                fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
-                    Ok(blob.assume_valid(()))
+                fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
+                    todo!() //Ok(blob.assume_valid(()))
                 }
 
                 type ValidateChildren = ();
 
-                fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Self {
+                fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl Loader<P>) -> Self {
                     let mut r = [0; mem::size_of::<Self>()];
                     r.copy_from_slice(&blob[..]);
                     <$t>::from_le_bytes(r)
@@ -129,6 +118,7 @@ impl_aligned_ints! {
     i16, i32, i64, i128,
 }
 
+/*
 macro_rules! unsafe_impl_persist_ints {
     ($( $t:ty, )+) => {
         $(
@@ -151,7 +141,7 @@ macro_rules! unsafe_impl_persist_ints {
                 }
             }
 
-            impl<Z: Zone> Load<Z> for $t {
+            impl<Z: Zone> Decode<Z> for $t {
                 type Error = !;
 
                 fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
@@ -189,3 +179,4 @@ mod tests {
                    &[42]);
     }
 }
+*/

@@ -15,7 +15,7 @@ use owned::{Owned, Ref, Take};
 pub mod pointee;
 use self::pointee::*;
 
-//pub mod marshal;
+pub mod marshal;
 //use self::marshal::*;
 
 pub mod own;
