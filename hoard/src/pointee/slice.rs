@@ -18,8 +18,6 @@ use crate::marshal::{*, blob::*};
 #[repr(transparent)]
 pub struct SliceLen<T> {
     marker: PhantomData<*const T>,
-
-    // FIXME: change this to Le<u64>
     len: Le<u64>,
 }
 
@@ -164,6 +162,8 @@ impl<T, Z: Zone> Load<Z> for SliceLen<T> {
         unsafe { blob.assume_valid_ref() }
     }
 }
+
+unsafe impl<T> Persist for SliceLen<T> {}
 
 
 unsafe impl<T> Pointee for [T] {

@@ -13,7 +13,7 @@ pub use self::slice::*;
 mod maybedropped;
 pub use self::maybedropped::MaybeDropped;
 
-use crate::marshal::Load;
+use crate::marshal::{Persist, Load};
 
 /// A target of a pointer.
 ///
@@ -22,7 +22,7 @@ use crate::marshal::Load;
 /// Other code can assume `Pointee` is implemented correctly.
 pub unsafe trait Pointee {
     /// Fat pointer metadata.
-    type Metadata : Load<!> + Sized + Copy + fmt::Debug + Eq + Ord + Hash + Send + Sync;
+    type Metadata : Persist + Load<!> + Copy + fmt::Debug + Eq + Ord + Hash + Send + Sync;
 
     fn metadata(this: &Self) -> Self::Metadata {
         Self::metadata_from_dropped(MaybeDropped::from_ref(this))

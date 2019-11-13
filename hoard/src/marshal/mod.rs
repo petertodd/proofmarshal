@@ -104,7 +104,15 @@ pub trait Load<Z: Zone> : Save<Z> {
     fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Ref<'p, Self> {
         Ref::Owned(Self::decode_blob(blob, loader))
     }
+
+    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self
+        where Self: Persist
+    {
+        todo!()
+    }
 }
+
+pub unsafe trait Persist {}
 
 pub trait Loader<Z: Zone> {
     fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: Z::PersistPtr, metadata: T::Metadata) -> Own<T,Z>;

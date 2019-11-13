@@ -2,6 +2,9 @@ use super::*;
 
 use core::any::type_name;
 use core::fmt;
+use core::mem;
+
+use nonzero::NonZero;
 
 impl<Z: Zone, T: Save<Z>> Save<Z> for Option<T> {
     const BLOB_LAYOUT: BlobLayout = {
@@ -134,7 +137,15 @@ impl<Z: Zone, T: Load<Z>> Load<Z> for Option<T> {
             }
         }
     }
+
+    fn deref_blob<'a>(blob: FullyValidBlob<'a, Self, Z>) -> &'a Self {
+        assert_eq!(mem::align_of::<Self>(), 1);
+        assert_eq!(mem::size_of::<Self>(), Self::BLOB_LAYOUT.size());
+
+        unsafe { blob.assume_valid() }
+    }
 }
+unsafe impl<T: Persist + NonZero> Persist for Option<T> { }
 
 impl<Z: Zone, T: ValidateChildren<Z>> ValidateChildren<Z> for Option<T> {
     fn validate_children<V>(&mut self, validator: &mut V) -> Poll<Result<(), V::Error>>
@@ -146,6 +157,7 @@ impl<Z: Zone, T: ValidateChildren<Z>> ValidateChildren<Z> for Option<T> {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {

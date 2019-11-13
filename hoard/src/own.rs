@@ -4,6 +4,8 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::fmt;
 
+use crate::marshal::Persist;
+
 /// An owned pointer to a value in a `Zone`.
 #[repr(C)]
 pub struct Own<T: ?Sized + Pointee, Z: Zone> {
@@ -11,6 +13,9 @@ pub struct Own<T: ?Sized + Pointee, Z: Zone> {
     ptr: ManuallyDrop<Z::Ptr>,
     metadata: T::Metadata,
 }
+
+unsafe impl<T: ?Sized + Pointee, Z: Zone> Persist for Own<T,Z>
+where Z: Persist {}
 
 impl<T: ?Sized + Pointee, Z: Zone> Own<T,Z> {
     pub unsafe fn from_raw_parts(ptr: Z::Ptr, metadata: T::Metadata) -> Self {
