@@ -27,17 +27,18 @@ pub mod pile;
 
 pub mod linkedlist;
 
+pub trait Dealloc {
+    unsafe fn dealloc_own<T: ?Sized + Pointee>(self, metadata: T::Metadata);
+}
 
 pub trait Zone : Sized {
-    type Ptr : fmt::Debug;
+    type Ptr : Dealloc + fmt::Debug;
     type PersistPtr : 'static + fmt::Debug + Copy + Load<!> + Load<Self>;
 
     type Allocator : Alloc<Zone = Self>;
 
     fn allocator() -> Self::Allocator
         where Self: Default;
-
-    unsafe fn dealloc_own<T: ?Sized + Pointee>(ptr: Self::Ptr, metadata: T::Metadata);
 
     fn fmt_debug_own<T: ?Sized + Pointee>(ptr: &Own<T, Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result
         where T: fmt::Debug

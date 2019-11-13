@@ -21,10 +21,6 @@ impl Zone for Heap {
 
     fn allocator() -> Self { Self }
 
-    unsafe fn dealloc_own<T: ?Sized + Pointee>(ptr: Self::Ptr, metadata: T::Metadata) {
-        ptr.dealloc::<T>(metadata)
-    }
-
     fn drop_take<T: ?Sized + Pointee + Owned>(ptr: Own<T, Self>) -> Option<T::Owned> {
         let (raw, metadata) = ptr.into_raw_parts();
         Some(unsafe { raw.take::<T>(metadata) })
@@ -94,6 +90,18 @@ impl Load<Heap> for Heap {
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Ptr(NonNull<()>);
 
+impl Dealloc for Ptr {
+    unsafe fn dealloc_own<T: ?Sized + Pointee>(self, metadata: T::Metadata) {
+        let r: &mut T = &mut *T::make_fat_ptr_mut(self.0.as_ptr(), metadata);
+        let layout = Layout::for_value(r);
+
+        drop_in_place(r);
+
+        if layout.size() > 0 {
+            std::alloc::dealloc(r as *mut _ as *mut u8, layout);
+        }
+    }
+}
 
 impl Ptr {
     #[inline]
@@ -110,18 +118,6 @@ impl Ptr {
             Ptr(dst.cast())
         } else {
             Ptr(NonNull::new_unchecked(layout.align() as *mut ()))
-        }
-    }
-
-    #[inline]
-    unsafe fn dealloc<T: ?Sized + Pointee>(self, metadata: T::Metadata) {
-        let r: &mut T = &mut *T::make_fat_ptr_mut(self.0.as_ptr(), metadata);
-        let layout = Layout::for_value(r);
-
-        drop_in_place(r);
-
-        if layout.size() > 0 {
-            std::alloc::dealloc(r as *mut _ as *mut u8, layout);
         }
     }
 
@@ -179,7 +175,7 @@ mod tests {
             let raw = Ptr::alloc(&ManuallyDrop::new(()));
             assert_eq!(raw.0, NonNull::dangling());
 
-            raw.dealloc::<()>(());
+            raw.dealloc_own::<()>(());
         }
     }
 }

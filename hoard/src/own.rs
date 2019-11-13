@@ -45,7 +45,7 @@ impl<T: ?Sized + Pointee, Z: Zone> Drop for Own<T,Z> {
     fn drop(&mut self) {
         unsafe {
             let ptr = (&mut *self.ptr as *mut Z::Ptr).read();
-            Z::dealloc_own::<T>(ptr, self.metadata)
+            ptr.dealloc_own::<T>(self.metadata)
         }
     }
 }

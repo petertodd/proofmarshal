@@ -21,14 +21,16 @@ impl<Z: Zone> Alloc for NeverAllocator<Z> {
     }
 }
 
+impl Dealloc for ! {
+    unsafe fn dealloc_own<T: ?Sized + Pointee>(self, _: T::Metadata) {
+        match self {}
+    }
+}
+
 impl Zone for ! {
     type Ptr = !;
     type PersistPtr = !;
     type Allocator = NeverAllocator<!>;
-
-    unsafe fn dealloc_own<T: ?Sized + Pointee>(ptr: Self::Ptr, _: T::Metadata) {
-        match ptr {}
-    }
 
     fn allocator() -> Self::Allocator {
         panic!()

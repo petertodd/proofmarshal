@@ -120,6 +120,26 @@ impl<'p, Z: Zone> Load<Z> for Offset<'p> {
 #[repr(transparent)]
 pub struct OffsetMut<'p>(Offset<'p>);
 
+impl Dealloc for OffsetMut<'_> {
+    unsafe fn dealloc_own<T: ?Sized + Pointee>(self, metadata: T::Metadata) {
+        let this = ManuallyDrop::new(self);
+
+        match this.kind() {
+            Kind::Offset(_) => {},
+            Kind::Ptr(ptr) => {
+                let r: &mut T = &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata);
+                let layout = fix_layout(Layout::for_value(r));
+
+                ptr::drop_in_place(r);
+
+                if layout.size() > 0 {
+                    std::alloc::dealloc(r as *mut _ as *mut u8, layout);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Kind<'p> {
     Offset(Offset<'p>),
@@ -178,23 +198,6 @@ impl<'p> OffsetMut<'p> {
         Self::from_ptr(ptr)
     }
 
-    pub(super) unsafe fn dealloc<T: ?Sized + Pointee>(self, metadata: T::Metadata) {
-        let this = ManuallyDrop::new(self);
-
-        match this.kind() {
-            Kind::Offset(_) => {},
-            Kind::Ptr(ptr) => {
-                let r: &mut T = &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata);
-                let layout = fix_layout(Layout::for_value(r));
-
-                ptr::drop_in_place(r);
-
-                if layout.size() > 0 {
-                    std::alloc::dealloc(r as *mut _ as *mut u8, layout);
-                }
-            }
-        }
-    }
 
     pub(super) unsafe fn try_take<T: ?Sized + Pointee + Owned>(self, metadata: T::Metadata) -> Result<T::Owned, Offset<'p>> {
         let this = ManuallyDrop::new(self);
