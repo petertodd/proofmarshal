@@ -1,10 +1,12 @@
 use super::*;
 
-use core::marker::PhantomData;
-use core::mem::ManuallyDrop;
+use core::any::type_name;
 use core::fmt;
+use core::marker::PhantomData;
+use core::mem::{self, ManuallyDrop};
 
-// use crate::marshal::Persist;
+use crate::marshal::*;
+use crate::marshal::blob::*;
 
 /// An owned pointer to a value in a `Zone`.
 #[repr(C)]
@@ -13,11 +15,6 @@ pub struct Own<T: ?Sized + Pointee, P: Ptr> {
     ptr: ManuallyDrop<P>,
     metadata: T::Metadata,
 }
-
-/*
-unsafe impl<T: ?Sized + Pointee, P: Ptr> Persist for Own<T, P>
-where P: Persist {}
-*/
 
 impl<T: ?Sized + Pointee, P: Ptr> Own<T,P> {
     pub unsafe fn from_raw_parts(ptr: P, metadata: T::Metadata) -> Self {
@@ -66,6 +63,74 @@ where P: fmt::Pointer,
     }
 }
 
+
+impl<T, P, Q> Encode<Q> for Own<T,P>
+where Q: Ptr + Encode<Q>,
+      P: Ptr + Encode<Q>,
+      T: ?Sized + Save<Q> + Load<P>,
+{
+    const BLOB_LAYOUT: BlobLayout = Q::BLOB_LAYOUT.extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
+
+    type EncodePoll = OwnEncoder<T, P, Q>;
+
+    fn encode_poll(self) -> Self::EncodePoll {
+        OwnEncoder::Own(self)
+    }
+}
+
+pub enum OwnEncoder<T: ?Sized + Save<Q>, P: Ptr, Q: Encode<Q>> {
+    Own(Own<T,P>),
+    SaveValue(<T as Save<Q>>::SavePoll),
+    Done {
+        ptr_encoder: Q::EncodePoll,
+        metadata: T::Metadata,
+    },
+    Poisoned,
+}
+
+impl<T, P, Q> EncodePoll<Q> for OwnEncoder<T,P,Q>
+where Q: Ptr + Encode<Q>,
+      P: Ptr + Encode<Q>,
+      T: ?Sized + Save<Q> + Load<P>,
+{
+    const TARGET_BLOB_LAYOUT: BlobLayout = Q::BLOB_LAYOUT.extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
+    type Target = Own<T,Q>;
+
+    fn poll<D: Dumper<Q>>(&mut self, dumper: D) -> Result<D, D::Pending> {
+        match self {
+            Self::Own(_) => {
+                let owned = if let Self::Own(owned) = mem::replace(self, Self::Poisoned) { owned } else { unreachable!() };
+                let metadata = owned.metadata;
+
+                *self = match P::encode_own(owned) {
+                    Ok(ptr_encoder) => Self::Done { ptr_encoder, metadata },
+                    Err(value_saver) => Self::SaveValue(value_saver),
+                };
+
+                self.poll(dumper)
+            },
+            Self::SaveValue(saver) => {
+                let (dumper, ptr_encoder, metadata) = saver.poll(dumper)?;
+                let ptr_encoder = D::coerce_ptr_encoder(ptr_encoder);
+                *self = Self::Done { ptr_encoder, metadata };
+                Ok(dumper)
+            },
+            Self::Done { .. } => Ok(dumper),
+            Self::Poisoned => panic!("{} poisoned", type_name::<Self>()),
+        }
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        if let Self::Done { ptr_encoder, metadata } = self {
+            dst.write(ptr_encoder)?
+               .write_primitive(metadata)?
+               .finish()
+        } else {
+            panic!()
+        }
+    }
+}
+
 /*
 impl<T: ?Sized + Pointee, Z: Zone> Own<T,Z> {
     pub unsafe fn from_raw_parts(ptr: Z::Ptr, metadata: T::Metadata) -> Self {
@@ -84,15 +149,6 @@ impl<T: ?Sized + Pointee, Z: Zone> Own<T,Z> {
     }
 }
 
-pub enum OwnEncoder<T: ?Sized + Save<Z>, Z: Zone> {
-    Own(Own<T,Z>),
-    Save(<T as Save<Z>>::Save),
-    Done {
-        persist_ptr: Z::PersistPtr,
-        metadata: T::Metadata,
-    },
-    Poisoned,
-}
 
 impl<T: ?Sized + Pointee, Z: Zone> Encode<Z> for Own<T,Z>
 where T: Save<Z>

@@ -6,12 +6,14 @@ use core::mem;
 
 use nonzero::NonZero;
 
+const fn option_blob_layout(inner: BlobLayout) -> BlobLayout {
+    let r = [BlobLayout::new(1).extend(inner),
+             inner];
+    r[inner.has_niche() as usize]
+}
+
 impl<P, T: Encode<P>> Encode<P> for Option<T> {
-    const BLOB_LAYOUT: BlobLayout = {
-        let r = [BlobLayout::new(1).extend(T::BLOB_LAYOUT),
-                 T::BLOB_LAYOUT];
-        r[T::BLOB_LAYOUT.has_niche() as usize]
-    };
+    const BLOB_LAYOUT: BlobLayout = option_blob_layout(T::BLOB_LAYOUT);
 
     type EncodePoll = Option<T::EncodePoll>;
 
@@ -21,6 +23,7 @@ impl<P, T: Encode<P>> Encode<P> for Option<T> {
 }
 
 impl<P, T: EncodePoll<P>> EncodePoll<P> for Option<T> {
+    const TARGET_BLOB_LAYOUT: BlobLayout = option_blob_layout(T::TARGET_BLOB_LAYOUT);
     type Target = Option<T::Target>;
 
     fn poll<D: Dumper<P>>(&mut self, dumper: D) -> Result<D, D::Pending> {
@@ -31,18 +34,17 @@ impl<P, T: EncodePoll<P>> EncodePoll<P> for Option<T> {
     }
 
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
-        /*
         match self {
             None => {
-                if !T::Target::BLOB_LAYOUT.has_niche() {
+                if !Self::TARGET_BLOB_LAYOUT.has_niche() {
                     dst.write_bytes(&[0])?
                 } else {
                     dst
-                }.write_padding(E::Target::BLOB_LAYOUT.size())?
+                }.write_padding(Self::TARGET_BLOB_LAYOUT.size())?
                  .finish()
             },
             Some(v) => {
-                if !E::Target::BLOB_LAYOUT.has_niche() {
+                if !Self::TARGET_BLOB_LAYOUT.has_niche() {
                     dst.write_bytes(&[1])?
                 } else {
                     dst
@@ -50,8 +52,6 @@ impl<P, T: EncodePoll<P>> EncodePoll<P> for Option<T> {
                  .finish()
             },
         }
-        */
-        todo!()
     }
 }
 

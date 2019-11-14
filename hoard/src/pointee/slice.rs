@@ -12,7 +12,7 @@ use owned::Take;
 use leint::Le;
 
 use crate::{Zone, Ref};
-//use crate::marshal::{*, blob::*};
+use crate::marshal::{Primitive, blob::*};
 
 /// The length of a slice.
 #[repr(transparent)]
@@ -128,45 +128,30 @@ impl<T> TryFrom<usize> for SliceLen<T> {
     }
 }
 
-/*
-impl<T, Z: Zone> Save<Z> for SliceLen<T> {
+impl<T> Primitive for SliceLen<T> {
+    type Error = SliceLenError;
+
     const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<u64>());
 
-    type SavePoll = Self;
-    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
-        this.take_sized()
-    }
-}
-
-impl<T, Z: Zone> SavePoll<Z> for SliceLen<T> {
-    type Target = Self;
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
         dst.write_bytes(&self.len.get().to_le_bytes())?
-           .done()
-    }
-}
-
-impl<T, Z: Zone> Load<Z> for SliceLen<T> {
-    type Error = !;
-
-    type ValidateChildren = ();
-
-    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
-        Ok(blob.assume_valid(()))
+           .finish()
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
-        *Self::load_blob(blob, loader)
+    fn validate_blob<'p,P>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
+        todo!() //Ok(blob.assume_valid(()))
     }
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl Loader<Z>) -> Ref<'p, Self> {
-        unsafe { blob.assume_valid_ref() }
+    fn decode_blob<'p,P>(blob: FullyValidBlob<'p, Self, P>) -> Self {
+        *<Self as Primitive>::load_blob(blob)
+    }
+
+    fn load_blob<'p, P>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
+        todo!() //unsafe { blob.assume_valid_ref() }
     }
 }
 
 unsafe impl<T> Persist for SliceLen<T> {}
-*/
-
 
 unsafe impl<T> Pointee for [T] {
     type Metadata = SliceLen<T>;

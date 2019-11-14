@@ -349,15 +349,19 @@ pub trait WriteBlob : Sized {
     type Ok;
     type Error;
 
-    /*
     /// Write an encodable value.
     #[inline(always)]
-    fn write<Z: Zone, E: SavePoll<Z>>(self, encoder: &E) -> Result<Self, Self::Error> {
-        let size = E::Target::BLOB_LAYOUT.size();
+    fn write_primitive<T: Primitive>(self, value: &T) -> Result<Self, Self::Error> {
+        self.write::<!, T>(value)
+    }
+
+    /// Write an encodable value.
+    #[inline(always)]
+    fn write<P, E: EncodePoll<P>>(self, encoder: &E) -> Result<Self, Self::Error> {
+        let size = E::TARGET_BLOB_LAYOUT.size();
         let value_writer = ValueWriter::new(self, size);
         encoder.encode_blob(value_writer)
     }
-    */
 
     /// Writes bytes to the blob.
     fn write_bytes(self, src: &[u8]) -> Result<Self, Self::Error>;
@@ -377,7 +381,6 @@ pub trait WriteBlob : Sized {
     fn finish(self) -> Result<Self::Ok, Self::Error>;
 }
 
-/*
 struct ValueWriter<W> {
     inner: W,
     remaining: usize,
@@ -394,7 +397,7 @@ impl<W> ValueWriter<W> {
 }
 
 impl<W: WriteBlob> WriteBlob for ValueWriter<W> {
-    type Done = W;
+    type Ok = W;
     type Error = W::Error;
 
     #[inline(always)]
@@ -414,13 +417,14 @@ impl<W: WriteBlob> WriteBlob for ValueWriter<W> {
     }
 
     #[inline(always)]
-    fn done(self) -> Result<Self::Done, Self::Error> {
+    fn finish(self) -> Result<Self::Ok, Self::Error> {
         assert_eq!(self.remaining, 0,
                    "not all bytes written");
         Ok(self.inner)
     }
 }
 
+/*
 impl WriteBlob for &'_ mut [u8] {
     type Done = ();
     type Error = !;

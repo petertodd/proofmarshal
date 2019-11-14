@@ -1,7 +1,7 @@
 use super::*;
 
-pub mod scalar;
-pub use self::scalar::*;
+pub mod primitives;
+pub use self::primitives::*;
 
 mod option;
 pub use self::option::*;

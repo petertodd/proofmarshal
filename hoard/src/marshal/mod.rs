@@ -9,17 +9,96 @@ pub mod impls;
 pub mod blob;
 use self::blob::*;
 
-pub trait Encode<P> : Sized {
-    const BLOB_LAYOUT: BlobLayout;
+pub trait Primitive : Sized {
+    type Error;
 
-    type EncodePoll : EncodePoll<P>;
-    fn encode_poll(self) -> Self::EncodePoll;
+    const BLOB_LAYOUT: BlobLayout;
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error>;
+
+    fn validate_blob<'p, P>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error>;
+    fn decode_blob<'p, P>(blob: FullyValidBlob<'p, Self, P>) -> Self;
+
+    fn load_blob<'p, P>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
+        Ref::Owned(Self::decode_blob(blob))
+    }
+
+    fn deref_blob<'p, P>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
+        where Self: Persist
+    {
+        todo!()
+    }
 }
 
-pub trait EncodePoll<P> {
+impl<Q, T> Encode<Q> for T
+where T: Primitive
+{
+    const BLOB_LAYOUT: BlobLayout = T::BLOB_LAYOUT;
+
+    type EncodePoll = Self;
+    fn encode_poll(self) -> Self::EncodePoll {
+        self
+    }
+}
+
+impl<Q, T> EncodePoll<Q> for T
+where T: Primitive
+{
+    const TARGET_BLOB_LAYOUT: BlobLayout = T::BLOB_LAYOUT;
+    type Target = Self;
+
+    fn poll<D: Dumper<Q>>(&mut self, dumper: D) -> Result<D, D::Pending> {
+        Ok(dumper)
+    }
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        self.encode_blob(dst)
+    }
+}
+
+impl<P, T> Decode<P> for T
+where T: Primitive
+{
+    type Error = T::Error;
+
+    type ValidateChildren = ();
+    fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
+        todo!()
+    }
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl Loader<P>) -> Self {
+        todo!()
+    }
+
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Ref<'p, Self> {
+        todo!()
+    }
+
+    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
+        where Self: Persist
+    {
+        todo!()
+    }
+}
+
+pub trait Encode<Q> : Sized {
+    const BLOB_LAYOUT: BlobLayout;
+
+    type EncodePoll : EncodePoll<Q>;
+    fn encode_poll(self) -> Self::EncodePoll;
+
+    fn encode_own<T: ?Sized + Pointee>(own: Own<T,Self>) -> Result<Q::EncodePoll, <T as Save<Q>>::SavePoll>
+        where T: Load<Self> + Save<Q>,
+              Q: Encode<Q>,
+              Self: Ptr
+    {
+        unimplemented!()
+    }
+}
+
+pub trait EncodePoll<Q> {
+    const TARGET_BLOB_LAYOUT: BlobLayout;
     type Target;
 
-    fn poll<D: Dumper<P>>(&mut self, dumper: D) -> Result<D, D::Pending> {
+    fn poll<D: Dumper<Q>>(&mut self, dumper: D) -> Result<D, D::Pending> {
         Ok(dumper)
     }
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error>;
@@ -76,9 +155,9 @@ pub unsafe trait Save<P> : Pointee + Owned {
 
 pub trait SavePoll<P> : Sized {
     type Target : ?Sized + Pointee<Metadata = Self::TargetMetadata>;
-    type TargetMetadata : Copy + fmt::Debug + Eq + Ord + core::hash::Hash + Send + Sync;
+    type TargetMetadata : Persist + Primitive + Copy + fmt::Debug + Eq + Ord + core::hash::Hash + Send + Sync;
 
-    fn poll<D: Dumper<P>>(&mut self, dumper: D) -> Result<(D, (P, Self::TargetMetadata)), D::Pending>;
+    fn poll<D: Dumper<P>>(&mut self, dumper: D) -> Result<(D, D::PtrEncoder, Self::TargetMetadata), D::Pending>;
 }
 
 unsafe impl<P, T: Encode<P>> Save<P> for T {
@@ -103,16 +182,21 @@ impl<P, T: Encode<P>> SavePoll<P> for ValueSaver<T, P> {
     type Target  = T;
     type TargetMetadata = ();
 
-    fn poll<D: Dumper<P>>(&mut self, dumper: D) -> Result<(D, (P, ())), D::Pending> {
+    fn poll<D: Dumper<P>>(&mut self, dumper: D) -> Result<(D, D::PtrEncoder, ()), D::Pending> {
         let dumper = self.encoder.poll(dumper)?;
         todo!()
     }
 }
 
-pub trait Dumper<P> : Sized {
+pub trait Dumper<Q> : Sized {
     type Pending;
+    type PtrEncoder;
 
-    fn save_blob(self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, P), Self::Pending>;
+    fn save_blob(self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, Self::PtrEncoder),
+                                                                         Self::Pending>;
+
+    fn coerce_ptr_encoder(ptr_encoder: Self::PtrEncoder) -> Q::EncodePoll
+        where Q: Encode<Q>;
 }
 
 pub trait Load<P> : Save<P> {

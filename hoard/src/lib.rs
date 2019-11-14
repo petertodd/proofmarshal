@@ -60,7 +60,6 @@ pub trait Ptr : Sized + fmt::Debug {
 
 pub trait Zone : Sized {
     type Ptr : Ptr;
-    //type PersistPtr : 'static + fmt::Debug + Copy + Load<!> + Load<Self>;
 
     type Allocator : Alloc<Zone = Self, Ptr = Self::Ptr>;
 
