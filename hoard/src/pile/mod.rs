@@ -4,7 +4,7 @@ use core::mem;
 
 use super::*;
 
-use crate::marshal::blob::*;
+use crate::marshal::{*, blob::*};
 
 mod offset;
 use self::offset::Kind;
@@ -57,7 +57,6 @@ impl Default for PileMut<'static> {
 
 impl<'p> Zone for PileMut<'p> {
     type Ptr = OffsetMut<'p>;
-    type PersistPtr = Offset<'static>;
 
     type Allocator = Self;
 
@@ -66,16 +65,13 @@ impl<'p> Zone for PileMut<'p> {
     {
         Self::default()
     }
-
-    fn drop_take<T: ?Sized + Pointee + Owned>(ptr: Own<T, Self>) -> Option<T::Owned> {
-        todo!()
-    }
 }
 
 impl<'p> Alloc for PileMut<'p> {
     type Zone = Self;
+    type Ptr = OffsetMut<'p>;
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Zone> {
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Ptr> {
         src.take_unsized(|src| unsafe {
             let metadata = T::metadata(src);
             Own::from_raw_parts(OffsetMut::alloc::<T>(src),
@@ -89,7 +85,8 @@ impl<'p> Alloc for PileMut<'p> {
 }
 
 impl<'p> Get for PileMut<'p> {
-    fn get<'a, T: ?Sized + Load<Self>>(&self, own: &'a Own<T, Self>) -> Ref<'a, T> {
+    fn get<'a, T: ?Sized + Load<Self::Ptr>>(&self, own: &'a Own<T, Self::Ptr>) -> Ref<'a, T> {
+        /*
         match own.ptr().kind() {
             Kind::Offset(offset) => {
                 let offset = usize::try_from(offset.get()).unwrap();
@@ -110,9 +107,12 @@ impl<'p> Get for PileMut<'p> {
                 Ref::Borrowed(r)
             },
         }
+        */
+        todo!()
     }
 
-    fn take<T: ?Sized + Load<Self>>(&self, ptr: Own<T, Self>) -> T::Owned {
+    fn take<T: ?Sized + Load<Self::Ptr>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned {
+        /*
         let (ptr, metadata) = ptr.into_raw_parts();
 
         match unsafe { ptr.try_take::<T>(metadata) } {
@@ -130,9 +130,12 @@ impl<'p> Get for PileMut<'p> {
                 T::decode_blob(blob, self)
             },
         }
+        */
+        todo!()
     }
 }
 
+/*
 impl<'p, 'q, Z> Save<Z> for PileMut<'p>
 where Z: Zone<PersistPtr=Offset<'static>> + ::core::borrow::Borrow<PileMut<'q>>
 {
@@ -177,8 +180,10 @@ impl<'p> Load<Self> for PileMut<'p> {
         todo!()
     }
 }
+*/
 
 impl<'p> Loader<Self> for PileMut<'p> {
+    /*
     fn load_ptr<T: ?Sized + Pointee>(&self, offset: Offset<'static>, metadata: T::Metadata) -> Own<T,Self> {
         unsafe {
             let offset = OffsetMut::from_offset(offset.coerce());
@@ -197,6 +202,7 @@ impl<'p> Loader<Self> for PileMut<'p> {
             pile: self.pile,
         }
     }
+    */
 }
 
 #[derive(Debug)]
@@ -205,6 +211,7 @@ pub struct Tx<'p> {
     written: Vec<u8>,
 }
 
+/*
 impl<'p> Tx<'p> {
     pub fn save<T: Save<PileMut<'p>>>(&mut self, value: T) -> Offset<'static> {
         let mut saver = T::save_poll(value);
@@ -251,12 +258,15 @@ impl<'p> From<PileMut<'p>> for Tx<'p> {
         }
     }
 }
+*/
 
-impl<'p> SavePtr<PileMut<'p>> for Tx<'p> {
-    type Error = !;
+/*
+impl<'p> SavePtr<OffsetMut<'p>> for Tx<'p> {
+    type Pending = !;
+    type PtrEncoder = !;
 
     fn save_blob(&mut self, size: usize, f: impl FnOnce(&mut [u8]))
-        -> Result<Offset<'static>, Self::Error>
+        -> Result<(Self, !>, Self::Error>
     {
         let start = self.written.len();
         self.written.resize(self.written.len() + size, 0xfe);
@@ -268,18 +278,10 @@ impl<'p> SavePtr<PileMut<'p>> for Tx<'p> {
         let offset = self.pile.words().len() + start;
         Ok(Offset::new(offset as u64).unwrap())
     }
-
-    fn save_own<T: ?Sized + Save<PileMut<'p>>>(&mut self, own: Own<T, PileMut<'p>>)
-        -> Result<Offset<'static>, T::SavePoll>
-    {
-        let (ptr, metadata) = own.into_raw_parts();
-        match unsafe { ptr.try_take::<T>(metadata) } {
-            Ok(owned) => Err(T::save_poll(owned)),
-            Err(offset) => Ok(offset.persist()),
-        }
-    }
 }
+*/
 
+/*
 use crate::bag::Bag;
 pub fn test_bag<'p>(bag: &'p Bag<Bag<u8, PileMut<'p>>, PileMut<'p>>) -> Ref<'p, Bag<u8, PileMut<'p>>> {
     bag.get()
@@ -288,6 +290,7 @@ pub fn test_bag<'p>(bag: &'p Bag<Bag<u8, PileMut<'p>>, PileMut<'p>>) -> Ref<'p, 
 pub fn test_bag2<'p>(bag: &'p Bag<(u8, Option<u64>), PileMut<'p>>) -> Ref<'p, (u8, Option<u64>)> {
     bag.get()
 }
+*/
 
 #[cfg(test)]
 mod test {
@@ -295,6 +298,7 @@ mod test {
 
     use crate::bag::Bag;
 
+    /*
     #[test]
     fn test_commit() {
         let anchor = vec![];
@@ -378,4 +382,5 @@ mod test {
         tx.save(bag);
         dbg!(tx);
     }
+    */
 }

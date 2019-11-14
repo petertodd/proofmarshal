@@ -23,7 +23,7 @@ pub struct FullyValidBlob<'a, T: ?Sized + Pointee, P>(ValidBlob<'a, T, P>);
 
 impl<'a, T: ?Sized + Pointee, P> Blob<'a, T, P> {
     pub fn new(buf: &'a [u8], metadata: T::Metadata) -> Option<Self>
-        where P: Ptr, T: Save<P>
+        where T: Save<P>
     {
         if buf.len() == T::blob_layout(metadata).size() {
             unsafe { Some(Self::new_unchecked(buf, metadata)) }
@@ -39,15 +39,21 @@ impl<'a, T: ?Sized + Pointee, P> Blob<'a, T, P> {
             metadata,
         }
     }
-/*
-    pub fn validate(self) -> impl ValidateFields<'a, T, Z> {
+
+    pub fn metadata(&self) -> T::Metadata {
+        self.metadata
+    }
+}
+
+impl<'a, T: ?Sized + Load<P>, P> Blob<'a, T, P> {
+    pub fn validate(self) -> impl ValidateFields<'a, T, P> {
         FieldCursor {
             blob: self,
             offset: 0,
         }
     }
 
-    pub fn validate_enum(self) -> (u8, impl ValidateVariant<'a, T, Z>) {
+    pub fn validate_enum(self) -> (u8, impl ValidateVariant<'a, T, P>) {
         (self[0],
          FieldCursor {
              blob: self,
@@ -55,24 +61,20 @@ impl<'a, T: ?Sized + Pointee, P> Blob<'a, T, P> {
          })
     }
 
-    pub fn assume_valid(self, state: T::ValidateChildren) -> BlobValidator<'a, T, Z> {
+    pub fn assume_valid(self, state: T::ValidateChildren) -> BlobValidator<'a, T, P> {
         BlobValidator {
             blob: ValidBlob(self),
             state,
         }
     }
 
-    pub unsafe fn assume_fully_valid(self) -> FullyValidBlob<'a, T, Z> {
+    pub unsafe fn assume_fully_valid(self) -> FullyValidBlob<'a, T, P> {
         ValidBlob(self).assume_fully_valid()
     }
-*/
-    pub fn metadata(&self) -> T::Metadata {
-        self.metadata
-    }
+}
 
-    pub fn as_bytes(&self) -> &'a [u8]
-        where T: Save<P>
-    {
+impl<'a, T: ?Sized + Save<P>, P> Blob<'a, T, P> {
+    fn as_bytes(&self) -> &'a [u8] {
         unsafe {
             slice::from_raw_parts(self.ptr,
                                   T::blob_layout(self.metadata).size())
@@ -134,28 +136,29 @@ impl<T: ?Sized + Pointee, Z> fmt::Debug for Blob<'_, T, Z> {
             .finish()
     }
 }
+*/
 
-pub trait ValidateFields<'a, T: ?Sized + Load<Z>, Z: Zone> {
-    fn field<F: 'a + Load<Z>>(&mut self) -> Result<F::ValidateChildren, F::Error>;
-    fn done(self, state: T::ValidateChildren) -> BlobValidator<'a, T, Z>;
+pub trait ValidateFields<'a, T: ?Sized + Load<P>, P> {
+    fn field<F: 'a + Decode<P>>(&mut self) -> Result<F::ValidateChildren, F::Error>;
+    fn done(self, state: T::ValidateChildren) -> BlobValidator<'a, T, P>;
 }
 
-pub trait ValidateVariant<'a, T: ?Sized + Load<Z>, Z: Zone> {
-    fn field<F: 'a + Load<Z>>(&mut self) -> Result<F::ValidateChildren, F::Error>;
+pub trait ValidateVariant<'a, T: ?Sized + Load<P>, P> {
+    fn field<F: 'a + Decode<P>>(&mut self) -> Result<F::ValidateChildren, F::Error>;
     fn done(self, state: T::ValidateChildren)
-        -> Result<BlobValidator<'a, T, Z>, PaddingError>;
+        -> Result<BlobValidator<'a, T, P>, PaddingError>;
 }
 
-pub trait DecodeFields<'a, T: ?Sized + Load<Z>, Z: Zone> {
-    fn field<F: 'a + Load<Z>>(&mut self) -> F;
+pub trait DecodeFields<'a, T: ?Sized + Load<P>, P> {
+    fn field<F: 'a + Decode<P>>(&mut self) -> F;
 }
 
-struct FieldCursor<'a, T: ?Sized + Pointee, Z> {
-    blob: Blob<'a, T, Z>,
+struct FieldCursor<'a, T: ?Sized + Pointee, P> {
+    blob: Blob<'a, T, P>,
     offset: usize,
 }
 
-impl<T: ?Sized + Load<Z>, Z: Zone> fmt::Debug for FieldCursor<'_, T, Z> {
+impl<T: ?Sized + Load<P>, P> fmt::Debug for FieldCursor<'_, T, P> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
             .field("buf", &&self.blob[..])
@@ -165,8 +168,8 @@ impl<T: ?Sized + Load<Z>, Z: Zone> fmt::Debug for FieldCursor<'_, T, Z> {
     }
 }
 
-impl<'a, T: ?Sized + Load<Z>, Z: Zone> FieldCursor<'a, T, Z> {
-    fn field_blob<F: Load<Z>>(&mut self) -> Blob<'a, F, Z> {
+impl<'a, T: ?Sized + Load<P>, P> FieldCursor<'a, T, P> {
+    fn field_blob<F: Decode<P>>(&mut self) -> Blob<'a, F, P> {
         let size = F::BLOB_LAYOUT.size();
 
         let start = self.offset;
@@ -177,31 +180,32 @@ impl<'a, T: ?Sized + Load<Z>, Z: Zone> FieldCursor<'a, T, Z> {
 
         Blob::new(buf, F::make_sized_metadata()).unwrap()
     }
-}
 
-impl<'a, T: ?Sized + Load<Z>, Z: Zone> ValidateFields<'a, T, Z> for FieldCursor<'a, T, Z> {
-    fn field<F: 'a + Load<Z>>(&mut self) -> Result<F::ValidateChildren, F::Error> {
+    fn field<F: 'a + Decode<P>>(&mut self) -> Result<F::ValidateChildren, F::Error> {
         let blob = self.field_blob::<F>();
         let validator = F::validate_blob(blob)?;
         Ok(validator.state)
     }
+}
 
-    fn done(self, state: T::ValidateChildren) -> BlobValidator<'a, T, Z> {
+impl<'a, T: ?Sized + Load<P>, P> ValidateFields<'a, T, P> for FieldCursor<'a, T, P> {
+    fn field<F: 'a + Decode<P>>(&mut self) -> Result<F::ValidateChildren, F::Error> {
+        self.field::<F>()
+    }
+
+    fn done(self, state: T::ValidateChildren) -> BlobValidator<'a, T, P> {
         assert_eq!(self.offset, self.blob.len(),
                    "not fully validated");
 
         self.blob.assume_valid(state)
     }
 }
-
-impl<'a, T: ?Sized + Load<Z>, Z: Zone> ValidateVariant<'a, T, Z> for FieldCursor<'a, T, Z> {
-    fn field<F: 'a + Load<Z>>(&mut self) -> Result<F::ValidateChildren, F::Error> {
-        let blob = self.field_blob::<F>();
-        let validator = F::validate_blob(blob)?;
-        Ok(validator.state)
+impl<'a, T: ?Sized + Load<P>, P> ValidateVariant<'a, T, P> for FieldCursor<'a, T, P> {
+    fn field<F: 'a + Decode<P>>(&mut self) -> Result<F::ValidateChildren, F::Error> {
+        self.field::<F>()
     }
 
-    fn done(self, state: T::ValidateChildren) -> Result<BlobValidator<'a, T, Z>, PaddingError> {
+    fn done(self, state: T::ValidateChildren) -> Result<BlobValidator<'a, T, P>, PaddingError> {
         if self.blob[self.offset .. ].iter().all(|b| *b == 0) {
             Ok(self.blob.assume_valid(state))
         } else {
@@ -210,11 +214,8 @@ impl<'a, T: ?Sized + Load<Z>, Z: Zone> ValidateVariant<'a, T, Z> for FieldCursor
     }
 }
 
-
-
-
-impl<'a, T: ?Sized + Pointee, Z> ValidBlob<'a,T,Z> {
-    pub unsafe fn assume_fully_valid(self) -> FullyValidBlob<'a,T,Z> {
+impl<'a, T: ?Sized + Pointee, P> ValidBlob<'a,T,P> {
+    pub unsafe fn assume_fully_valid(self) -> FullyValidBlob<'a,T,P> {
         FullyValidBlob(self)
     }
 
@@ -223,15 +224,14 @@ impl<'a, T: ?Sized + Pointee, Z> ValidBlob<'a,T,Z> {
     }
 }
 
-impl<'a, T: ?Sized + Pointee, Z> Clone for ValidBlob<'a, T, Z> {
+impl<'a, T: ?Sized + Pointee, P> Clone for ValidBlob<'a, T, P> {
     fn clone(&self) -> Self {
         Self(self.0)
     }
 }
-impl<'a, T: ?Sized + Pointee, Z> Copy for ValidBlob<'a, T, Z> {}
+impl<'a, T: ?Sized + Pointee, P> Copy for ValidBlob<'a, T, P> {}
 
-
-impl<T: ?Sized + Pointee, Z> fmt::Debug for ValidBlob<'_, T, Z> {
+impl<T: ?Sized + Pointee, P> fmt::Debug for ValidBlob<'_, T, P> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
             .field("ptr", &self.0.ptr)
@@ -239,7 +239,6 @@ impl<T: ?Sized + Pointee, Z> fmt::Debug for ValidBlob<'_, T, Z> {
             .finish()
     }
 }
-*/
 
 pub struct BlobValidator<'a, T: ?Sized + Load<P>, P> {
     blob: ValidBlob<'a, T, P>,
@@ -278,14 +277,15 @@ impl<T: ?Sized + Pointee, Z> fmt::Debug for FullyValidBlob<'_, T, Z> {
             .finish()
     }
 }
+*/
 
-impl<'a, T: ?Sized + Pointee, Z> FullyValidBlob<'a,T,Z> {
+impl<'a, T: ?Sized + Pointee, P> FullyValidBlob<'a,T,P> {
     pub fn metadata(&self) -> T::Metadata {
         self.0.metadata()
     }
 }
 
-impl<'a, T: ?Sized + Pointee + Owned, Z> FullyValidBlob<'a,T,Z> {
+impl<'a, T: ?Sized + Pointee + Owned, P> FullyValidBlob<'a,T,P> {
     pub unsafe fn assume_valid(self) -> &'a T {
         &*T::make_fat_ptr((self.0).0.ptr as *const (), self.metadata())
     }
@@ -295,15 +295,15 @@ impl<'a, T: ?Sized + Pointee + Owned, Z> FullyValidBlob<'a,T,Z> {
     }
 }
 
-impl<'a, T: ?Sized + Pointee, Z> Clone for FullyValidBlob<'a, T, Z> {
+impl<'a, T: ?Sized + Pointee, P> Clone for FullyValidBlob<'a, T, P> {
     fn clone(&self) -> Self {
         Self(self.0)
     }
 }
-impl<'a, T: ?Sized + Pointee, Z> Copy for FullyValidBlob<'a, T, Z> {}
+impl<'a, T: ?Sized + Pointee, P> Copy for FullyValidBlob<'a, T, P> {}
 
-impl<'a, T: ?Sized + Load<Z>, Z: Zone> FullyValidBlob<'a, T, Z> {
-    pub fn decode_struct(self, loader: impl Loader<Z>) -> impl DecodeFields<'a,T,Z> {
+impl<'a, T: ?Sized + Load<P>, P> FullyValidBlob<'a, T, P> {
+    pub fn decode_struct(self, loader: impl Loader<P>) -> impl DecodeFields<'a,T,P> {
         FieldDecoder {
              cursor: FieldCursor {
                  blob: (self.0).0,
@@ -313,7 +313,7 @@ impl<'a, T: ?Sized + Load<Z>, Z: Zone> FullyValidBlob<'a, T, Z> {
         }
     }
 
-    pub fn decode_enum(self, loader: impl Loader<Z>) -> (u8, impl DecodeFields<'a,T,Z>) {
+    pub fn decode_enum(self, loader: impl Loader<P>) -> (u8, impl DecodeFields<'a,T,P>) {
         (self[0],
          FieldDecoder {
              cursor: FieldCursor {
@@ -325,16 +325,15 @@ impl<'a, T: ?Sized + Load<Z>, Z: Zone> FullyValidBlob<'a, T, Z> {
     }
 }
 
-struct FieldDecoder<'a, T: ?Sized + Pointee, Z, L> {
-    cursor: FieldCursor<'a, T, Z>,
+struct FieldDecoder<'a, T: ?Sized + Pointee, P, L> {
+    cursor: FieldCursor<'a, T, P>,
     loader: L,
 }
 
-impl<'a, T: ?Sized + Load<Z>, Z, L> DecodeFields<'a, T, Z> for FieldDecoder<'a, T, Z, L>
-where Z: Zone,
-      L: Loader<Z>,
+impl<'a, T: ?Sized + Load<P>, P, L> DecodeFields<'a, T, P> for FieldDecoder<'a, T, P, L>
+where L: Loader<P>,
 {
-    fn field<F: 'a + Load<Z>>(&mut self) -> F {
+    fn field<F: 'a + Decode<P>>(&mut self) -> F {
         let blob = self.cursor.field_blob::<F>();
         let blob = unsafe { blob.assume_fully_valid() };
 
@@ -343,7 +342,6 @@ where Z: Zone,
     }
 }
 
-*/
 
 pub trait WriteBlob : Sized {
     type Ok;
@@ -424,9 +422,8 @@ impl<W: WriteBlob> WriteBlob for ValueWriter<W> {
     }
 }
 
-/*
 impl WriteBlob for &'_ mut [u8] {
-    type Done = ();
+    type Ok = ();
     type Error = !;
 
     #[inline(always)]
@@ -441,7 +438,7 @@ impl WriteBlob for &'_ mut [u8] {
     }
 
     #[inline(always)]
-    fn done(self) -> Result<Self::Done, Self::Error> {
+    fn finish(self) -> Result<Self::Ok, Self::Error> {
         assert_eq!(self.len(), 0,
                    "not all bytes written");
         Ok(())
@@ -449,7 +446,7 @@ impl WriteBlob for &'_ mut [u8] {
 }
 
 impl WriteBlob for &'_ mut [MaybeUninit<u8>] {
-    type Done = ();
+    type Ok = ();
     type Error = !;
 
     #[inline(always)]
@@ -468,14 +465,12 @@ impl WriteBlob for &'_ mut [MaybeUninit<u8>] {
     }
 
     #[inline(always)]
-    fn done(self) -> Result<Self::Done, Self::Error> {
+    fn finish(self) -> Result<Self::Ok, Self::Error> {
         assert_eq!(self.len(), 0,
                    "not all bytes written");
         Ok(())
     }
 }
-
-*/
 
 /// Encoding of a fixed-size value in a pile.
 #[derive(Default,Clone,Copy,Debug,PartialEq,Eq,Hash)]
@@ -577,7 +572,6 @@ impl BlobLayout {
     }
 }
 
-/*
 #[cfg(test)]
 mod test {
     use super::*;
@@ -590,7 +584,7 @@ mod test {
         w.write_bytes(&[1])?
          .write_bytes(&[2])?
          .write_bytes(&[3])?
-         .done()?;
+         .finish()?;
 
         assert_eq!(buf, [1,2,3]);
 
@@ -642,4 +636,3 @@ mod test {
                    BlobLayout { size: 6, niche_start: 0, niche_end: 3, inhabited: true, });
     }
 }
-*/

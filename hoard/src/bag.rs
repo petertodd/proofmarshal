@@ -27,8 +27,7 @@ impl<T: ?Sized + Pointee, Z: Zone> Bag<T,Z> {
     }
 }
 
-/*
-impl<T: ?Sized + Load<Z>, Z: Zone> Bag<T,Z> {
+impl<T: ?Sized + Load<Z::Ptr>, Z: Zone> Bag<T,Z> {
     pub fn get<'a>(&'a self) -> Ref<'a, T>
         where Z: Get
     {
@@ -42,6 +41,7 @@ impl<T: ?Sized + Load<Z>, Z: Zone> Bag<T,Z> {
     }
 }
 
+/*
 pub struct BagSaver<T: ?Sized + Save<Y>, Z: Zone, Y: Zone>(SaveOwnPoll<T,Z,Y>);
 
 impl<T: ?Sized, Z: Zone, Y: Zone> Save<Y> for Bag<T,Z>
@@ -118,14 +118,14 @@ mod test {
 
     #[test]
     fn test() {
-        let _bag: Bag<_, Heap> = Bag::new(42u8);
+        let _bag: Bag<_, Heap> = Bag::new(42u16);
 
-        let _bag = Bag::new_in(42u8, Heap);
+        let _bag = Bag::new_in(42u16, Heap);
 
-        let _bag = Bag::<[u8], Heap>::new(vec![1u8,2,3]);
+        //let _bag = Bag::<[u8], Heap>::new(vec![1u8,2,3]);
 
-        let bag = Bag::new_in(42u8, Heap);
-        //assert_eq!(*bag.get(), 42u8);
-        //assert_eq!(bag.take(), 42u8);
+        let bag = Bag::new_in(42u16, Heap);
+        assert_eq!(*bag.get(), 42u16);
+        assert_eq!(bag.take(), 42u16);
     }
 }

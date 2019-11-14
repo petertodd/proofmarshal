@@ -16,7 +16,9 @@ pub mod pointee;
 use self::pointee::*;
 
 pub mod marshal;
-//use self::marshal::*;
+use self::marshal::{
+    Load,
+};
 
 pub mod own;
 use self::own::Own;
@@ -24,7 +26,7 @@ use self::own::Own;
 
 pub mod never;
 pub mod heap;
-//pub mod pile;
+pub mod pile;
 
 pub mod bag;
 
@@ -88,16 +90,13 @@ impl<A: Alloc> Alloc for &'_ mut A {
     }
 }
 
-/*
 pub trait TryGet : Zone {
     type Error;
 
-    fn get<'p, T: ?Sized + Load<Self>>(&self, ptr: &'p Own<T, Self::Ptr>) -> Result<Ref<'p, T>, Self::Error>;
+    fn get<'p, T: ?Sized + Load<Self::Ptr>>(&self, ptr: &'p Own<T, Self::Ptr>) -> Result<Ref<'p, T>, Self::Error>;
 }
 
 pub trait Get : Zone {
-    fn get<'p, T: ?Sized + Load<Self>>(&self, ptr: &'p Own<T, Self::Ptr>) -> Ref<'p, T>;
-
-    fn take<'p, T: ?Sized + Load<Self>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned;
+    fn get<'p, T: ?Sized + Load<Self::Ptr>>(&self, ptr: &'p Own<T, Self::Ptr>) -> Ref<'p, T>;
+    fn take<'p, T: ?Sized + Load<Self::Ptr>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned;
 }
-*/

@@ -10,7 +10,13 @@ use std::alloc::Layout;
 
 use super::*;
 
-use crate::marshal::blob::*;
+use crate::marshal::{
+    Encode, EncodePoll,
+    Decode, ValidateChildren,
+    Save, Load, Loader,
+    Persist,
+    blob::*,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -20,6 +26,8 @@ pub struct Offset<'p> {
     // FIXME: needs to be Le<NonZeroU64>
     raw: NonZeroU64,
 }
+
+unsafe impl Persist for Offset<'_> {}
 
 impl<'p> Offset<'p> {
     pub const MAX: u64 = (1 << 62) - 1;
@@ -54,27 +62,43 @@ impl<'p> Offset<'p> {
     }
 }
 
+impl Ptr for Offset<'_> {
+    fn dealloc_own<T: ?Sized + Pointee>(own: Own<T, Self>) {
+        let (_, _) = own.into_raw_parts();
+    }
+
+    fn drop_take_unsized<T: ?Sized + Pointee>(_: Own<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
+    }
+}
+
 impl fmt::Pointer for Offset<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:x}", self.get())
     }
 }
 
-impl<'p, Z: Zone> Save<Z> for Offset<'p> {
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(8);
+impl Encode<Self> for Offset<'_> {
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
 
-    type SavePoll = Offset<'p>;
-    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
-        this.take_sized()
+    type EncodePoll = Self;
+    fn encode_poll(self) -> Self { self }
+
+    fn encode_own<T: ?Sized>(own: Own<T,Self>) -> Result<Self::EncodePoll, <T as Save<Self>>::SavePoll>
+        where T: Save<Self>
+    {
+        let (this, _) = own.into_raw_parts();
+        Ok(this)
     }
 }
 
-impl<'p, Z: Zone> SavePoll<Z> for Offset<'p> {
-    type Target = Offset<'p>;
+impl EncodePoll<Self> for Offset<'_> {
+    const TARGET_BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
 
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-        dst.write_bytes(dbg!(&self.raw.get().to_le_bytes()))?
-           .done()
+    type Target = Self;
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        dst.write_bytes(&self.raw.get().to_le_bytes())?
+           .finish()
     }
 }
 
@@ -89,30 +113,32 @@ impl TryFrom<u64> for Offset<'static> {
     }
 }
 
-impl<'p, Z: Zone> Load<Z> for Offset<'p> {
+impl Decode<Self> for Offset<'_> {
     type Error = OffsetError;
 
     type ValidateChildren = ();
-    fn validate_blob<'q>(blob: Blob<'q, Self, Z>) -> Result<ValidateBlob<'q, Self, Z>, Self::Error> {
+
+    fn validate_blob<'q>(blob: Blob<'q, Self, Self>) -> Result<BlobValidator<'q, Self, Self>, Self::Error> {
         let mut raw = [0;8];
         raw.copy_from_slice(&blob[..]);
         let raw = u64::from_le_bytes(raw);
 
-        if (raw & 1 != 1) {
+        if raw & 1 != 1 {
             Err(OffsetError(()))
         } else {
             Offset::try_from(raw >> 1)?;
 
-            Ok(blob.assume_valid(()))
+            //Ok(blob.assume_valid(()))
+            todo!()
         }
     }
 
-    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Z>, _: &impl Loader<Z>) -> Self::Owned {
-        let mut raw = [0;8];
-        raw.copy_from_slice(&blob[..]);
-        let raw = u64::from_le_bytes(raw) >> 1;
+    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Self>, _: &impl Loader<Self>) -> Self {
+        *<Self as Decode<Self>>::deref_blob(blob)
+    }
 
-        Offset::new(raw).unwrap()
+    fn deref_blob<'q>(blob: FullyValidBlob<'q, Self, Self>) -> &'q Self {
+        unsafe { blob.assume_valid() }
     }
 }
 
@@ -120,20 +146,34 @@ impl<'p, Z: Zone> Load<Z> for Offset<'p> {
 #[repr(transparent)]
 pub struct OffsetMut<'p>(Offset<'p>);
 
+unsafe impl Persist for OffsetMut<'_> {}
+
 impl Ptr for OffsetMut<'_> {
-    unsafe fn dealloc_own<T: ?Sized + Pointee>(self, metadata: T::Metadata) {
-        let this = ManuallyDrop::new(self);
+    fn dealloc_own<T: ?Sized + Pointee>(owned: Own<T, Self>) {
+        Self::drop_take_unsized(owned, |value|
+            unsafe {
+                core::ptr::drop_in_place(value)
+            }
+        )
+    }
+
+    fn drop_take_unsized<T: ?Sized + Pointee>(owned: Own<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
+        let (this, metadata) = owned.into_raw_parts();
+        let this = ManuallyDrop::new(this);
 
         match this.kind() {
             Kind::Offset(_) => {},
             Kind::Ptr(ptr) => {
-                let r: &mut T = &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata);
-                let layout = fix_layout(Layout::for_value(r));
+                unsafe {
+                    let r: &mut T = &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata);
+                    let r: &mut ManuallyDrop<T> = &mut *(r as *mut _ as *mut _);
 
-                ptr::drop_in_place(r);
+                    f(r);
 
-                if layout.size() > 0 {
-                    std::alloc::dealloc(r as *mut _ as *mut u8, layout);
+                    let layout = fix_layout(Layout::for_value(r));
+                    if layout.size() > 0 {
+                        std::alloc::dealloc(r as *mut _ as *mut u8, layout);
+                    }
                 }
             }
         }
@@ -233,5 +273,48 @@ impl fmt::Pointer for OffsetMut<'_> {
             Kind::Offset(offset) => write!(f, "Offset({:p})", offset),
             Kind::Ptr(ptr) => write!(f, "Ptr({:p})", ptr),
         }
+    }
+}
+
+impl Encode<Self> for OffsetMut<'_> {
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
+
+    type EncodePoll = Self;
+    fn encode_poll(self) -> Self { self }
+
+    fn encode_own<T: ?Sized>(own: Own<T,Self>) -> Result<Self::EncodePoll, <T as Save<Self>>::SavePoll>
+        where T: Save<Self>
+    {
+        todo!()
+    }
+}
+
+impl EncodePoll<Self> for OffsetMut<'_> {
+    const TARGET_BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
+
+    type Target = Self;
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        todo!()
+    }
+}
+
+impl Decode<Self> for OffsetMut<'_> {
+    type Error = OffsetError;
+
+    type ValidateChildren = ();
+
+    fn validate_blob<'q>(blob: Blob<'q, Self, Self>) -> Result<BlobValidator<'q, Self, Self>, Self::Error> {
+        todo!()
+    }
+
+    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Self>, _: &impl Loader<Self>) -> Self {
+        let inner = <Self as Decode<Self>>::deref_blob(blob).0;
+        // TODO: add assertion
+        Self(inner)
+    }
+
+    fn deref_blob<'q>(blob: FullyValidBlob<'q, Self, Self>) -> &'q Self {
+        unsafe { blob.assume_valid() }
     }
 }

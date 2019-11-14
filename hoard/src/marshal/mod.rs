@@ -126,7 +126,7 @@ pub trait Decode<P> : Encode<P> {
 impl<P, T: Decode<P>> Load<P> for T {
     type Error = T::Error;
 
-    type ValidateChildren = ();
+    type ValidateChildren = T::ValidateChildren;
     fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
         T::validate_blob(blob)
     }

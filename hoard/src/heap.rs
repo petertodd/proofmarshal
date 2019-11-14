@@ -8,8 +8,6 @@ use std::alloc::Layout;
 
 use super::*;
 
-//use crate::marshal::{*, blob::*};
-
 #[derive(Default,Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Heap;
 
@@ -23,20 +21,18 @@ impl Zone for Heap {
 
 }
 
-/*
 impl Get for Heap {
     fn get<'p, T: ?Sized + Pointee + Owned>(&self, ptr: &'p Own<T, Self::Ptr>) -> Ref<'p, T> {
         let r: &'p T = unsafe { ptr.ptr().get(ptr.metadata()) };
         Ref::Borrowed(r)
     }
 
-    fn take<T: ?Sized + Load<Self>>(&self, own: Own<T, Self::Ptr>) -> T::Owned {
+    fn take<T: ?Sized + Pointee + Owned>(&self, own: Own<T, Self::Ptr>) -> T::Owned {
         let (ptr, metadata) = own.into_raw_parts();
 
         unsafe { ptr.take::<T>(metadata) }
     }
 }
-*/
 
 impl Alloc for Heap {
     type Zone = Heap;
@@ -54,39 +50,6 @@ impl Alloc for Heap {
         Heap
     }
 }
-
-/*
-impl Save<Self> for Heap {
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(0);
-
-    type SavePoll = Self;
-    fn save_poll(this: impl Take<Self>) -> Self {
-        this.take_sized()
-    }
-}
-
-impl SavePoll<Heap> for Heap {
-    type Target = Heap;
-
-    fn encode_blob<W: WriteBlob>(&self, _: W) -> Result<W::Done, W::Error> {
-        unreachable!()
-    }
-}
-
-impl Load<Heap> for Heap {
-    type Error = !;
-
-    type ValidateChildren = ();
-
-    fn validate_blob<'p>(_: Blob<'p, Self, Self>) -> Result<ValidateBlob<'p, Self, Self>, Self::Error> {
-        unreachable!()
-    }
-
-    fn decode_blob<'p>(_: FullyValidBlob<'p, Self, Self>, _: &impl Loader<Self>) -> Self::Owned {
-        unreachable!()
-    }
-}
-*/
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct HeapPtr(NonNull<()>);
@@ -191,82 +154,3 @@ mod tests {
         }
     }
 }
-
-/*
-    #[inline]
-    unsafe fn into_box<T: ?Sized + Pointee>(self, metadata: T::Metadata) -> Box<T> {
-        let thin = self.0.as_ptr();
-        let fat = T::make_fat_ptr_mut(thin, metadata);
-        Box::from_raw(fat)
-    }
-
-}
-
-#[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
-pub struct Allocator;
-
-impl Zone for Heap {
-    type Ptr = Raw;
-    type Allocator = Allocator;
-    type Error = !;
-
-    #[inline]
-    fn allocator() -> Self::Allocator { Allocator }
-
-    fn clone_rec<T: Clone>(r: &Rec<T,Self>) -> Rec<T,Self> {
-        /*
-        let orig = unsafe { ptr.raw.get::<T>(()) };
-        let cloned = orig.clone();
-        let ptr = Ptr::from_box(Box::new(cloned));
-
-        unsafe { Unique::from_raw_parts(ptr, ()) }
-        */
-        unimplemented!()
-    }
-
-    unsafe fn dealloc<T: ?Sized + Pointee>(ptr: super::Ptr<T,Self>) {
-        ptr.raw.into_box::<T>(ptr.metadata);
-    }
-
-    fn fmt_debug_rec<T: ?Sized + Pointee>(rec: &Rec<T,Self>, f: &mut fmt::Formatter) -> fmt::Result
-        where T: fmt::Debug
-    {
-        let value = unsafe { rec.ptr.raw.get::<T>(rec.ptr.metadata) };
-        fmt::Debug::fmt(value, f)
-    }
-}
-
-impl Alloc for Allocator {
-    type Zone = Heap;
-
-    #[inline]
-    fn alloc<T>(&mut self, value: T) -> Rec<T,Self::Zone> {
-        let raw = Raw::from_box(Box::new(self));
-        unsafe { Rec::from_ptr(super::Ptr { raw, metadata: () }) }
-    }
-
-    #[inline]
-    fn zone(&self) -> Self::Zone { Heap }
-}
-
-impl TryGet for Heap {
-    fn try_get<'p, T: ?Sized + Load<Self>>(&self, r: &'p Rec<T,Self>) -> Result<Ref<'p, T, Self>, !> {
-        let r: &T = unsafe { r.ptr().raw.get::<T>(r.ptr().metadata) };
-        Ok(Ref::Borrowed(r))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Debug)]
-    struct Foo(u8,u16);
-
-    #[test]
-    fn test() {
-        //let bag = Bag::<_,Heap>::new(Foo(8,16));
-        //dbg!(bag.get());
-    }
-}
-*/
