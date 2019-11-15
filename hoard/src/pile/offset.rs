@@ -130,7 +130,7 @@ impl Decode<Self> for Offset<'_> {
         }
     }
 
-    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Self>, _: &impl Loader<Self>) -> Self {
+    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Self>, _: &impl LoadPtr<Self>) -> Self {
         *<Self as Decode<Self>>::deref_blob(blob)
     }
 
@@ -335,7 +335,7 @@ impl Decode<Self> for OffsetMut<'_> {
         Ok(blob.assume_valid(()))
     }
 
-    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Self>, _: &impl Loader<Self>) -> Self {
+    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Self>, _: &impl LoadPtr<Self>) -> Self {
         let inner = <Self as Decode<Self>>::deref_blob(blob).0;
         // TODO: add assertion
         Self(inner)

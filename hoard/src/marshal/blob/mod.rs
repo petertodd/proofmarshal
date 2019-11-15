@@ -306,7 +306,7 @@ impl<'a, T: ?Sized + Pointee, P> Clone for FullyValidBlob<'a, T, P> {
 impl<'a, T: ?Sized + Pointee, P> Copy for FullyValidBlob<'a, T, P> {}
 
 impl<'a, T: ?Sized + Load<P>, P> FullyValidBlob<'a, T, P> {
-    pub fn decode_struct(self, loader: impl Loader<P>) -> impl DecodeFields<'a,T,P> {
+    pub fn decode_struct(self, loader: impl LoadPtr<P>) -> impl DecodeFields<'a,T,P> {
         FieldDecoder {
              cursor: FieldCursor {
                  blob: (self.0).0,
@@ -316,7 +316,7 @@ impl<'a, T: ?Sized + Load<P>, P> FullyValidBlob<'a, T, P> {
         }
     }
 
-    pub fn decode_enum(self, loader: impl Loader<P>) -> (u8, impl DecodeFields<'a,T,P>) {
+    pub fn decode_enum(self, loader: impl LoadPtr<P>) -> (u8, impl DecodeFields<'a,T,P>) {
         (self[0],
          FieldDecoder {
              cursor: FieldCursor {
@@ -334,7 +334,7 @@ struct FieldDecoder<'a, T: ?Sized + Pointee, P, L> {
 }
 
 impl<'a, T: ?Sized + Load<P>, P, L> DecodeFields<'a, T, P> for FieldDecoder<'a, T, P, L>
-where L: Loader<P>,
+where L: LoadPtr<P>,
 {
     fn field<F: 'a + Decode<P>>(&mut self) -> F {
         let blob = self.cursor.field_blob::<F>();

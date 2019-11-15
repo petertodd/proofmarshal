@@ -45,9 +45,9 @@ pub trait Load<P> : Save<P> {
     type ValidateChildren : ValidateChildren<P>;
     fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error>;
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Self::Owned;
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Self::Owned;
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Ref<'p, Self> {
         Ref::Owned(Self::decode_blob(blob, loader))
     }
 
@@ -79,11 +79,11 @@ where T: Primitive
     type Error = T::Error;
 
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl Loader<P>) -> Self {
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl LoadPtr<P>) -> Self {
         todo!()
     }
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Ref<'p, Self> {
         todo!()
     }
 
@@ -135,9 +135,9 @@ pub trait Decode<P> : Encode<P> {
     type ValidateChildren : ValidateChildren<P>;
     fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error>;
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Self;
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Self;
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Ref<'p, Self> {
         Ref::Owned(Self::decode_blob(blob, loader))
     }
 
@@ -176,11 +176,11 @@ where T: Primitive
         Ok(blob.assume_valid(()))
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl Loader<P>) -> Self {
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl LoadPtr<P>) -> Self {
         T::decode_blob(blob)
     }
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl Loader<P>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl LoadPtr<P>) -> Ref<'p, Self> {
         Self::load_blob(blob)
     }
 
@@ -221,11 +221,11 @@ impl<P, T: Decode<P>> Load<P> for T {
         T::validate_blob(blob)
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Self::Owned {
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Self::Owned {
         T::decode_blob(blob, loader)
     }
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Ref<'p, Self> {
         T::load_blob(blob, loader)
     }
 
@@ -259,15 +259,15 @@ pub trait Dumper<Q> : Sized {
                                                                          Self::Pending>;
 }
 
-pub trait Loader<P> {
+pub trait LoadPtr<P> {
 }
 
-impl<P, T: Loader<P>> Loader<P> for &'_ T {
+impl<P, T: LoadPtr<P>> LoadPtr<P> for &'_ T {
 }
 
-impl Loader<()> for () {
+impl LoadPtr<()> for () {
 }
-impl Loader<!> for () {
+impl LoadPtr<!> for () {
 }
 
 pub trait ValidatePtr<P> {
@@ -306,11 +306,11 @@ impl<P, T: Decode<P>> Load<P> for T {
         T::validate_blob(blob)
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Self {
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Self {
         T::decode_blob(blob, loader)
     }
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Ref<'p, Self> {
         T::load_blob(blob, loader)
     }
 
@@ -433,9 +433,9 @@ pub trait Load<Z: Zone> : Save<Z> {
     type ValidateChildren : ValidateChildren<Z>;
     fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error>;
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self::Owned;
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Self::Owned;
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Ref<'p, Self> {
         Ref::Owned(Self::decode_blob(blob, loader))
     }
 
@@ -447,14 +447,14 @@ pub trait Load<Z: Zone> : Save<Z> {
 }
 
 
-pub trait Loader<Z: Zone> {
+pub trait LoadPtr<Z: Zone> {
     fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: Z::PersistPtr, metadata: T::Metadata) -> Own<T,Z>;
 
     fn zone(&self) -> Z;
     fn allocator(&self) -> Z::Allocator;
 }
 
-impl Loader<!> for () {
+impl LoadPtr<!> for () {
     fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: !, _: T::Metadata) -> Own<T,!> {
         match persist_ptr {}
     }
@@ -468,7 +468,7 @@ impl Loader<!> for () {
     }
 }
 
-impl<Z: Zone, L: Loader<Z>> Loader<Z> for &'_ L {
+impl<Z: Zone, L: LoadPtr<Z>> LoadPtr<Z> for &'_ L {
     fn load_ptr<T: ?Sized + Pointee>(&self, persist_ptr: Z::PersistPtr, metadata: T::Metadata) -> Own<T,Z> {
         (&**self).load_ptr(persist_ptr, metadata)
     }
@@ -623,7 +623,7 @@ where T: Load<Z>,
         Ok(blob.assume_valid(ValidateOwn::Own { ptr, metadata }))
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Self {
         let mut fields = blob.decode_struct(loader);
         let ptr = fields.field::<Z::PersistPtr>();
 
