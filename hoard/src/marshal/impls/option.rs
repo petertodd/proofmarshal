@@ -15,67 +15,64 @@ const fn option_blob_layout(inner: BlobLayout) -> BlobLayout {
 impl<P, T: Encode<P>> Encode<P> for Option<T> {
     const BLOB_LAYOUT: BlobLayout = option_blob_layout(T::BLOB_LAYOUT);
 
-    type EncodePoll = Option<T::EncodePoll>;
+    type State = Option<T::State>;
 
-    fn encode_poll(self) -> Self::EncodePoll {
-        self.map(T::encode_poll)
+    fn init_encode_state(&self) -> Self::State {
+        self.as_ref().map(T::init_encode_state)
     }
-}
 
-impl<P, T: EncodePoll<P>> EncodePoll<P> for Option<T> {
-    const TARGET_BLOB_LAYOUT: BlobLayout = option_blob_layout(T::TARGET_BLOB_LAYOUT);
-    type Target = Option<T::Target>;
-
-    fn poll<D: Dumper<P>>(&mut self, dumper: D) -> Result<D, D::Pending> {
-        match self {
-            None => Ok(dumper),
-            Some(x) => x.poll(dumper),
+    fn encode_poll<D: Dumper<P>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
+        match (self, state) {
+            (None, None) => Ok(dumper),
+            (Some(value), Some(state)) => value.encode_poll(state, dumper),
+            _ => unreachable!(),
         }
     }
 
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
-        match self {
-            None => {
-                if !Self::TARGET_BLOB_LAYOUT.has_niche() {
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+        match (self, state) {
+            (None, None) => {
+                if !Self::BLOB_LAYOUT.has_niche() {
                     dst.write_bytes(&[0])?
                 } else {
                     dst
-                }.write_padding(Self::TARGET_BLOB_LAYOUT.size())?
+                }.write_padding(T::BLOB_LAYOUT.size())?
                  .finish()
             },
-            Some(v) => {
-                if !Self::TARGET_BLOB_LAYOUT.has_niche() {
+            (Some(value), Some(state)) => {
+                if !Self::BLOB_LAYOUT.has_niche() {
                     dst.write_bytes(&[1])?
                 } else {
                     dst
-                }.write(v)?
+                }.write(value, state)?
                  .finish()
             },
+            _ => unreachable!()
         }
     }
 }
 
-pub enum LoadOptionError<T: Load<P>, P> {
+pub enum OptionError<T: Load<P>, P> {
     Discriminant(u8),
     Padding,
     Value(T::Error),
 }
 
-impl<T: Load<P>, P> fmt::Debug for LoadOptionError<T, P>
+impl<T: Load<P>, P> fmt::Debug for OptionError<T, P>
 where T::Error: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            LoadOptionError::Discriminant(d) => {
+            OptionError::Discriminant(d) => {
                 f.debug_tuple("Discriminant")
                  .field(d)
                  .finish()
             },
-            LoadOptionError::Padding => {
+            OptionError::Padding => {
                 f.debug_tuple("Padding")
                  .finish()
             },
-            LoadOptionError::Value(e) => {
+            OptionError::Value(e) => {
                 f.debug_tuple("Value")
                  .field(e)
                  .finish()
@@ -89,12 +86,11 @@ fn zeroed(buf: &[u8]) -> bool {
 }
 
 impl<P, T: Decode<P>> Decode<P> for Option<T> {
-    type Error = LoadOptionError<T, P>;
+    type Error = OptionError<T, P>;
 
     type ValidateChildren = Option<T::ValidateChildren>;
 
     fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
-        /*
         if let Some(niche) = T::BLOB_LAYOUT.niche() {
             let (left_padding, _) = blob.split_at(niche.start);
             let (_, right_padding) = blob.split_at(niche.end);
@@ -105,29 +101,26 @@ impl<P, T: Decode<P>> Decode<P> for Option<T> {
                 if zeroed(left_padding) && zeroed(right_padding) {
                     Ok(blob.assume_valid(None))
                 } else {
-                    Err(VerifyOptionError::Padding)
+                    Err(OptionError::Padding)
                 }
             } else {
-                let mut v = blob.validate();
-                let state = v.field::<T>().map_err(|e| VerifyOptionError::Value(e))?;
+                let mut v = blob.validate_struct();
+                let state = v.field::<T>().map_err(|e| OptionError::Value(e))?;
                 Ok(v.done(Some(state)))
             }
         } else {
             match blob.validate_enum() {
-                (0, v) => v.done(None).ok().ok_or(VerifyOptionError::Padding),
+                (0, v) => v.done(None).ok().ok_or(OptionError::Padding),
                 (1, mut v) => {
-                    let state = v.field::<T>().map_err(|e| VerifyOptionError::Value(e))?;
+                    let state = v.field::<T>().map_err(|e| OptionError::Value(e))?;
                     Ok(v.done(Some(state)).unwrap())
                 },
-                (x, _) => Err(VerifyOptionError::Discriminant(x)),
+                (x, _) => Err(OptionError::Discriminant(x)),
             }
         }
-        */
-        todo!()
     }
 
     fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Self {
-        /*
         if let Some(niche) = T::BLOB_LAYOUT.niche() {
             let niche = &blob[niche];
 
@@ -144,38 +137,30 @@ impl<P, T: Decode<P>> Decode<P> for Option<T> {
                 (x, _) => unreachable!("invalid {} discriminant {}", type_name::<Self>(), x)
             }
         }
-        */
-        todo!()
     }
 
     fn deref_blob<'a>(blob: FullyValidBlob<'a, Self, P>) -> &'a Self
         where Self: Persist
     {
-        /*
         assert_eq!(mem::align_of::<Self>(), 1);
         assert_eq!(mem::size_of::<Self>(), Self::BLOB_LAYOUT.size());
 
         unsafe { blob.assume_valid() }
-        */
-        todo!()
     }
 }
 unsafe impl<T: Persist + NonZero> Persist for Option<T> { }
 
 impl<P, T: ValidateChildren<P>> ValidateChildren<P> for Option<T> {
-    /*
-    fn validate_children<V>(&mut self, validator: &mut V) -> Poll<Result<(), V::Error>>
+    fn validate_children<V>(&mut self, validator: &mut V) -> Result<(), V::Error>
         where V: ValidatePtr<P>
     {
         match self {
-            None => Ok(()).into(),
+            None => Ok(()),
             Some(inner) => inner.validate_children(validator),
         }
     }
-    */
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,20 +168,28 @@ mod tests {
     use std::convert::TryFrom;
 
     #[test]
-    fn test() {
-        assert_eq!(encode(Some(123u8)),
-                   &[1,123]);
+    fn encodings() {
+        macro_rules! t {
+            ($( $value:expr => $expected:expr; )+) => {{
+                $(
+                    let expected = &$expected;
+                    assert_eq!(encode(&$value), expected);
+                    let round_trip = decode(expected).unwrap();
+                    assert_eq!($value, round_trip);
+                )+
+            }}
+        }
 
-        assert_eq!(encode(None::<u8>),
-                   &[0,0]);
+        t! {
+            None::<()> => [0];
+            Some(()) => [1];
 
-        let blob = Blob::<Option<u8>,!>::try_from(&[1,123][..]).unwrap();
-        assert_eq!(try_decode(blob).unwrap(),
-                   Ref::Owned(Some(123)));
+            None::<u8> => [0,0];
+            Some(24u8) => [1,24];
 
-        let blob = Blob::<Option<u8>,!>::try_from(&[0,0][..]).unwrap();
-        assert_eq!(try_decode(blob).unwrap(),
-                   Ref::Owned(None));
+            None::<Option<()>> => [0,0];
+            Some(None::<()>)   => [1,0];
+            Some(Some(()))     => [1,1];
+        }
     }
 }
-*/

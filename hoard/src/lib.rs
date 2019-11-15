@@ -4,6 +4,10 @@
 #![feature(slice_from_raw_parts)]
 #![feature(manually_drop_take)]
 
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(dead_code)]
+
 use core::any::type_name;
 use core::fmt;
 use core::mem::ManuallyDrop;
@@ -16,13 +20,10 @@ pub mod pointee;
 use self::pointee::*;
 
 pub mod marshal;
-use self::marshal::{
-    Load,
-};
+use self::marshal::Load;
 
 pub mod own;
 use self::own::Own;
-
 
 pub mod never;
 pub mod heap;
@@ -59,7 +60,6 @@ pub trait Ptr : Sized + fmt::Debug {
 
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: Own<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>));
 }
-
 pub trait Zone : Sized {
     type Ptr : Ptr;
 

@@ -7,8 +7,8 @@ use core::mem::{self, MaybeUninit};
 
 use core::alloc::Layout;
 
-mod slice;
-pub use self::slice::*;
+//mod slice;
+//pub use self::slice::*;
 
 mod maybedropped;
 pub use self::maybedropped::MaybeDropped;

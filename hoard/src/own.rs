@@ -63,68 +63,59 @@ where P: fmt::Pointer,
     }
 }
 
+pub enum EncodeOwnState<T: ?Sized + Save<Q>, Q: Encode<Q>> {
+    Initial,
+    Value(T::State),
+    Done {
+        ptr_state: Q::State,
+        metadata: T::Metadata,
+    },
+}
 
 impl<T, P, Q> Encode<Q> for Own<T,P>
 where Q: Ptr + Encode<Q>,
       P: Ptr + Encode<Q>,
-      T: ?Sized + Save<Q> + Load<P>,
+      T: ?Sized + Save<Q>,
 {
     const BLOB_LAYOUT: BlobLayout = Q::BLOB_LAYOUT.extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
 
-    type EncodePoll = OwnEncoder<T, P, Q>;
+    type State = EncodeOwnState<T, Q>;
 
-    fn encode_poll(self) -> Self::EncodePoll {
-        OwnEncoder::Own(self)
+    fn init_encode_state(&self) -> Self::State {
+        EncodeOwnState::Initial
     }
-}
 
-pub enum OwnEncoder<T: ?Sized + Save<Q>, P: Ptr, Q: Encode<Q>> {
-    Own(Own<T,P>),
-    SaveValue(<T as Save<Q>>::SavePoll),
-    Done {
-        ptr_encoder: Q::EncodePoll,
-        metadata: T::Metadata,
-    },
-    Poisoned,
-}
-
-impl<T, P, Q> EncodePoll<Q> for OwnEncoder<T,P,Q>
-where Q: Ptr + Encode<Q>,
-      P: Ptr + Encode<Q>,
-      T: ?Sized + Save<Q> + Load<P>,
-{
-    const TARGET_BLOB_LAYOUT: BlobLayout = Q::BLOB_LAYOUT.extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
-    type Target = Own<T,Q>;
-
-    fn poll<D: Dumper<Q>>(&mut self, dumper: D) -> Result<D, D::Pending> {
-        match self {
-            Self::Own(_) => {
-                let owned = if let Self::Own(owned) = mem::replace(self, Self::Poisoned) { owned } else { unreachable!() };
-                let metadata = owned.metadata;
-
-                *self = match P::encode_own(owned) {
-                    Ok(ptr_encoder) => Self::Done { ptr_encoder, metadata },
-                    Err(value_saver) => Self::SaveValue(value_saver),
+    fn encode_poll<D: Dumper<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
+        match state {
+            EncodeOwnState::Initial => {
+                *state = match P::encode_own(self) {
+                    Ok(ptr_state) => EncodeOwnState::Done { ptr_state, metadata: self.metadata },
+                    Err(value_state) => EncodeOwnState::Value(value_state),
                 };
 
-                self.poll(dumper)
+                self.encode_poll(state, dumper)
             },
-            Self::SaveValue(saver) => {
-                let (dumper, ptr_encoder, metadata) = saver.poll(dumper)?;
-                let ptr_encoder = D::coerce_ptr_encoder(ptr_encoder);
-                *self = Self::Done { ptr_encoder, metadata };
+            EncodeOwnState::Value(value_state) => {
+                let metadata = self.metadata;
+                let (dumper, ptr_state) = P::encode_own_value(self, value_state, dumper)?;
+
+                *state = EncodeOwnState::Done { ptr_state, metadata };
                 Ok(dumper)
             },
-            Self::Done { .. } => Ok(dumper),
-            Self::Poisoned => panic!("{} poisoned", type_name::<Self>()),
+            EncodeOwnState::Done { .. } => Ok(dumper),
         }
     }
 
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
-        if let Self::Done { ptr_encoder, metadata } = self {
-            dst.write(ptr_encoder)?
-               .write_primitive(metadata)?
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+        if let EncodeOwnState::Done { ptr_state, metadata } = state {
+            /*
+            let ptr_writer = ValueWriter::new(dst, Q::BLOB_LAYOUT.size());
+            let dst = Q::encode_ptr(ptr_state, ptr_writer)?;
+
+            dst.write_primitive(metadata)?
                .finish()
+            */
+            todo!()
         } else {
             panic!()
         }

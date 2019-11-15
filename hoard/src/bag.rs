@@ -27,6 +27,7 @@ impl<T: ?Sized + Pointee, Z: Zone> Bag<T,Z> {
     }
 }
 
+/*
 impl<T: ?Sized + Load<Z::Ptr>, Z: Zone> Bag<T,Z> {
     pub fn get<'a>(&'a self) -> Ref<'a, T>
         where Z: Get
@@ -40,67 +41,16 @@ impl<T: ?Sized + Load<Z::Ptr>, Z: Zone> Bag<T,Z> {
         self.zone.take(self.ptr)
     }
 }
+*/
 
 /*
-pub struct BagSaver<T: ?Sized + Save<Y>, Z: Zone, Y: Zone>(SaveOwnPoll<T,Z,Y>);
-
-impl<T: ?Sized, Z: Zone, Y: Zone> Save<Y> for Bag<T,Z>
-where T: Save<Y>,
-      Z: Save<Y>,
+impl<T, Z, Q> Encode<Q> for Bag<T, Z>
+where Q: Ptr + Encode<Q>,
+      Z::Ptr: Encode<Q>,
+      T: ?Sized + Save<Q>,
 {
-    const BLOB_LAYOUT: BlobLayout = <Own<T,Z> as Save<Y>>::BLOB_LAYOUT;
-
-    type SavePoll = BagSaver<T,Z,Y>;
-    fn save_poll(this: impl Take<Self>) -> Self::SavePoll {
-        let this = this.take_sized();
-        BagSaver(Own::save_poll(this.ptr))
-    }
-}
-
-impl<T: ?Sized, Z: Zone, Y: Zone> SavePoll<Y> for BagSaver<T,Z,Y>
-where T: Save<Y>,
-      Z: Save<Y>,
-{
-    type Target = Bag<T,Z>;
-
-    fn save_children<P>(&mut self, ptr_saver: &mut P) -> Poll<Result<(), P::Error>>
-        where P: SavePtr<Y>
-    {
-        self.0.save_children(ptr_saver)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-        self.0.encode_blob(dst)
-    }
-}
-
-pub struct ValidateBag<T: ?Sized + Load<Z>, Z: Zone>(ValidateOwn<T,Z>);
-
-impl<T: ?Sized, Z: Zone> Load<Z> for Bag<T,Z>
-where T: Load<Z>,
-      Z: Load<Z>,
-{
-    type Error = <Own<T,Z> as Load<Z>>::Error;
-
-    type ValidateChildren = ValidateOwn<T,Z>;
-
-    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<ValidateBlob<'p, Self, Z>, Self::Error> {
-        let mut v = blob.validate();
-        let ptr = v.field::<Own<T,Z>>()?;
-
-        Ok(v.done(ptr))
-    }
-
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
-        let mut blob = blob.decode_struct(loader);
-
-        Bag {
-            ptr: blob.field::<Own<T,Z>>(),
-            zone: loader.zone(),
-        }
-    }
-}
-*/
+    const BLOB_LAYOUT: BlobLayout = <Own<T, Z::Ptr> as Encode<Q>>
+    */
 
 impl<T: ?Sized + Pointee, Z: Zone> fmt::Pointer for Bag<T,Z>
 where Z::Ptr: fmt::Pointer,
@@ -125,7 +75,7 @@ mod test {
         //let _bag = Bag::<[u8], Heap>::new(vec![1u8,2,3]);
 
         let bag = Bag::new_in(42u16, Heap);
-        assert_eq!(*bag.get(), 42u16);
-        assert_eq!(bag.take(), 42u16);
+        //assert_eq!(*bag.get(), 42u16);
+        //assert_eq!(bag.take(), 42u16);
     }
 }

@@ -21,6 +21,7 @@ impl Zone for Heap {
 
 }
 
+/*
 impl Get for Heap {
     fn get<'p, T: ?Sized + Pointee + Owned>(&self, ptr: &'p Own<T, Self::Ptr>) -> Ref<'p, T> {
         let r: &'p T = unsafe { ptr.ptr().get(ptr.metadata()) };
@@ -33,6 +34,7 @@ impl Get for Heap {
         unsafe { ptr.take::<T>(metadata) }
     }
 }
+*/
 
 impl Alloc for Heap {
     type Zone = Heap;
@@ -143,7 +145,7 @@ mod tests {
 
     #[test]
     fn allocator() {
-        let _: Own<[u8], HeapPtr> = Heap.alloc(vec![1,2,3]);
+        //let _: Own<[u8], HeapPtr> = Heap.alloc(vec![1,2,3]);
     }
 
     #[test]
