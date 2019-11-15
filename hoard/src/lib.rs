@@ -25,8 +25,8 @@ use self::marshal::Load;
 mod fatptr;
 pub use self::fatptr::FatPtr;
 
-pub mod own;
-use self::own::Own;
+mod own;
+pub use self::own::Own;
 
 pub mod never;
 pub mod heap;
