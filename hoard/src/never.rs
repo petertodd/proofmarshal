@@ -24,12 +24,12 @@ impl<Z: Zone> Alloc for NeverAllocator<Z> {
 }
 
 impl Ptr for ! {
-    fn dealloc_own<T: ?Sized + Pointee>(own: Own<T,Self>) {
-        match *own.ptr() {}
+    fn dealloc_own<T: ?Sized + Pointee>(ptr: Own<T,Self>) {
+        match ptr.raw {}
     }
 
-    fn drop_take_unsized<T: ?Sized + Pointee>(own: Own<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
-        match *own.ptr() {}
+    fn drop_take_unsized<T: ?Sized + Pointee>(ptr: Own<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
+        match ptr.raw {}
     }
 }
 

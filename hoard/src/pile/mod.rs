@@ -74,8 +74,7 @@ impl<'p> Alloc for PileMut<'p> {
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Ptr> {
         src.take_unsized(|src| unsafe {
             let metadata = T::metadata(src);
-            Own::from_raw_parts(OffsetMut::alloc::<T>(src),
-                                metadata)
+            Own::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata })
         })
     }
 
@@ -86,7 +85,7 @@ impl<'p> Alloc for PileMut<'p> {
 
 impl<'p> Get for PileMut<'p> {
     fn get<'a, T: ?Sized + Load<Self::Ptr>>(&self, own: &'a Own<T, Self::Ptr>) -> Ref<'a, T> {
-        match own.ptr().kind() {
+        match own.raw.kind() {
             Kind::Offset(offset) => {
                 /*
                 let offset = usize::try_from(offset.get()).unwrap();
@@ -104,7 +103,7 @@ impl<'p> Get for PileMut<'p> {
             },
             Kind::Ptr(ptr) => {
                 let r: &'a T = unsafe {
-                    &*T::make_fat_ptr(ptr.cast().as_ptr(), own.metadata())
+                    &*T::make_fat_ptr(ptr.cast().as_ptr(), own.metadata)
                 };
                 Ref::Borrowed(r)
             },
@@ -112,9 +111,9 @@ impl<'p> Get for PileMut<'p> {
     }
 
     fn take<T: ?Sized + Load<Self::Ptr>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned {
-        let (ptr, metadata) = ptr.into_raw_parts();
+        let ptr = ptr.into_inner();
 
-        match unsafe { ptr.try_take::<T>(metadata) } {
+        match unsafe { ptr.raw.try_take::<T>(ptr.metadata) } {
             Ok(owned) => owned,
             Err(offset) => {
                 /*

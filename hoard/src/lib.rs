@@ -44,8 +44,8 @@ pub trait Ptr : Sized + fmt::Debug {
         where T: fmt::Debug
     {
         f.debug_struct(type_name::<Own<T, Self>>())
-            .field("ptr", &owned.ptr())
-            .field("metadata", &owned.metadata())
+            .field("raw", &owned.raw)
+            .field("metadata", &owned.metadata)
             .finish()
     }
 

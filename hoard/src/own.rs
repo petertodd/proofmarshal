@@ -4,6 +4,7 @@ use core::any::type_name;
 use core::fmt;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
+use core::ops;
 
 use crate::marshal::*;
 use crate::marshal::blob::*;
@@ -12,31 +13,29 @@ use crate::marshal::blob::*;
 #[repr(C)]
 pub struct Own<T: ?Sized + Pointee, P: Ptr> {
     marker: PhantomData<T>,
-    ptr: ManuallyDrop<P>,
-    metadata: T::Metadata,
+    inner: ManuallyDrop<FatPtr<T,P>>,
+}
+
+impl<T: ?Sized + Pointee, P: Ptr> ops::Deref for Own<T,P> {
+    type Target = FatPtr<T,P>;
+
+    fn deref(&self) -> &FatPtr<T,P> {
+        &self.inner
+    }
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> Own<T,P> {
-    pub unsafe fn from_raw_parts(ptr: P, metadata: T::Metadata) -> Self {
+    pub unsafe fn new_unchecked(ptr: FatPtr<T,P>) -> Self {
         Self {
             marker: PhantomData,
-            ptr: ManuallyDrop::new(ptr),
-            metadata,
+            inner: ManuallyDrop::new(ptr),
         }
     }
 
-    pub fn into_raw_parts(self) -> (P, T::Metadata) {
+    pub fn into_inner(self) -> FatPtr<T,P> {
         let mut this = ManuallyDrop::new(self);
-        let ptr = unsafe { (&mut *this.ptr as *mut P).read() };
-        (ptr, this.metadata)
-    }
 
-    pub fn ptr(&self) -> &P {
-        &self.ptr
-    }
-
-    pub fn metadata(&self) -> T::Metadata {
-        self.metadata
+        unsafe { (&mut *this.inner as *mut FatPtr<T,P>).read() }
     }
 }
 
@@ -59,7 +58,7 @@ impl<T: ?Sized + Pointee, P: Ptr> fmt::Pointer for Own<T,P>
 where P: fmt::Pointer,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Pointer::fmt(&*self.ptr, f)
+        fmt::Pointer::fmt(&*self.inner, f)
     }
 }
 
@@ -122,16 +121,13 @@ where Q: Encode<Q>,
     }
 }
 
-pub enum DecodeOwnError<T: ?Sized + Load<Q>, P: Decode<Q>, Q> {
-    Ptr(P::Error),
+pub enum DecodeOwnError<T: ?Sized + Load<Q>, Q: Decode<Q>> {
+    Ptr(Q::Error),
     Metadata(<T::Metadata as Primitive>::Error),
 }
 
-pub enum OwnValidator<T: ?Sized + Load<Q>, Q> {
-    FatPtr {
-        ptr: Q,
-        metadata: T::Metadata,
-    },
+pub enum OwnValidator<T: ?Sized + Load<Q>, Q: Decode<Q>> {
+    FatPtr(FatPtr<T, Q>),
     Value(T::ValidateChildren),
 }
 
@@ -140,7 +136,7 @@ where T: Load<Q>,
       P: Decode<Q>,
       Q: Decode<Q>,
 {
-    type Error = DecodeOwnError<T,P,Q>;
+    type Error = DecodeOwnError<T,Q>;
 
     type ValidateChildren = OwnValidator<T,Q>;
     fn validate_blob<'a>(blob: Blob<'a, Self, Q>) -> Result<BlobValidator<'a, Self, Q>, Self::Error> {
@@ -152,12 +148,12 @@ where T: Load<Q>,
     }
 }
 
-impl<T: ?Sized + Load<Q>, Q> ValidateChildren<Q> for OwnValidator<T,Q> {
+impl<T: ?Sized + Load<Q>, Q: Decode<Q>> ValidateChildren<Q> for OwnValidator<T,Q> {
     fn validate_children<V>(&mut self, validator: &mut V) -> Result<(), V::Error>
         where V: ValidatePtr<Q>
     {
         match self {
-            Self::FatPtr { ptr, metadata } => {
+            Self::FatPtr(ptr) => {
                 todo!()
             },
             Self::Value(value) => value.validate_children(validator),

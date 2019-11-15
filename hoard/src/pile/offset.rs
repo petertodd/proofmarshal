@@ -63,7 +63,7 @@ impl<'p> Offset<'p> {
 
 impl Ptr for Offset<'_> {
     fn dealloc_own<T: ?Sized + Pointee>(own: Own<T, Self>) {
-        let (_, _) = own.into_raw_parts();
+        let _ = own.into_inner();
     }
 
     fn drop_take_unsized<T: ?Sized + Pointee>(_: Own<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
@@ -155,10 +155,9 @@ impl Ptr for OffsetMut<'_> {
     }
 
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: Own<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
-        let (this, metadata) = owned.into_raw_parts();
-        let this = ManuallyDrop::new(this);
+        let FatPtr { raw, metadata } = owned.into_inner();
 
-        match this.kind() {
+        match raw.kind() {
             Kind::Offset(_) => {},
             Kind::Ptr(ptr) => {
                 unsafe {
@@ -290,10 +289,10 @@ impl<'p> Encode<Self> for OffsetMut<'p> {
     }
 
     fn encode_own<T: ?Sized + Save<Self>>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Self>>::State> {
-        match own.ptr().kind() {
+        match own.raw.kind() {
             Kind::Offset(offset) => Ok(offset.persist()),
             Kind::Ptr(ptr) => {
-                let value = unsafe { &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), own.metadata()) };
+                let value = unsafe { &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), own.metadata) };
                 Err(value.init_save_state())
             },
         }
@@ -303,9 +302,9 @@ impl<'p> Encode<Self> for OffsetMut<'p> {
         where T: ?Sized + Save<Self>,
               D: Dumper<Self>
     {
-        match own.ptr().kind() {
+        match own.raw.kind() {
             Kind::Ptr(ptr) => {
-                let value = unsafe { &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), own.metadata()) };
+                let value = unsafe { &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), own.metadata) };
                 let (dumper, blob_ptr) = value.save_poll(state, dumper)?;
 
                 if let Some(offset) = Any::downcast_ref(&blob_ptr) {
