@@ -22,6 +22,9 @@ use self::pointee::*;
 pub mod marshal;
 use self::marshal::Load;
 
+mod fatptr;
+pub use self::fatptr::FatPtr;
+
 pub mod own;
 use self::own::Own;
 
