@@ -22,7 +22,7 @@ pub fn encode<T: ?Sized + Save<()>>(value: &T) -> Vec<u8> {
     }
 }
 
-pub fn decode<T: Decode<()>>(blob: &[u8]) -> Result<T, T::Error> {
+pub fn decode<T: Decode<!>>(blob: &[u8]) -> Result<T, T::Error> {
     let blob = Blob::new(blob, T::make_sized_metadata()).expect("wrong size");
 
     let mut validator = T::validate_blob(blob)?;
@@ -129,19 +129,19 @@ pub trait Encode<Q> : Sized {
     }
 }
 
-pub trait Decode<P> : Encode<P> {
+pub trait Decode<Q> : Encode<Q> {
     type Error;
 
-    type ValidateChildren : ValidateChildren<P>;
-    fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error>;
+    type ValidateChildren : ValidateChildren<Q>;
+    fn validate_blob<'p>(blob: Blob<'p, Self, Q>) -> Result<BlobValidator<'p, Self, Q>, Self::Error>;
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Self;
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Q>, loader: &impl LoadPtr<Q>) -> Self;
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Q>, loader: &impl LoadPtr<Q>) -> Ref<'p, Self> {
         Ref::Owned(Self::decode_blob(blob, loader))
     }
 
-    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
+    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, Q>) -> &'p Self
         where Self: Persist
     {
         todo!()
@@ -260,14 +260,19 @@ pub trait Dumper<Q> : Sized {
 }
 
 pub trait LoadPtr<P> {
+    fn load_blob<'a, T: ?Sized + Load<P>>(&self, ptr: &'a P, metadata: T::Metadata) -> FullyValidBlob<'a, T, P>;
 }
 
-impl<P, T: LoadPtr<P>> LoadPtr<P> for &'_ T {
+impl<P, L: LoadPtr<P>> LoadPtr<P> for &'_ L {
+    fn load_blob<'a, T: ?Sized + Load<P>>(&self, ptr: &'a P, metadata: T::Metadata) -> FullyValidBlob<'a, T, P> {
+        (*self).load_blob(ptr, metadata)
+    }
 }
 
-impl LoadPtr<()> for () {
-}
 impl LoadPtr<!> for () {
+    fn load_blob<'a, T: ?Sized + Load<!>>(&self, ptr: &'a !, _: T::Metadata) -> FullyValidBlob<'a, T, !> {
+        match *ptr {}
+    }
 }
 
 pub trait ValidatePtr<P> {

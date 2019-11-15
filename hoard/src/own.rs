@@ -8,7 +8,7 @@ use core::mem::{self, ManuallyDrop};
 use crate::marshal::*;
 use crate::marshal::blob::*;
 
-/// An owned pointer to a value in a `Zone`.
+/// An owned pointer.
 #[repr(C)]
 pub struct Own<T: ?Sized + Pointee, P: Ptr> {
     marker: PhantomData<T>,
@@ -73,7 +73,7 @@ pub enum EncodeOwnState<T: ?Sized + Save<Q>, Q: Encode<Q>> {
 }
 
 impl<T, P, Q> Encode<Q> for Own<T,P>
-where Q: Ptr + Encode<Q>,
+where Q: Encode<Q>,
       P: Ptr + Encode<Q>,
       T: ?Sized + Save<Q>,
 {
@@ -122,70 +122,45 @@ where Q: Ptr + Encode<Q>,
     }
 }
 
-/*
-impl<T: ?Sized + Pointee, Z: Zone> Own<T,Z> {
-    pub unsafe fn from_raw_parts(ptr: Z::Ptr, metadata: T::Metadata) -> Self {
-        Self {
-            marker: PhantomData,
-            ptr, metadata
-        }
-    }
-
-    pub fn metadata(&self) -> T::Metadata {
-        self.metadata
-    }
-
-    pub fn ptr(&self) -> &Z::Ptr {
-        &self.ptr
-    }
+pub enum DecodeOwnError<T: ?Sized + Load<Q>, P: Decode<Q>, Q> {
+    Ptr(P::Error),
+    Metadata(<T::Metadata as Primitive>::Error),
 }
 
-
-impl<T: ?Sized + Pointee, Z: Zone> Encode<Z> for Own<T,Z>
-where T: Save<Z>
-{
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(0);
-
-    type Encode = OwnEncoder<T, Z>;
-
-    fn encode(self) -> Self::Encode {
-        OwnEncoder::Own(self)
-    }
+pub enum OwnValidator<T: ?Sized + Load<Q>, Q> {
+    FatPtr {
+        ptr: Q,
+        metadata: T::Metadata,
+    },
+    Value(T::ValidateChildren),
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> EncodePoll for OwnEncoder<T,Z>
-where T: Save<Z>
+impl<T: ?Sized + Pointee, P: Ptr, Q> Decode<Q> for Own<T,P>
+where T: Load<Q>,
+      P: Decode<Q>,
+      Q: Decode<Q>,
 {
-    type Zone = Z;
-    type Target = Own<T, Z>;
+    type Error = DecodeOwnError<T,P,Q>;
 
-    fn poll<S>(&mut self, ptr_saver: &mut S) -> Poll<Result<(), S::Error>>
-        where S: Saver<Zone = Z>
-    {
-        match self {
-            OwnEncoder::Own(_) => {
-                if let OwnEncoder::Own(own) = mem::replace(self, OwnEncoder::Poisoned) {
-                    todo!()
-                } else {
-                    unreachable!()
-                }
-            },
-            OwnEncoder::Save(saver) => {
-                match saver.poll(ptr_saver)? {
-                    Poll::Ready((persist_ptr, metadata)) => {
-                        mem::replace(self, OwnEncoder::Done { persist_ptr, metadata });
-                        Ok(()).into()
-                    },
-                    Poll::Pending => Poll::Pending,
-                }
-            },
-            OwnEncoder::Done { .. } => Ok(()).into(),
-            OwnEncoder::Poisoned => panic!("{} poisoned", type_name::<Self>()),
-        }
+    type ValidateChildren = OwnValidator<T,Q>;
+    fn validate_blob<'a>(blob: Blob<'a, Self, Q>) -> Result<BlobValidator<'a, Self, Q>, Self::Error> {
+        todo!()
     }
 
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Q>, loader: &impl LoadPtr<Q>) -> Self {
         todo!()
     }
 }
-*/
+
+impl<T: ?Sized + Load<Q>, Q> ValidateChildren<Q> for OwnValidator<T,Q> {
+    fn validate_children<V>(&mut self, validator: &mut V) -> Result<(), V::Error>
+        where V: ValidatePtr<Q>
+    {
+        match self {
+            Self::FatPtr { ptr, metadata } => {
+                todo!()
+            },
+            Self::Value(value) => value.validate_children(validator),
+        }
+    }
+}

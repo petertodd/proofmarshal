@@ -135,6 +135,14 @@ impl<'p> Get for PileMut<'p> {
     }
 }
 
+impl<'p> LoadPtr<OffsetMut<'p>> for PileMut<'p> {
+    fn load_blob<'a, T: ?Sized + Load<OffsetMut<'p>>>(&self, offset: &'a OffsetMut<'p>, metadata: T::Metadata)
+        -> FullyValidBlob<'a, T, OffsetMut<'p>>
+    {
+        todo!()
+    }
+}
+
 #[derive(Debug)]
 pub struct Tx<'p> {
     pile: Pile<'p>,
