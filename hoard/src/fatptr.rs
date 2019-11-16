@@ -5,11 +5,12 @@ use core::cmp;
 use core::hash;
 
 use crate::marshal::{
+    Encode, Decode, Dumper, LoadPtr,
     Persist, Primitive,
     blob::{
         BlobLayout,
-        Blob, FullyValidBlob,
-        ValidatePrimitiveFields,
+        Blob, BlobValidator, FullyValidBlob,
+        ValidateFields,
         WriteBlob},
 };
 
@@ -25,38 +26,57 @@ where P: Persist,
 {}
 
 
-impl<T: ?Sized + Pointee, P> Primitive for FatPtr<T,P>
-where P: Primitive,
+impl<T: ?Sized + Pointee, P, Q> Encode<Q> for FatPtr<T,P>
+where P: Encode<Q>
 {
-    type Error = FatPtrError<T,P>;
-
     const BLOB_LAYOUT: BlobLayout = P::BLOB_LAYOUT.extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
 
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
-        dst.write_primitive(&self.raw)?
+    type State = P::State;
+
+    fn init_encode_state(&self) -> Self::State {
+        self.raw.init_encode_state()
+    }
+
+    fn encode_poll<D: Dumper<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
+        self.raw.encode_poll(state, dumper)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+        dst.write(&self.raw, state)?
            .write_primitive(&self.metadata)?
            .finish()
     }
+}
 
-    fn validate_blob<'p, Q>(blob: Blob<'p, Self, Q>) -> Result<FullyValidBlob<'p, Self, Q>, Self::Error> {
-        let mut fields = blob.validate_primitive_struct();
+impl<T: ?Sized + Pointee, P, Q> Decode<Q> for FatPtr<T,P>
+where P: Decode<Q>
+{
+    type Error = FatPtrError<P::Error, <T::Metadata as Primitive>::Error>;
 
-        fields.field::<P>().map_err(FatPtrError::Ptr)?;
-        fields.field::<T::Metadata>().map_err(FatPtrError::Metadata)?;
+    type ValidateChildren = P::ValidateChildren;
 
-        unsafe { Ok(fields.assume_fully_valid()) }
+    fn validate_blob<'p>(blob: Blob<'p, Self, Q>) -> Result<BlobValidator<'p, Self, Q>, Self::Error> {
+        let mut fields = blob.validate_struct();
+        let state = fields.field::<P>().map_err(FatPtrError::Ptr)?;
+        let _: () = fields.field::<T::Metadata>().map_err(FatPtrError::Metadata)?;
+
+        Ok(fields.done(state))
     }
 
-    fn decode_blob<'p, Q>(blob: FullyValidBlob<'p, Self, Q>) -> Self {
-        todo!()
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Q>, loader: &impl LoadPtr<Q>) -> Self {
+        let mut fields = blob.decode_struct(loader);
+        Self {
+            raw: fields.field(),
+            metadata: fields.field(),
+        }
     }
 }
 
-pub enum FatPtrError<T: ?Sized + Pointee, P: Primitive> {
-    Ptr(P::Error),
-    Metadata(<T::Metadata as Primitive>::Error),
+#[derive(Debug, PartialEq, Eq)]
+pub enum FatPtrError<P,M> {
+    Ptr(P),
+    Metadata(M),
 }
-
 
 // standard impls
 

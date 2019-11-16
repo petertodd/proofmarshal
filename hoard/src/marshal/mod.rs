@@ -104,7 +104,7 @@ pub trait Encode<Q> : Sized {
     fn encode_poll<D: Dumper<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>;
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>;
 
-    fn encode_own<T: ?Sized + Pointee>(own: &Own<T,Self>) -> Result<Q::State, <T as Save<Q>>::State>
+    fn encode_own<T: ?Sized + Pointee>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Q>>::State>
         where T: Save<Q>,
               Q: Encode<Q>,
               Self: Ptr
@@ -112,7 +112,7 @@ pub trait Encode<Q> : Sized {
         unimplemented!()
     }
 
-    fn encode_own_value<T, D>(own: &Own<T,Self>, state: &mut T::State, dumper: D) -> Result<(D, Q::State), D::Pending>
+    fn encode_own_value<T, D>(own: &Own<T,Self>, state: &mut T::State, dumper: D) -> Result<(D, Self::State), D::Pending>
         where T: ?Sized + Save<Q>,
               D: Dumper<Q>,
               Q: Encode<Q>,
@@ -145,6 +145,26 @@ pub trait Decode<Q> : Encode<Q> {
         where Self: Persist
     {
         todo!()
+    }
+
+    fn ptr_validate_blob<'a>(blob: Blob<'a, Self, Q>) -> Result<FullyValidBlob<'a, Self, Q>, Self::Error>
+        where Self: Ptr
+    {
+        unimplemented!()
+    }
+
+    fn ptr_decode_blob<'a>(blob: FullyValidBlob<'a, Self, Q>) -> Self
+        where Self: Ptr
+    {
+        unimplemented!()
+    }
+
+    fn ptr_validate_children<T, V>(ptr: &FatPtr<T,Self>, validator: &mut V) -> Result<Option<T::ValidateChildren>, V::Error>
+        where Self: Ptr,
+              T: ?Sized + Load<Q>,
+              V: ValidatePtr<Q>,
+    {
+        unimplemented!()
     }
 }
 
@@ -275,17 +295,18 @@ impl LoadPtr<!> for () {
     }
 }
 
-pub trait ValidatePtr<P> {
+pub trait ValidatePtr<Q> {
     type Error;
 
-    //fn validate_ptr<T: ?Sized + Load<P>>(&mut self, metadata: T::Metadata)
+    fn validate_ptr<T: ?Sized + Load<Q>>(&mut self, ptr: &FatPtr<T,Q>) -> Result<Option<T::ValidateChildren>, Self::Error>;
 }
 
 impl ValidatePtr<!> for () {
     type Error = !;
-}
-impl ValidatePtr<()> for () {
-    type Error = !;
+
+    fn validate_ptr<T: ?Sized + Load<!>>(&mut self, ptr: &FatPtr<T,!>) -> Result<Option<T::ValidateChildren>, !> {
+        match ptr.raw {}
+    }
 }
 
 impl Dumper<()> for Vec<u8> {

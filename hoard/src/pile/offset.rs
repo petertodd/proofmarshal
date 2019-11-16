@@ -19,11 +19,20 @@ use crate::marshal::{
     blob::*,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Offset<'p> {
-    marker: PhantomData<fn(&'p ()) -> &'p ()>,
+    marker: PhantomData<fn(&'p ())>,
     raw: Le<NonZeroU64>,
+}
+
+impl fmt::Debug for Offset<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        assert!(self.raw.get().get() & 1 == 1);
+        f.debug_tuple("Offset")
+            .field(&self.get())
+            .finish()
+    }
 }
 
 unsafe impl Persist for Offset<'_> {}
@@ -100,42 +109,54 @@ impl Encode<Self> for Offset<'_> {
     }
 }
 
-#[derive(Debug)]
-pub struct OffsetError(());
-
-impl TryFrom<u64> for Offset<'static> {
-    type Error = OffsetError;
-
-    fn try_from(raw: u64) -> Result<Self, Self::Error> {
-        Offset::new(raw).ok_or(OffsetError(()))
-    }
+#[derive(Debug, PartialEq, Eq)]
+pub enum DecodeOffsetError {
+    Ptr(u64),
+    OutOfRange(u64),
 }
 
 impl Decode<Self> for Offset<'_> {
-    type Error = OffsetError;
+    type Error = DecodeOffsetError;
 
     type ValidateChildren = ();
 
-    fn validate_blob<'q>(blob: Blob<'q, Self, Self>) -> Result<BlobValidator<'q, Self, Self>, Self::Error> {
+    fn validate_blob<'a>(blob: Blob<'a, Self, Self>) -> Result<BlobValidator<'a, Self, Self>, Self::Error> {
+        Self::ptr_validate_blob(blob)?;
+        Ok(blob.assume_valid(()))
+    }
+
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Self>, _: &impl LoadPtr<Self>) -> Self {
+        Self::ptr_decode_blob(blob)
+    }
+
+    fn deref_blob<'a>(blob: FullyValidBlob<'a, Self, Self>) -> &'a Self {
+        unsafe { blob.assume_valid() }
+    }
+
+    fn ptr_validate_blob<'a>(blob: Blob<'a, Self, Self>) -> Result<FullyValidBlob<'a, Self, Self>, Self::Error> {
         let mut raw = [0;8];
         raw.copy_from_slice(&blob[..]);
         let raw = u64::from_le_bytes(raw);
 
         if raw & 1 != 1 {
-            Err(OffsetError(()))
+            Err(DecodeOffsetError::Ptr(raw))
         } else {
-            Offset::try_from(raw >> 1)?;
+            let offset = raw >> 1;
+            Offset::new(offset).ok_or(DecodeOffsetError::OutOfRange(offset))?;
 
-            Ok(blob.assume_valid(()))
+            unsafe { Ok(blob.assume_fully_valid()) }
         }
     }
 
-    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Self>, _: &impl LoadPtr<Self>) -> Self {
+    fn ptr_decode_blob<'a>(blob: FullyValidBlob<'a, Self, Self>) -> Self {
         *<Self as Decode<Self>>::deref_blob(blob)
     }
 
-    fn deref_blob<'q>(blob: FullyValidBlob<'q, Self, Self>) -> &'q Self {
-        unsafe { blob.assume_valid() }
+    fn ptr_validate_children<T, V>(ptr: &FatPtr<T,Self>, validator: &mut V) -> Result<Option<T::ValidateChildren>, V::Error>
+        where T: ?Sized + Load<Self>,
+              V: ValidatePtr<Self>,
+    {
+        validator.validate_ptr(ptr)
     }
 }
 
@@ -281,7 +302,7 @@ impl<'p> Encode<Self> for OffsetMut<'p> {
     }
 
     fn encode_poll<D: Dumper<Self>>(&self, _: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
-        panic!()
+        Ok(dumper)
     }
 
     fn encode_blob<W: WriteBlob>(&self, offset: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
@@ -323,24 +344,33 @@ impl<'p> Encode<Self> for OffsetMut<'p> {
 }
 
 impl Decode<Self> for OffsetMut<'_> {
-    type Error = OffsetError;
+    type Error = DecodeOffsetError;
 
     type ValidateChildren = ();
 
     fn validate_blob<'q>(blob: Blob<'q, Self, Self>) -> Result<BlobValidator<'q, Self, Self>, Self::Error> {
-        let offset_blob = Blob::new(&blob[..], ()).unwrap();
-        <Offset as Decode<Offset>>::validate_blob(offset_blob)?;
-
+        Self::ptr_validate_blob(blob)?;
         Ok(blob.assume_valid(()))
     }
 
-    fn decode_blob<'q>(blob: FullyValidBlob<'q, Self, Self>, _: &impl LoadPtr<Self>) -> Self {
+    fn decode_blob(blob: FullyValidBlob<'_, Self, Self>, _: &impl LoadPtr<Self>) -> Self {
+        Self::ptr_decode_blob(blob)
+    }
+
+    fn deref_blob<'a>(blob: FullyValidBlob<'a, Self, Self>) -> &'a Self {
+        unsafe { blob.assume_valid() }
+    }
+
+    fn ptr_validate_blob<'a>(blob: Blob<'a, Self, Self>) -> Result<FullyValidBlob<'a, Self, Self>, Self::Error> {
+        let offset_blob = Blob::new(&blob[..], ()).unwrap();
+        <Offset as Decode<Offset>>::ptr_validate_blob(offset_blob)?;
+
+        unsafe { Ok(blob.assume_fully_valid()) }
+    }
+
+    fn ptr_decode_blob<'a>(blob: FullyValidBlob<'a, Self, Self>) -> Self {
         let inner = <Self as Decode<Self>>::deref_blob(blob).0;
         // TODO: add assertion
         Self(inner)
-    }
-
-    fn deref_blob<'q>(blob: FullyValidBlob<'q, Self, Self>) -> &'q Self {
-        unsafe { blob.assume_valid() }
     }
 }

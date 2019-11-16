@@ -39,7 +39,7 @@ impl<'p> From<Pile<'p>> for PileMut<'p> {
     }
 }
 
-impl Default for Pile<'static> {
+impl Default for Pile<'_> {
     fn default() -> Self {
         unsafe {
             Self::new_unchecked(&[])
@@ -47,7 +47,7 @@ impl Default for Pile<'static> {
     }
 }
 
-impl Default for PileMut<'static> {
+impl Default for PileMut<'_> {
     fn default() -> Self {
         Self {
             pile: Pile::default(),
@@ -149,46 +149,35 @@ pub struct Tx<'p> {
 }
 
 impl<'p> Tx<'p> {
-    pub fn save<T: Save<PileMut<'p>>>(&mut self, value: &T) -> Offset<'static> {
-        /*
+    pub fn save<T: Save<OffsetMut<'p>>>(self, value: &T) -> (Self, Offset<'static>) {
         let mut state = value.init_save_state();
 
-        assert!(saver.save_children(self).is_ready());
+        value.save_poll(&mut state, self).unwrap()
+    }
 
-        let metadata = saver.metadata();
-        let size = T::blob_layout(metadata).size();
+    pub fn commit<'q, T, U>(self, anchor: &'q mut Vec<u8>, value: &T) -> Result<(PileMut<'q>, U), U::Error>
+        where T: Save<OffsetMut<'p>>,
+              U: Load<OffsetMut<'q>>
+    {
+        let (mut this, offset) = self.save(value);
 
-        self.save_blob(size, |dst| {
-            saver.encode_blob(dst).unwrap()
-        }).unwrap()
+        anchor.clear();
+        anchor.extend_from_slice(this.pile.buf);
+        anchor.extend_from_slice(&this.written);
+        this.written.clear();
+
+        /*
+        unsafe {
+            let ptr = FatPtr {
+                raw: OffsetMut::from_offset(offset.coerce()),
+                metadata: T::make_sized_metadata(),
+            };
+
+            let new_pile = PileMut::from(Pile::new_unchecked(&anchor[..]));
+        }
         */
         todo!()
     }
-
-    /*
-    pub fn commit<'q: 'p, T>(&mut self, value: T, anchor: &'q mut Vec<u8>) -> (PileMut<'p>, T)
-        where T: Load<PileMut<'p>>
-    {
-        let offset = self.save(value);
-
-        anchor.clear();
-        anchor.extend_from_slice(self.pile.words());
-        anchor.extend_from_slice(&self.written);
-        self.written.clear();
-
-        unsafe {
-            self.pile = Pile::new_unchecked(&anchor[..]).into();
-
-            let pile: PileMut = Pile::new_unchecked(&anchor[..]).into();
-            let ptr = OffsetMut::from_offset(offset.coerce());
-
-            let own = Own::<T,PileMut<'p>>::from_raw_parts(ptr, T::make_sized_metadata());
-
-            let value = pile.take(own).take_sized();
-            (pile, value)
-        }
-    }
-    */
 
     fn real_save_blob(&mut self, size: usize, f: impl FnOnce(&mut [u8])) -> Offset<'static> {
         let start = self.written.len();
@@ -201,7 +190,7 @@ impl<'p> Tx<'p> {
     }
 }
 
-impl<'p> Dumper<PileMut<'p>> for Tx<'p> {
+impl<'p> Dumper<OffsetMut<'p>> for Tx<'p> {
     type Pending = !;
     type BlobPtr = Offset<'static>;
 
@@ -220,17 +209,6 @@ impl<'p> From<PileMut<'p>> for Tx<'p> {
     }
 }
 
-/*
-use crate::bag::Bag;
-pub fn test_bag<'p>(bag: &'p Bag<Bag<u8, PileMut<'p>>, PileMut<'p>>) -> Ref<'p, Bag<u8, PileMut<'p>>> {
-    bag.get()
-}
-
-pub fn test_bag2<'p>(bag: &'p Bag<(u8, Option<u64>), PileMut<'p>>) -> Ref<'p, (u8, Option<u64>)> {
-    bag.get()
-}
-*/
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -239,14 +217,44 @@ mod test {
 
     #[test]
     fn tx_save() {
-        let v1 = Bag::<u8, PileMut>::new(1u8);
-        let v2 = Bag::<u8, PileMut>::new(2u8);
-        let n1 = Bag::<_, PileMut>::new((v1, v2));
+        let mut pile = PileMut::default();
 
-        dbg!(n1);
+        let tx = Tx::from(pile);
+        let (tx, offset) = tx.save(&(1u8, 2u8, 3u8));
+        assert_eq!(offset.get(), 0);
+        assert_eq!(tx.written, &[1,2,3]);
 
-        let tx = Tx::from(PileMut::default());
-        //dbg!(tx.save(&n1));
+        let (tx, offset) = tx.save(&(4u8, 5u8, 6u8));
+        assert_eq!(offset.get(), 3);
+        assert_eq!(tx.written, &[1,2,3,4,5,6]);
+
+        let owned = pile.alloc(7u8);
+        let (tx, offset) = tx.save(&owned);
+        assert_eq!(offset.get(), 7);
+        assert_eq!(tx.written, &[1,2,3,4,5,6, // previously written
+                                 7, // new value
+                                 (6 << 1) + 1, // offset
+                                 0, 0, 0, 0, 0, 0, 0]); // rest of offset
+    }
+
+    #[test]
+    fn tx_commit() {
+        /*
+        let pile: PileMut<'_> = PileMut::default();
+        let tx = Tx::from(pile);
+
+        let (pile, owned) = tx.commit(&mut anchor1, &1u8);
+        assert_eq!(pile.pile.buf, &[1]);
+
+        let tx = Tx::from(pile);
+        let (mut pile, owned) = tx.commit(&mut anchor2, &owned);
+        assert_eq!(pile.pile.buf, &[1,1,0,0,0,0,0,0,0]);
+
+        let tuple = (owned, pile.alloc(2u8), pile.alloc(3u8), pile.alloc(4u8));
+        let tx = Tx::from(pile);
+        let (pile, owned) = tx.commit(&mut anchor3, &tuple);
+        //assert_eq!(pile.pile.buf, &[1,1,0,0,0,0,0,0,0]);
+        */
     }
 
     /*
