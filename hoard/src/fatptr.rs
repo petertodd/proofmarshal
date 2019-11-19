@@ -25,6 +25,12 @@ where P: Persist,
       T::Metadata: Persist,
 {}
 
+impl<T, P> From<P> for FatPtr<T,P> {
+    fn from(raw: P) -> Self {
+        Self { raw, metadata: () }
+    }
+}
+
 
 impl<T: ?Sized + Pointee, P, Q> Encode<Q> for FatPtr<T,P>
 where P: Encode<Q>

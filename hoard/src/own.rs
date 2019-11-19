@@ -161,20 +161,18 @@ pub enum OwnValidator<T: ?Sized + Load<Q>, P: Decode<Q>, Q> {
 impl<T: ?Sized + Load<Q>, P: Decode<Q>, Q> ValidateChildren<Q> for OwnValidator<T,P,Q>
 where P: Ptr
 {
-    fn validate_children<V>(&mut self, validator: &mut V) -> Result<(), V::Error>
+    fn validate_children<V>(&mut self, ptr_validator: &mut V) -> Result<(), V::Error>
         where V: ValidatePtr<Q>
     {
         loop {
             match self {
                 Self::Done => break Ok(()),
                 Self::FatPtr(fatptr) => {
-                    *self = match P::ptr_validate_children(fatptr, validator)? {
-                        None => Self::Done,
-                        Some(state) => Self::Value(state),
-                    };
+                    let blob_validator = P::ptr_validate_children(fatptr, ptr_validator)?;
+                    *self = Self::Value(blob_validator.into_state());
                 },
                 Self::Value(value) => {
-                    let _: () = value.validate_children(validator)?;
+                    let _: () = value.validate_children(ptr_validator)?;
                     *self = Self::Done;
                 }
             }

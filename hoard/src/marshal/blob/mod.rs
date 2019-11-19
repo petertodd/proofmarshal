@@ -268,10 +268,23 @@ impl<'a, T: ?Sized + Load<P>, P> BlobValidator<'a, T, P> {
                 unsafe { self.blob.assume_fully_valid() }
             )
     }
+
+    pub fn blob(&self) -> &ValidBlob<'a, T, P> {
+        &self.blob
+    }
+
+    pub fn state(&self) -> &T::ValidateChildren {
+        &self.state
+    }
+
+    pub fn into_state(self) -> T::ValidateChildren {
+        self.state
+    }
 }
 
-impl<'a, T: ?Sized + Load<Z>, Z: Zone> fmt::Debug for BlobValidator<'a, T, Z>
-where T::ValidateChildren: fmt::Debug
+impl<'a, T: ?Sized + Load<P>, P> fmt::Debug for BlobValidator<'a, T, P>
+where T::ValidateChildren: fmt::Debug,
+      P: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("BlobValidator")

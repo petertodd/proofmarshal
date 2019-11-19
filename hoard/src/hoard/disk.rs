@@ -1,6 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::convert::TryFrom;
 use std::fs::File;
+use std::fmt;
 use std::hash::Hash;
 use std::io::{self, Write, Seek, SeekFrom};
 use std::mem::size_of;
@@ -30,13 +31,13 @@ pub struct Mark(u64);
 
 #[derive(Debug, Clone)]
 pub struct Mapping {
-    mmap: Arc<Mmap>,
+    mapping: Arc<dyn fmt::Debug>,
     mapping_ptr: *const u8,
     mapping_len: usize,
 }
 
 impl Mapping {
-    fn new(fd: &File) -> io::Result<Self> {
+    pub fn from_file(fd: &File) -> io::Result<Self> {
         let mmap = unsafe { Mmap::map(&fd)? };
         assert!(mmap.len() >= size_of::<FileHeader>());
 
@@ -46,8 +47,24 @@ impl Mapping {
         Ok(Self {
             mapping_ptr: mapping.as_ptr(),
             mapping_len: mapping.len(),
-            mmap: Arc::new(mmap),
+            mapping: Arc::new(mmap),
         })
+    }
+
+    pub fn from_buf<B>(buf: B) -> Self
+        where B: 'static + AsRef<[u8]> + fmt::Debug,
+    {
+        // Important to do this first so as to pin down the buffer's memory location.
+        let buf = Arc::new(buf);
+
+        // Remember that as_ref() doesn't necessarily have to return the same slice each time, so
+        // we have to be careful to call as_ref() exactly once.
+        let slice = (*buf).as_ref();
+        Self {
+            mapping_ptr: slice.as_ptr(),
+            mapping_len: slice.len(),
+            mapping: buf,
+        }
     }
 
     pub fn mark_offsets(&self) -> impl DoubleEndedIterator<Item=usize> + '_ {
@@ -91,7 +108,7 @@ impl HoardFile {
         fd.seek(SeekFrom::Start(header_offset))?;
 
         Ok(HoardFile {
-            mapping: Mapping::new(&fd)?,
+            mapping: Mapping::from_file(&fd)?,
             fd,
         })
     }
@@ -192,7 +209,7 @@ impl<'f> Tx<'f> {
         let mark = offset_bytes_to_mark(self.written.unwrap());
         self.hoard.fd.write_all(&mark.to_le_bytes())?;
         self.hoard.fd.flush()?;
-        self.hoard.mapping = Mapping::new(&self.hoard.fd)?;
+        self.hoard.mapping = Mapping::from_file(&self.hoard.fd)?;
         Ok(())
     }
 }
