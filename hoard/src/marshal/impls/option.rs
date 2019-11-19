@@ -52,33 +52,11 @@ impl<P, T: Encode<P>> Encode<P> for Option<T> {
     }
 }
 
-pub enum OptionError<T: Load<P>, P> {
+#[derive(Debug)]
+pub enum OptionError<E> {
     Discriminant(u8),
     Padding,
-    Value(T::Error),
-}
-
-impl<T: Load<P>, P> fmt::Debug for OptionError<T, P>
-where T::Error: fmt::Debug
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            OptionError::Discriminant(d) => {
-                f.debug_tuple("Discriminant")
-                 .field(d)
-                 .finish()
-            },
-            OptionError::Padding => {
-                f.debug_tuple("Padding")
-                 .finish()
-            },
-            OptionError::Value(e) => {
-                f.debug_tuple("Value")
-                 .field(e)
-                 .finish()
-            }
-        }
-    }
+    Value(E),
 }
 
 fn zeroed(buf: &[u8]) -> bool {
@@ -86,7 +64,7 @@ fn zeroed(buf: &[u8]) -> bool {
 }
 
 impl<P, T: Decode<P>> Decode<P> for Option<T> {
-    type Error = OptionError<T, P>;
+    type Error = OptionError<T::Error>;
 
     type ValidateChildren = Option<T::ValidateChildren>;
 

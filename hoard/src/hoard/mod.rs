@@ -85,13 +85,13 @@ impl<'f> Snapshot<'f> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ValidatePtrError {
     Ptr {
         offset: Offset<'static, 'static>,
         size: usize,
     },
-    Value, // FIXME: should return the error
+    Value(Box<dyn crate::marshal::Error>),
 }
 
 impl<'s,'f> ValidatePtr<Offset<'s,'f>> for &'s Snapshot<'f> {
@@ -102,7 +102,7 @@ impl<'s,'f> ValidatePtr<Offset<'s,'f>> for &'s Snapshot<'f> {
     {
         let blob = self.try_get_blob(ptr)?;
         match T::validate_blob(blob) {
-            Err(_) => Err(ValidatePtrError::Value),
+            Err(e) => Err(ValidatePtrError::Value(Box::new(e))),
             Ok(validator) => Ok(validator),
         }
     }

@@ -4,6 +4,7 @@ use super::{
 };
 
 use core::convert::TryFrom;
+use core::fmt;
 use core::mem::{self, MaybeUninit};
 use core::slice;
 use core::num::{
@@ -14,7 +15,7 @@ use core::num::{
 use leint::Le;
 
 pub trait Primitive : Sized {
-    type Error;
+    type Error : super::Error;
 
     const BLOB_LAYOUT: BlobLayout;
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error>;

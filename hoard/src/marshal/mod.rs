@@ -39,8 +39,18 @@ pub unsafe trait Save<Q> : Pointee + Owned {
     fn save_poll<D: Dumper<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, D::BlobPtr), D::Pending>;
 }
 
+pub trait Error : 'static + Any + fmt::Debug + Send {
+    fn type_name(&self) -> &'static str;
+}
+
+impl<E: ?Sized + 'static + Any + fmt::Debug + Send> Error for E {
+    fn type_name(&self) -> &'static str {
+        core::any::type_name::<E>()
+    }
+}
+
 pub trait Load<P> : Save<P> {
-    type Error;
+    type Error : Error;
 
     type ValidateChildren : ValidateChildren<P>;
     fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error>;
@@ -106,7 +116,7 @@ pub trait Encode<Q> : Sized {
 }
 
 pub trait Decode<Q> : Encode<Q> {
-    type Error;
+    type Error : Error;
 
     type ValidateChildren : ValidateChildren<Q>;
     fn validate_blob<'p>(blob: Blob<'p, Self, Q>) -> Result<BlobValidator<'p, Self, Q>, Self::Error>;
