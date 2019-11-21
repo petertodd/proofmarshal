@@ -32,10 +32,12 @@ impl<T, P> From<P> for FatPtr<T,P> {
 }
 
 
-impl<T: ?Sized + Pointee, P, Q> Encode<Q> for FatPtr<T,P>
+unsafe impl<T: ?Sized + Pointee, P, Q> Encode<Q> for FatPtr<T,P>
 where P: Encode<Q>
 {
-    const BLOB_LAYOUT: BlobLayout = P::BLOB_LAYOUT.extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
+    fn blob_layout() -> BlobLayout {
+        P::blob_layout().extend(<T::Metadata as Primitive>::BLOB_LAYOUT)
+    }
 
     type State = P::State;
 

@@ -68,7 +68,7 @@ impl<'a, T: ?Sized + Pointee, P> Blob<'a, T, P> {
     pub fn new(buf: &'a [u8], metadata: T::Metadata) -> Option<Self>
         where T: Save<P>
     {
-        if buf.len() == T::blob_layout(metadata).size() {
+        if buf.len() == T::dyn_blob_layout(metadata).size() {
             unsafe { Some(Self::new_unchecked(buf, metadata)) }
         } else {
             None
@@ -124,7 +124,7 @@ impl<'a, T: ?Sized + Save<P>, P> Blob<'a, T, P> {
     fn as_bytes(&self) -> &'a [u8] {
         unsafe {
             slice::from_raw_parts(self.ptr,
-                                  T::blob_layout(self.metadata).size())
+                                  T::dyn_blob_layout(self.metadata).size())
         }
     }
 }
@@ -171,7 +171,7 @@ impl<T: ?Sized + Load<P>, P> fmt::Debug for BlobCursor<'_, T, P> {
 
 impl<'a, T: ?Sized + Load<P>, P> BlobCursor<'a, T, P> {
     pub fn field_blob<F: Decode<P>>(&mut self) -> Blob<'a, F, P> {
-        let size = F::BLOB_LAYOUT.size();
+        let size = F::blob_layout().size();
 
         let start = self.offset;
         self.offset += size;

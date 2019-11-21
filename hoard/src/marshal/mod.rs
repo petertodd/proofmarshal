@@ -31,7 +31,7 @@ pub fn decode<T: Decode<!>>(blob: &[u8]) -> Result<T, T::Error> {
 }
 
 pub unsafe trait Save<Q> : Pointee + Owned {
-    fn blob_layout(metadata: Self::Metadata) -> BlobLayout;
+    fn dyn_blob_layout(metadata: Self::Metadata) -> BlobLayout;
 
     type State;
     fn init_save_state(&self) -> Self::State;
@@ -81,8 +81,8 @@ impl<P> ValidateChildren<P> for () {
     }
 }
 
-pub trait Encode<Q> : Sized {
-    const BLOB_LAYOUT: BlobLayout;
+pub unsafe trait Encode<Q> : Sized {
+    fn blob_layout() -> BlobLayout;
 
     type State;
     fn init_encode_state(&self) -> Self::State;
@@ -157,10 +157,12 @@ pub trait Decode<Q> : Encode<Q> {
     }
 }
 
-impl<Q, T> Encode<Q> for T
+unsafe impl<Q, T> Encode<Q> for T
 where T: Primitive
 {
-    const BLOB_LAYOUT: BlobLayout = T::BLOB_LAYOUT;
+    fn blob_layout() -> BlobLayout {
+        T::BLOB_LAYOUT
+    }
 
     type State = ();
     fn init_encode_state(&self) -> () { }
@@ -202,8 +204,8 @@ where T: Primitive
 
 unsafe impl<P, T: Encode<P>> Save<P> for T {
     #[inline(always)]
-    fn blob_layout(_: ()) -> BlobLayout {
-        T::BLOB_LAYOUT
+    fn dyn_blob_layout(_: ()) -> BlobLayout {
+        T::blob_layout()
     }
 
     type State = T::State;
@@ -213,7 +215,7 @@ unsafe impl<P, T: Encode<P>> Save<P> for T {
 
     fn save_poll<D: SavePtr<P>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, D::BlobPtr), D::Pending> {
         let dumper = self.encode_poll(state, dumper)?;
-        dumper.save_blob(Self::blob_layout(()).size(), | dst | {
+        dumper.save_blob(Self::dyn_blob_layout(()).size(), | dst | {
             match self.encode_blob(state, dst) {
                 Ok(()) => (),
                 Err(never) => never,

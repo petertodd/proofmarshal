@@ -68,12 +68,14 @@ pub enum EncodeOwnState<T: ?Sized + Save<Q>, P: Encode<Q>, Q> {
     Ptr(P::State),
 }
 
-impl<T, P, Q> Encode<Q> for Own<T,P>
+unsafe impl<T, P, Q> Encode<Q> for Own<T,P>
 where Q: Encode<Q>,
       P: Ptr + Encode<Q>,
       T: ?Sized + Save<Q>,
 {
-    const BLOB_LAYOUT: BlobLayout = Q::BLOB_LAYOUT.extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
+    fn blob_layout() -> BlobLayout {
+        Q::blob_layout().extend(<T::Metadata as Primitive>::BLOB_LAYOUT)
+    }
 
     type State = EncodeOwnState<T, P, Q>;
 

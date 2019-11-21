@@ -101,8 +101,10 @@ impl fmt::Pointer for Offset<'_, '_> {
     }
 }
 
-impl Encode<Self> for Offset<'_,'_> {
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
+unsafe impl Encode<Self> for Offset<'_,'_> {
+    fn blob_layout() -> BlobLayout {
+        BlobLayout::new_nonzero(mem::size_of::<Self>())
+    }
 
     type State = ();
     fn init_encode_state(&self) -> Self::State {}

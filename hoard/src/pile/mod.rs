@@ -48,7 +48,7 @@ impl<'s,'p> ValidatePtr<Offset<'s,'p>> for Pile<'s,'p> {
         -> Result<Option<BlobValidator<'a, T, Offset<'s,'p>>>, Self::Error>
     where T: ?Sized + Load<Offset<'s,'p>>
     {
-        let size = T::blob_layout(ptr.metadata).size();
+        let size = T::dyn_blob_layout(ptr.metadata).size();
         let blob = self.get_blob(&ptr.raw, size)
                        .ok_or_else(||
                             ValidatePtrError::Offset {
@@ -73,7 +73,7 @@ impl<'s,'p> ValidatePtr<OffsetMut<'s,'p>> for PileMut<'s,'p> {
         match ptr.raw.kind() {
             Kind::Ptr(_) => Ok(None),
             Kind::Offset(offset) => {
-                let size = T::blob_layout(ptr.metadata).size();
+                let size = T::dyn_blob_layout(ptr.metadata).size();
                 let blob = self.get_blob(&offset, size)
                                .ok_or_else(||
                                     ValidatePtrError::Offset {
@@ -94,7 +94,7 @@ impl<'s,'p> LoadPtr<Offset<'s,'p>> for Pile<'s,'p> {
     fn load_blob<'a, T: ?Sized + Load<Offset<'s,'p>>>(&self, ptr: &'a ValidPtr<T, Offset<'s,'p>>)
         -> FullyValidBlob<'a, T, Offset<'s,'p>>
     {
-        let blob = self.get_blob(&ptr.raw, T::blob_layout(ptr.metadata).size())
+        let blob = self.get_blob(&ptr.raw, T::dyn_blob_layout(ptr.metadata).size())
                        .expect("invalid ValidPtr");
         let blob = Blob::new(blob, ptr.metadata).unwrap();
 
@@ -109,7 +109,7 @@ impl<'s,'p> LoadPtr<OffsetMut<'s,'p>> for PileMut<'s,'p> {
         match ptr.raw.kind() {
             Kind::Ptr(_) => panic!(),
             Kind::Offset(offset) => {
-                let blob = self.get_blob(&offset, T::blob_layout(ptr.metadata).size())
+                let blob = self.get_blob(&offset, T::dyn_blob_layout(ptr.metadata).size())
                                .expect("invalid ValidPtr");
                 let blob = Blob::new(blob, ptr.metadata).unwrap();
 

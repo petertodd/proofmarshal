@@ -107,7 +107,7 @@ impl<'h, T> Root<'h, T> {
         where T: Decode<Offset<'static, 'h>>
     {
         let offset = self.snapshot.mapping.len()
-                         .checked_sub(T::BLOB_LAYOUT.size())
+                         .checked_sub(T::blob_layout().size())
                          .map(|offset| Offset::new(offset).unwrap())
                          .ok_or(ValidateRootError::Offset)?;
 

@@ -11,16 +11,16 @@ macro_rules! tuple {
     () => ();
     ( $(($name:ident, $state:ident),)+ ) => {
         #[allow(non_snake_case)]
-        impl<Q, $($name: Encode<Q>),+ > Encode<Q> for ($($name,)+) {
-            const BLOB_LAYOUT: BlobLayout = {
+        unsafe impl<Q, $($name: Encode<Q>),+ > Encode<Q> for ($($name,)+) {
+            fn blob_layout() -> BlobLayout {
                 let layout = BlobLayout::new(0);
 
                 $(
-                    let layout = layout.extend(<$name as Encode<Q>>::BLOB_LAYOUT);
+                    let layout = layout.extend(<$name as Encode<Q>>::blob_layout());
                 )+
 
                 layout
-            };
+            }
 
             type State = ( $(<$name as Encode<Q>>::State,)+ );
             fn init_encode_state(&self) -> Self::State {

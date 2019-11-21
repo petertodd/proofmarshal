@@ -12,8 +12,18 @@ const fn option_blob_layout(inner: BlobLayout) -> BlobLayout {
     r[inner.has_niche() as usize]
 }
 
-impl<P, T: Encode<P>> Encode<P> for Option<T> {
-    const BLOB_LAYOUT: BlobLayout = option_blob_layout(T::BLOB_LAYOUT);
+unsafe impl<P, T: Encode<P>> Encode<P> for Option<T> {
+    fn blob_layout() -> BlobLayout {
+        let inner = T::blob_layout();
+
+        BlobLayout::new(
+            if inner.has_niche() {
+                inner.size()
+            } else {
+                1 + inner.size()
+            }
+        )
+    }
 
     type State = Option<T::State>;
 
@@ -32,15 +42,15 @@ impl<P, T: Encode<P>> Encode<P> for Option<T> {
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
         match (self, state) {
             (None, None) => {
-                if !Self::BLOB_LAYOUT.has_niche() {
+                if !T::blob_layout().has_niche() {
                     dst.write_bytes(&[0])?
                 } else {
                     dst
-                }.write_padding(T::BLOB_LAYOUT.size())?
+                }.write_padding(T::blob_layout().size())?
                  .finish()
             },
             (Some(value), Some(state)) => {
-                if !Self::BLOB_LAYOUT.has_niche() {
+                if !T::blob_layout().has_niche() {
                     dst.write_bytes(&[1])?
                 } else {
                     dst
@@ -69,7 +79,7 @@ impl<P, T: Decode<P>> Decode<P> for Option<T> {
     type ValidateChildren = Option<T::ValidateChildren>;
 
     fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
-        if let Some(niche) = T::BLOB_LAYOUT.niche() {
+        if let Some(niche) = T::blob_layout().niche() {
             let (left_padding, _) = blob.split_at(niche.start);
             let (_, right_padding) = blob.split_at(niche.end);
             let niche = &blob[niche];
@@ -99,7 +109,7 @@ impl<P, T: Decode<P>> Decode<P> for Option<T> {
     }
 
     fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Self {
-        if let Some(niche) = T::BLOB_LAYOUT.niche() {
+        if let Some(niche) = T::blob_layout().niche() {
             let niche = &blob[niche];
 
             if zeroed(niche) {
@@ -121,7 +131,7 @@ impl<P, T: Decode<P>> Decode<P> for Option<T> {
         where Self: Persist
     {
         assert_eq!(mem::align_of::<Self>(), 1);
-        assert_eq!(mem::size_of::<Self>(), Self::BLOB_LAYOUT.size());
+        assert_eq!(mem::size_of::<Self>(), Self::blob_layout().size());
 
         unsafe { blob.assume_valid() }
     }
