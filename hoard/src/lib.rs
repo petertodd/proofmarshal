@@ -25,12 +25,15 @@ use self::marshal::Load;
 mod fatptr;
 pub use self::fatptr::FatPtr;
 
+mod validptr;
+pub use self::validptr::ValidPtr;
+
 mod own;
 pub use self::own::Own;
 
 pub mod never;
 pub mod heap;
-//pub mod pile;
+pub mod pile;
 
 pub mod hoard;
 

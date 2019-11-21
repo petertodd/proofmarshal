@@ -13,29 +13,29 @@ use crate::marshal::blob::*;
 #[repr(C)]
 pub struct Own<T: ?Sized + Pointee, P: Ptr> {
     marker: PhantomData<T>,
-    inner: ManuallyDrop<FatPtr<T,P>>,
+    inner: ManuallyDrop<ValidPtr<T,P>>,
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> ops::Deref for Own<T,P> {
-    type Target = FatPtr<T,P>;
+    type Target = ValidPtr<T,P>;
 
-    fn deref(&self) -> &FatPtr<T,P> {
+    fn deref(&self) -> &ValidPtr<T,P> {
         &self.inner
     }
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> Own<T,P> {
-    pub unsafe fn new_unchecked(ptr: FatPtr<T,P>) -> Self {
+    pub unsafe fn new_unchecked(ptr: ValidPtr<T,P>) -> Self {
         Self {
             marker: PhantomData,
             inner: ManuallyDrop::new(ptr),
         }
     }
 
-    pub fn into_inner(self) -> FatPtr<T,P> {
+    pub fn into_inner(self) -> ValidPtr<T,P> {
         let mut this = ManuallyDrop::new(self);
 
-        unsafe { (&mut *this.inner as *mut FatPtr<T,P>).read() }
+        unsafe { (&mut *this.inner as *mut ValidPtr<T,P>).read() }
     }
 }
 
@@ -81,7 +81,7 @@ where Q: Encode<Q>,
         EncodeOwnState::Initial
     }
 
-    fn encode_poll<D: Dumper<Q>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: SavePtr<Q>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Pending> {
         loop {
             match state {
                 EncodeOwnState::Initial => {
@@ -147,7 +147,7 @@ where T: Load<Q>,
         let fatptr = fields.field();
 
         unsafe {
-            Self::new_unchecked(fatptr)
+            Self::new_unchecked(ValidPtr::new_unchecked(fatptr))
         }
     }
 }
@@ -168,8 +168,10 @@ where P: Ptr
             match self {
                 Self::Done => break Ok(()),
                 Self::FatPtr(fatptr) => {
-                    let blob_validator = P::ptr_validate_children(fatptr, ptr_validator)?;
-                    *self = Self::Value(blob_validator.into_state());
+                    *self = match P::ptr_validate_children(fatptr, ptr_validator)? {
+                        Some(blob_validator) => Self::Value(blob_validator.into_state()),
+                        None => Self::Done,
+                    };
                 },
                 Self::Value(value) => {
                     let _: () = value.validate_children(ptr_validator)?;

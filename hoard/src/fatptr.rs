@@ -5,7 +5,7 @@ use core::cmp;
 use core::hash;
 
 use crate::marshal::{
-    Encode, Decode, Dumper, LoadPtr,
+    Encode, Decode, SavePtr, LoadPtr,
     Persist, Primitive,
     blob::{
         BlobLayout,
@@ -43,7 +43,7 @@ where P: Encode<Q>
         self.raw.init_encode_state()
     }
 
-    fn encode_poll<D: Dumper<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: SavePtr<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
         self.raw.encode_poll(state, dumper)
     }
 

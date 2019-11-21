@@ -28,7 +28,7 @@ macro_rules! tuple {
                 ( $($name.init_encode_state(),)+ )
             }
 
-            fn encode_poll<D: Dumper<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
+            fn encode_poll<D: SavePtr<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
                 let ($(ref $name,)+) = self;
                 let ($(ref mut $state,)+) = state;
                 $(

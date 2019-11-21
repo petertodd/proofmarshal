@@ -21,7 +21,7 @@ impl<P, T: Encode<P>> Encode<P> for Option<T> {
         self.as_ref().map(T::init_encode_state)
     }
 
-    fn encode_poll<D: Dumper<P>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: SavePtr<P>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
         match (self, state) {
             (None, None) => Ok(dumper),
             (Some(value), Some(state)) => value.encode_poll(state, dumper),

@@ -36,7 +36,7 @@ pub unsafe trait Save<Q> : Pointee + Owned {
     type State;
     fn init_save_state(&self) -> Self::State;
 
-    fn save_poll<D: Dumper<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, D::BlobPtr), D::Pending>;
+    fn save_poll<D: SavePtr<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, D::BlobPtr), D::Pending>;
 }
 
 pub trait Error : 'static + Any + fmt::Debug + Send {
@@ -87,7 +87,7 @@ pub trait Encode<Q> : Sized {
     type State;
     fn init_encode_state(&self) -> Self::State;
 
-    fn encode_poll<D: Dumper<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>;
+    fn encode_poll<D: SavePtr<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>;
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>;
 
     fn encode_own<T: ?Sized + Pointee>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Q>>::State>
@@ -100,19 +100,21 @@ pub trait Encode<Q> : Sized {
 
     fn encode_own_value<T, D>(own: &Own<T,Self>, state: &mut T::State, dumper: D) -> Result<(D, Self::State), D::Pending>
         where T: ?Sized + Save<Q>,
-              D: Dumper<Q>,
+              D: SavePtr<Q>,
               Q: Encode<Q>,
               Self: Ptr
     {
         unimplemented!()
     }
 
-    fn encode_own_ptr<W: WriteBlob>(&self, ptr_state: &Q::State, dst: W) -> Result<W::Ok, W::Error>
+    /*
+    fn encode_own_ptr<W: WriteBlob>(&self, ptr_state: &Self::State, dst: W) -> Result<W::Ok, W::Error>
         where Q: Encode<Q>,
               Self: Ptr,
     {
         unimplemented!()
     }
+    */
 }
 
 pub trait Decode<Q> : Encode<Q> {
@@ -145,7 +147,8 @@ pub trait Decode<Q> : Encode<Q> {
         unimplemented!()
     }
 
-    fn ptr_validate_children<'p, T, V>(ptr: &'p FatPtr<T,Self>, validator: &mut V) -> Result<BlobValidator<'p, T, Q>, V::Error>
+    fn ptr_validate_children<'p, T, V>(ptr: &'p FatPtr<T,Self>, validator: &mut V)
+            -> Result<Option<BlobValidator<'p, T, Q>>, V::Error>
         where Self: Ptr,
               T: ?Sized + Load<Q>,
               V: ValidatePtr<Q>,
@@ -162,7 +165,7 @@ where T: Primitive
     type State = ();
     fn init_encode_state(&self) -> () { }
 
-    fn encode_poll<D: Dumper<Q>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: SavePtr<Q>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
         Ok(dumper)
     }
 
@@ -208,7 +211,7 @@ unsafe impl<P, T: Encode<P>> Save<P> for T {
         self.init_encode_state()
     }
 
-    fn save_poll<D: Dumper<P>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, D::BlobPtr), D::Pending> {
+    fn save_poll<D: SavePtr<P>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, D::BlobPtr), D::Pending> {
         let dumper = self.encode_poll(state, dumper)?;
         dumper.save_blob(Self::blob_layout(()).size(), | dst | {
             match self.encode_blob(state, dst) {
@@ -242,7 +245,7 @@ impl<P, T: Decode<P>> Load<P> for T {
     }
 }
 
-pub trait Dumper<Q> : Sized {
+pub trait SavePtr<Q> : Sized {
     type Pending;
     type BlobPtr : 'static + Any;
 
@@ -266,17 +269,17 @@ pub trait Dumper<Q> : Sized {
 }
 
 pub trait LoadPtr<P> {
-    fn load_blob<'a, T: ?Sized + Load<P>>(&self, ptr: &'a FatPtr<T,P>) -> FullyValidBlob<'a, T, P>;
+    fn load_blob<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T,P>) -> FullyValidBlob<'a, T, P>;
 }
 
 impl<P, L: LoadPtr<P>> LoadPtr<P> for &'_ L {
-    fn load_blob<'a, T: ?Sized + Load<P>>(&self, ptr: &'a FatPtr<T,P>) -> FullyValidBlob<'a, T, P> {
+    fn load_blob<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T,P>) -> FullyValidBlob<'a, T, P> {
         (*self).load_blob(ptr)
     }
 }
 
 impl LoadPtr<!> for () {
-    fn load_blob<'a, T: ?Sized + Load<!>>(&self, ptr: &'a FatPtr<T,!>) -> FullyValidBlob<'a, T, !> {
+    fn load_blob<'a, T: ?Sized + Load<!>>(&self, ptr: &'a ValidPtr<T,!>) -> FullyValidBlob<'a, T, !> {
         match ptr.raw {}
     }
 }
@@ -284,18 +287,21 @@ impl LoadPtr<!> for () {
 pub trait ValidatePtr<Q> {
     type Error;
 
-    fn validate_ptr<'p, T: ?Sized + Load<Q>>(&mut self, ptr: &'p FatPtr<T,Q>) -> Result<BlobValidator<'p, T, Q>, Self::Error>;
+    fn validate_ptr<'p, T: ?Sized + Load<Q>>(&mut self, ptr: &'p FatPtr<T,Q>)
+        -> Result<Option<BlobValidator<'p, T, Q>>, Self::Error>;
 }
 
 impl ValidatePtr<!> for () {
     type Error = !;
 
-    fn validate_ptr<'p, T: ?Sized + Load<!>>(&mut self, ptr: &'p FatPtr<T,!>) -> Result<BlobValidator<'p, T, !>, !> {
+    fn validate_ptr<'p, T: ?Sized + Load<!>>(&mut self, ptr: &'p FatPtr<T,!>)
+        -> Result<Option<BlobValidator<'p, T, !>>, !>
+    {
         match ptr.raw {}
     }
 }
 
-impl Dumper<()> for Vec<u8> {
+impl SavePtr<()> for Vec<u8> {
     type Pending = !;
     type BlobPtr = ();
 

@@ -44,10 +44,13 @@ impl Alloc for Heap {
         src.take_unsized(|src| unsafe {
             let metadata = T::metadata(src);
             Own::new_unchecked(
-                FatPtr {
-                    raw: HeapPtr::alloc::<T>(src),
-                    metadata
-                })
+                ValidPtr::new_unchecked(
+                    FatPtr {
+                        raw: HeapPtr::alloc::<T>(src),
+                        metadata
+                    }
+                )
+            )
         })
     }
 
@@ -69,7 +72,7 @@ impl Ptr for HeapPtr {
     }
 
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: Own<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
-        let FatPtr { raw: Self(non_null), metadata } = owned.into_inner();
+        let FatPtr { raw: Self(non_null), metadata } = owned.into_inner().into();
 
         unsafe {
             let r: &mut T = &mut *T::make_fat_ptr_mut(non_null.as_ptr(), metadata);

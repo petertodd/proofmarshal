@@ -6,6 +6,7 @@ use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
 use core::num::NonZeroU64;
 use core::ptr::{self, NonNull};
+use core::ops;
 
 use std::alloc::Layout;
 
@@ -14,19 +15,24 @@ use leint::Le;
 use super::*;
 
 use crate::marshal::{
-    Encode, Save, Dumper,
+    Encode, Save, SavePtr,
     Persist,
     blob::*,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Offset<'p> {
-    marker: PhantomData<fn(&'p ())>,
+pub struct Offset<'s, 'p> {
+    marker: PhantomData<(
+         fn(&'s ()),
+         fn(&'p ()) -> &'p (),
+        )>,
     raw: Le<NonZeroU64>,
 }
 
-impl fmt::Debug for Offset<'_> {
+unsafe impl Persist for Offset<'_,'_> {}
+
+impl fmt::Debug for Offset<'_,'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         assert!(self.raw.get().get() & 1 == 1);
         f.debug_tuple("Offset")
@@ -35,13 +41,18 @@ impl fmt::Debug for Offset<'_> {
     }
 }
 
-unsafe impl Persist for Offset<'_> {}
+impl From<Offset<'_, '_>> for usize {
+    fn from(offset: Offset<'_,'_>) -> usize {
+        offset.get()
+    }
+}
 
-impl<'p> Offset<'p> {
-    pub const MAX: u64 = (1 << 62) - 1;
+impl Offset<'_,'_> {
+    pub const MAX: usize = (1 << 62) - 1;
 
-    pub fn new(offset: u64) -> Option<Self> {
+    pub fn new(offset: usize) -> Option<Self> {
         if offset <= Self::MAX {
+            let offset = offset as u64;
             Some(Self {
                 marker: PhantomData,
                 raw: NonZeroU64::new((offset << 1) | 1).unwrap().into(),
@@ -51,26 +62,31 @@ impl<'p> Offset<'p> {
         }
     }
 
-    pub fn persist(self) -> Offset<'static> {
+    pub fn to_static(&self) -> Offset<'static, 'static> {
         Offset {
             marker: PhantomData,
             raw: self.raw,
         }
     }
 
-    pub fn get(self) -> u64 {
-        self.raw.get().get() >> 1
-    }
-
-    pub unsafe fn coerce<'q>(self) -> Offset<'q> {
-        Offset {
-            marker: PhantomData,
-            raw: self.raw,
-        }
+    pub fn get(&self) -> usize {
+        (self.raw.get().get() >> 1) as usize
     }
 }
 
-impl Ptr for Offset<'_> {
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct OffsetMut<'s,'p>(Offset<'s,'p>);
+unsafe impl Persist for OffsetMut<'_,'_> {}
+
+
+impl<'s, 'p> From<Offset<'s,'p>> for OffsetMut<'s,'p> {
+    fn from(offset: Offset<'s,'p>) -> Self {
+        Self(offset)
+    }
+}
+
+impl Ptr for Offset<'_, '_> {
     fn dealloc_own<T: ?Sized + Pointee>(own: Own<T, Self>) {
         let _ = own.into_inner();
     }
@@ -79,19 +95,19 @@ impl Ptr for Offset<'_> {
     }
 }
 
-impl fmt::Pointer for Offset<'_> {
+impl fmt::Pointer for Offset<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:x}", self.get())
     }
 }
 
-impl Encode<Self> for Offset<'_> {
+impl Encode<Self> for Offset<'_,'_> {
     const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
 
     type State = ();
     fn init_encode_state(&self) -> Self::State {}
 
-    fn encode_poll<D: Dumper<Self>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: SavePtr<Self>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
         Ok(dumper)
     }
 
@@ -104,10 +120,15 @@ impl Encode<Self> for Offset<'_> {
         Ok(())
     }
 
+    /*
     fn encode_own_ptr<W: WriteBlob>(&self, _: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        self.encode_blob(&(), dst)
+        dst.write_bytes(&self.raw.get().get().to_le_bytes())?
+           .finish()
     }
+    */
 }
+
+/*
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum DecodeOffsetError {
@@ -160,22 +181,22 @@ impl Decode<Self> for Offset<'_> {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct OffsetMut<'p>(Offset<'p>);
+*/
 
-unsafe impl Persist for OffsetMut<'_> {}
-
-impl Ptr for OffsetMut<'_> {
+impl Ptr for OffsetMut<'_, '_> {
     fn dealloc_own<T: ?Sized + Pointee>(owned: Own<T, Self>) {
+        /*
         Self::drop_take_unsized(owned, |value|
             unsafe {
                 core::ptr::drop_in_place(value)
             }
         )
+        */
+        todo!()
     }
 
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: Own<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
+        /*
         let FatPtr { raw, metadata } = owned.into_inner();
 
         match raw.kind() {
@@ -194,12 +215,14 @@ impl Ptr for OffsetMut<'_> {
                 }
             }
         }
+        */
+        todo!()
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Kind<'p> {
-    Offset(Offset<'p>),
+pub enum Kind<'s,'p> {
+    Offset(Offset<'s,'p>),
     Ptr(NonNull<u16>),
 }
 
@@ -212,11 +235,7 @@ fn fix_layout(layout: Layout) -> Layout {
     }
 }
 
-impl<'p> OffsetMut<'p> {
-    pub fn from_offset(offset: Offset<'p>) -> Self {
-        Self(offset)
-    }
-
+impl<'s,'p> OffsetMut<'s,'p> {
     pub unsafe fn from_ptr(ptr: NonNull<u16>) -> Self {
         let raw = ptr.as_ptr() as usize as u64;
 
@@ -226,7 +245,7 @@ impl<'p> OffsetMut<'p> {
         mem::transmute(ptr.as_ptr() as usize as u64)
     }
 
-    pub fn kind(&self) -> Kind<'p> {
+    pub fn kind(&self) -> Kind<'s,'p> {
         match self.0.raw.get().get() & 1 {
             1 => Kind::Offset(self.0),
             0 => Kind::Ptr(unsafe {
@@ -256,7 +275,7 @@ impl<'p> OffsetMut<'p> {
     }
 
 
-    pub(super) unsafe fn try_take<T: ?Sized + Pointee + Owned>(self, metadata: T::Metadata) -> Result<T::Owned, Offset<'p>> {
+    pub(super) unsafe fn try_take<T: ?Sized + Pointee + Owned>(self, metadata: T::Metadata) -> Result<T::Owned, Offset<'s,'p>> {
         let this = ManuallyDrop::new(self);
 
         match this.kind() {
@@ -278,21 +297,19 @@ impl<'p> OffsetMut<'p> {
     }
 }
 
-impl fmt::Debug for OffsetMut<'_> {
+impl fmt::Debug for OffsetMut<'_,'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&self.kind(), f)
     }
 }
 
-impl fmt::Pointer for OffsetMut<'_> {
+impl fmt::Pointer for OffsetMut<'_,'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.kind() {
-            Kind::Offset(offset) => write!(f, "Offset({:p})", offset),
-            Kind::Ptr(ptr) => write!(f, "Ptr({:p})", ptr),
-        }
+        fmt::Debug::fmt(self, f)
     }
 }
 
+/*
 impl<'p> Encode<Self> for OffsetMut<'p> {
     const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
 
@@ -301,7 +318,7 @@ impl<'p> Encode<Self> for OffsetMut<'p> {
         panic!()
     }
 
-    fn encode_poll<D: Dumper<Self>>(&self, _: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: SavePtr<Self>>(&self, _: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
         Ok(dumper)
     }
 
@@ -321,7 +338,7 @@ impl<'p> Encode<Self> for OffsetMut<'p> {
 
     fn encode_own_value<T, D>(own: &Own<T,Self>, state: &mut T::State, dumper: D) -> Result<(D, Self::State), D::Pending>
         where T: ?Sized + Save<Self>,
-              D: Dumper<Self>
+              D: SavePtr<Self>
     {
         match own.raw.kind() {
             Kind::Ptr(ptr) => {
@@ -374,3 +391,4 @@ impl Decode<Self> for OffsetMut<'_> {
         Self(inner)
     }
 }
+*/

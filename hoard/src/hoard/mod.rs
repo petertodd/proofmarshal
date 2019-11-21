@@ -1,22 +1,17 @@
 use std::convert::TryInto;
 use std::fmt;
-use std::io;
+use std::fs::{File, OpenOptions};
+use std::path::Path;
+use std::io::{self, Write, Read, Seek, SeekFrom};
 use std::marker::PhantomData;
 use std::mem;
 use std::slice;
+use std::ops::{self, Range};
 use std::sync::Arc;
 
 use memmap::Mmap;
 
 use owned::{Ref, Take};
-
-use crate::marshal::{
-    Load, LoadPtr, ValidatePtr,
-    blob::{
-        Blob, BlobValidator,
-        FullyValidBlob,
-    }
-};
 
 use crate::{
     Alloc,
@@ -24,46 +19,270 @@ use crate::{
     FatPtr,
     Zone,
     own::Own,
+    bag::Bag,
+    pile::*,
     pointee::Pointee,
     never::NeverAllocator,
+    marshal::{*, blob::*},
 };
 
 pub mod disk;
 use self::disk::*;
-pub use self::disk::HoardFile;
-
-mod offset;
-pub use self::offset::*;
-
 
 #[derive(Debug)]
-pub struct Hoard<'f> {
-    backend: &'f mut HoardFile,
+pub struct Hoard<'h, V = ()> {
+    marker: PhantomData<fn(V)>,
+    anchor: &'h mut (),
+    fd: File,
+    snapshot: Snapshot<'h>,
 }
 
-impl<'f> Hoard<'f> {
-    pub unsafe fn new_unchecked(backend: &'f mut HoardFile) -> Self {
-        Self { backend }
+#[derive(Debug)]
+pub struct HoardMut<'h, V = ()>(Hoard<'h, V>);
+
+impl<V: Flavor> Hoard<'static, V> {
+    pub fn open<F, R>(path: impl AsRef<Path>, f: F) -> io::Result<R>
+        where F: for<'h> FnOnce(Hoard<'h, V>) -> R
+    {
+        let fd = OpenOptions::new()
+                    .read(true)
+                    .open(path)?;
+
+        Self::open_fd(fd, f)
     }
 
-    pub fn snapshot(&self) -> Snapshot<'f> {
+    pub fn open_fd<F, R>(mut fd: File, f: F) -> io::Result<R>
+        where F: for<'h> FnOnce(Hoard<'h, V>) -> R
+    {
+        fd.seek(SeekFrom::Start(0))?;
+        let header = FileHeader::<V>::read(&mut fd)?;
+
+        // TODO: where should we validate header version etc?
+
+        fd.seek(SeekFrom::End(0))?;
+
+        let mut anchor = ();
         unsafe {
-            Snapshot::new(self.backend.mapping.clone())
+            let this = Hoard::new_unchecked(fd, &mut anchor)?;
+            Ok(f(this))
         }
     }
 }
 
+impl<'h, V> Hoard<'h, V> {
+    unsafe fn new_unchecked(fd: File, anchor: &'h mut ()) -> io::Result<Self> {
+        Ok(Self {
+            marker: PhantomData,
+            anchor,
+            snapshot: Snapshot::new(Mapping::from_file(&fd)?),
+            fd,
+        })
+    }
+
+    pub fn roots<T>(&self) -> IterRoots<'h, T> {
+        IterRoots::new(self.snapshot.clone())
+    }
+}
+
+#[derive(Debug)]
+pub struct Root<'h, T> {
+    marker: PhantomData<fn() -> T>,
+    snapshot: Snapshot<'h>,
+}
+
+impl<'h, T> Root<'h, T> {
+    fn new(snapshot: Snapshot<'h>) -> Self {
+        Self { marker: PhantomData, snapshot }
+    }
+}
+
+#[derive(Debug)]
+pub enum ValidateRootError<E> {
+    Offset,
+    Root(E),
+}
+
+impl<'h, T> Root<'h, T> {
+    pub fn validate<'a>(&'a self) -> Result<Ref<'a, T>, ValidateRootError<T::Error>>
+        where T: Decode<Offset<'static, 'h>>
+    {
+        let offset = self.snapshot.mapping.len()
+                         .checked_sub(T::BLOB_LAYOUT.size())
+                         .map(|offset| Offset::new(offset).unwrap())
+                         .ok_or(ValidateRootError::Offset)?;
+
+        let pile = self.snapshot.pile();
+
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+pub struct RootMut<'h, T>(Root<'h, T>);
+
 #[derive(Debug, Clone)]
-pub struct Snapshot<'f> {
-    marker: PhantomData<&'f mut ()>,
+pub struct IterRoots<'h, T> {
+    marker: PhantomData<fn() -> T>,
+    snapshot: Snapshot<'h>,
+    idx_front: usize,
+    idx_back: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct IterRootsMut<'h, T>(IterRoots<'h,T>);
+
+
+impl<'h, T> IterRoots<'h, T> {
+    pub fn new(snapshot: Snapshot<'h>) -> Self {
+        let marks = snapshot.mapping.as_marks();
+        Self {
+            marker: PhantomData,
+            idx_front: 0,
+            idx_back: marks.len().saturating_sub(1),
+            snapshot,
+        }
+    }
+}
+
+impl<'h, T> Iterator for IterRoots<'h, T> {
+    type Item = Root<'h, T>;
+
+    fn next(&mut self) -> Option<Root<'h, T>> {
+        debug_assert!(self.idx_front <= self.idx_back);
+
+        if self.idx_front == self.idx_back {
+            None
+        } else if self.snapshot.mapping.as_marks()[self.idx_front].is_valid(self.idx_front) {
+            let mut root_snap = self.snapshot.clone();
+            root_snap.truncate(self.idx_front * mem::size_of::<Mark>());
+
+            self.idx_front += 1;
+            Some(Root::new(root_snap))
+        } else {
+            None
+        }
+    }
+}
+
+impl<'h, T> DoubleEndedIterator for IterRoots<'h, T> {
+    fn next_back(&mut self) -> Option<Root<'h, T>> {
+        debug_assert!(self.idx_front <= self.idx_back);
+        if self.idx_front == self.idx_back {
+            None
+        } else if self.snapshot.mapping.as_marks()[self.idx_back].is_valid(self.idx_back) {
+            let mut root_snap = self.snapshot.clone();
+            root_snap.truncate(self.idx_back * mem::size_of::<Mark>());
+
+            self.idx_back -= 1;
+            Some(Root::new(root_snap))
+        } else {
+            None
+        }
+    }
+}
+
+impl<'h, T> Iterator for IterRootsMut<'h, T> {
+    type Item = RootMut<'h, T>;
+
+    fn next(&mut self) -> Option<RootMut<'h, T>> {
+        self.0.next().map(|root| RootMut(root))
+    }
+}
+
+impl<'h, T> DoubleEndedIterator for IterRootsMut<'h, T> {
+    fn next_back(&mut self) -> Option<RootMut<'h, T>> {
+        self.0.next_back().map(|root| RootMut(root))
+    }
+}
+
+impl<V: Flavor> HoardMut<'static, V> {
+    pub fn create<F, R>(path: impl AsRef<Path>, f: F) -> io::Result<R>
+        where F: for<'h> FnOnce(HoardMut<'h, V>) -> R
+    {
+        let mut fd = OpenOptions::new()
+                        .read(true)
+                        .append(true)
+                        .create_new(true)
+                        .open(path)?;
+
+        let header = FileHeader::<V>::default();
+
+        fd.write_all(header.as_bytes())?;
+
+        Self::open_fd(fd, f)
+    }
+
+    pub fn open<F, R>(path: impl AsRef<Path>, f: F) -> io::Result<R>
+        where F: for<'h> FnOnce(HoardMut<'h, V>) -> R
+    {
+        let fd = OpenOptions::new()
+                    .read(true)
+                    .append(true)
+                    .open(path)?;
+
+        Self::open_fd(fd, f)
+    }
+
+    pub fn open_fd<F, R>(mut fd: File, f: F) -> io::Result<R>
+        where F: for<'h> FnOnce(HoardMut<'h, V>) -> R
+    {
+        fd.seek(SeekFrom::Start(0))?;
+        let header = FileHeader::<V>::read(&mut fd)?;
+
+        // TODO: where should we validate header version etc?
+
+        fd.seek(SeekFrom::End(0))?;
+
+        let mut anchor = ();
+        unsafe {
+            let this = HoardMut(Hoard::new_unchecked(fd, &mut anchor)?);
+            Ok(f(this))
+        }
+    }
+}
+
+impl<'h, V> HoardMut<'h, V> {
+    pub fn roots_mut<T>(&self) -> IterRootsMut<'h, T> {
+        IterRootsMut(self.roots())
+    }
+
+    pub fn push_root<T>(&mut self, root: T) {
+        todo!()
+    }
+}
+
+impl<'h, V> ops::Deref for HoardMut<'h, V> {
+    type Target = Hoard<'h,V>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+
+#[derive(Debug, Clone)]
+pub struct Snapshot<'h> {
+    marker: PhantomData<&'h mut ()>,
     mapping: Mapping,
 }
 
-impl<'f> Snapshot<'f> {
+impl<'h> Snapshot<'h> {
     unsafe fn new(mapping: Mapping) -> Self {
         Self { marker: PhantomData, mapping, }
     }
 
+    fn truncate(&mut self, len: usize) {
+        self.mapping.truncate(len)
+    }
+
+    fn pile<'s>(&'s self) -> Pile<'s, 'h> {
+        unsafe {
+            Pile::new_unchecked(&self.mapping.slice())
+        }
+    }
+}
+
+/*
     pub fn roots(&self) -> impl DoubleEndedIterator<Item=Root<'f>> + '_ {
         let cloned = self.clone();
         self.mapping.mark_offsets()
@@ -141,6 +360,7 @@ impl<'s,'f> Get for &'s Snapshot<'f> {
         T::decode_blob(blob, self)
     }
 }
+*/
 
 #[derive(Debug)]
 pub struct SnapshotMut<'f>(Snapshot<'f>);
@@ -150,6 +370,8 @@ impl<'f> From<Snapshot<'f>> for SnapshotMut<'f> {
         Self(snapshot)
     }
 }
+
+/*
 
 impl<'s,'f> ValidatePtr<OffsetMut<'s,'f>> for &'s SnapshotMut<'f> {
     type Error = ValidatePtrError;
@@ -309,3 +531,4 @@ mod tests {
         })
     }
 }
+*/

@@ -1,58 +1,112 @@
-use std::collections::hash_map::DefaultHasher;
 use std::convert::TryFrom;
-use std::fs::File;
+use std::marker::PhantomData;
+use std::fs::{File, OpenOptions};
+use std::path::Path;
 use std::fmt;
 use std::hash::Hash;
-use std::io::{self, Write, Seek, SeekFrom};
-use std::mem::size_of;
+use std::io::{self, Read, Write, Seek, SeekFrom};
+use std::mem::{self, size_of};
 use std::ops;
 use std::slice;
 use std::sync::Arc;
 
 use memmap::Mmap;
 
+use leint::Le;
+
 use super::Hoard;
 
-#[repr(C)]
-#[derive(Default, Debug)]
-pub struct FileHeader {
-    magic: [u8;16],
+pub trait Flavor : 'static + fmt::Debug + Send + Sync {
+    const MAGIC: [u8; 16];
+    const MIN_VERSION: u16;
+    const MAX_VERSION: u16;
 }
 
-impl FileHeader {
-    pub fn as_bytes(&self) -> &[u8; size_of::<Self>()] {
-        unsafe { &*(self as *const _ as *const _) }
+impl Flavor for () {
+    const MAGIC: [u8; 16] = [0; 16];
+    const MIN_VERSION: u16 = 0;
+    const MAX_VERSION: u16 = 0;
+}
+
+const MAGIC: [u8;12] = *b"\x00Hoard File\x00";
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct FileHeader<V=()> {
+    marker: PhantomData<fn(V)>,
+    pub magic: [u8;12],
+    pub version: Le<u16>,
+    pub flavor_version: Le<u16>,
+    pub flavor_magic: [u8;16],
+}
+
+impl<V: Flavor> Default for FileHeader<V> {
+    fn default() -> Self {
+        Self {
+            marker: PhantomData,
+            magic: MAGIC,
+            version: 0.into(),
+            flavor_magic: V::MAGIC,
+            flavor_version: V::MAX_VERSION.into(),
+        }
+    }
+}
+
+impl<V> FileHeader<V> {
+    pub fn as_bytes(&self) -> &[u8; size_of::<FileHeader>()] {
+        unsafe {
+            &*(self as *const _ as *const _)
+        }
+    }
+
+    pub fn read(mut fd: impl Read) -> io::Result<Self> {
+        let mut buf = [0u8; size_of::<FileHeader>()];
+
+        fd.read_exact(&mut buf)?;
+
+        let this: Self = unsafe { mem::transmute(buf) };
+
+        // TODO: where should we validate magic/version exactly?
+        Ok(this)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct Mark(u64);
+pub struct Mark(Le<u64>);
+
+impl Mark {
+    pub fn new(mark_offset: usize) -> Self {
+        Self((u64::max_value() - mark_offset as u64).into())
+    }
+
+    pub fn is_valid(&self, mark_offset: usize) -> bool {
+        *self == Self::new(mark_offset)
+    }
+}
+
 
 #[derive(Debug, Clone)]
 pub struct Mapping {
-    mapping: Arc<dyn fmt::Debug>,
-    mapping_ptr: *const u8,
-    mapping_len: usize,
+    mapping: Arc<dyn fmt::Debug + Send + Sync>,
+    slice: &'static [u8],
 }
 
 impl Mapping {
     pub fn from_file(fd: &File) -> io::Result<Self> {
-        let mmap = unsafe { Mmap::map(&fd)? };
-        assert!(mmap.len() >= size_of::<FileHeader>());
+        let mapping = unsafe { Mmap::map(&fd)? };
 
-        let mapping = mmap.get(size_of::<FileHeader>() .. )
-                          .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing header"))?;
+        let slice = mapping.get(size_of::<FileHeader>() .. )
+                           .expect("missing header");
 
         Ok(Self {
-            mapping_ptr: mapping.as_ptr(),
-            mapping_len: mapping.len(),
-            mapping: Arc::new(mmap),
+            slice: unsafe { mem::transmute(slice) },
+            mapping: Arc::new(mapping),
         })
     }
 
     pub fn from_buf<B>(buf: B) -> Self
-        where B: 'static + AsRef<[u8]> + fmt::Debug,
+        where B: 'static + AsRef<[u8]> + fmt::Debug + Send + Sync,
     {
         // Important to do this first so as to pin down the buffer's memory location.
         let buf = Arc::new(buf);
@@ -61,24 +115,27 @@ impl Mapping {
         // we have to be careful to call as_ref() exactly once.
         let slice = (*buf).as_ref();
         Self {
-            mapping_ptr: slice.as_ptr(),
-            mapping_len: slice.len(),
+            slice: unsafe { mem::transmute(slice) },
             mapping: buf,
         }
     }
 
-    pub fn mark_offsets(&self) -> impl DoubleEndedIterator<Item=usize> + '_ {
-        self.chunks_exact(size_of::<Mark>()).enumerate()
-            .filter_map(|(offset_words, chunk)| {
-                let chunk = <[u8; size_of::<Mark>()]>::try_from(chunk).unwrap();
-                let potential_mark = u64::from_le_bytes(chunk);
+    pub fn as_marks(&self) -> &[Mark] {
+        unsafe {
+            let (prefix, marks, _padding) = self.align_to();
+            assert_eq!(prefix.len(), 0);
+            marks
+        }
+    }
 
-                if offset_words_to_mark(offset_words) == potential_mark {
-                    Some(offset_words * size_of::<u64>())
-                } else {
-                    None
-                }
-            })
+    pub fn truncate(&mut self, len: usize) {
+        if let Some(slice) = self.slice.get(0 .. len) {
+            self.slice = slice;
+        }
+    }
+
+    pub fn slice(&self) -> &&[u8] {
+        &self.slice
     }
 }
 
@@ -86,18 +143,42 @@ impl ops::Deref for Mapping {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.mapping_ptr, self.mapping_len) }
+        self.slice()
     }
 }
 
+/*
 #[derive(Debug)]
 pub struct HoardFile {
     fd: File,
     pub(super) mapping: Mapping,
-
 }
 
 impl HoardFile {
+    pub fn create(path: impl AsRef<Path>) -> io::Result<Self> {
+        let fd = OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(path)?;
+        Self::create_from_fd(fd)
+    }
+
+    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
+        let fd = OpenOptions::new()
+            .append(true)
+            .open(path)?;
+        Self::open_fd(fd)
+    }
+
+    pub fn open_fd(mut fd: File) -> io::Result<Self> {
+        // FIXME: validate header
+        fd.seek(SeekFrom::End(0))?;
+        Ok(HoardFile {
+            mapping: Mapping::from_file(&fd)?,
+            fd,
+        })
+    }
+
     pub fn create_from_fd(mut fd: File) -> io::Result<Self> {
         let header_offset = fd.seek(SeekFrom::Current(0))?;
         assert_eq!(header_offset, 0);
@@ -113,7 +194,7 @@ impl HoardFile {
         })
     }
 
-    pub fn enter<R>(&mut self, f: impl for<'f> FnOnce(Hoard<'f>) -> R) -> R {
+    pub fn enter<R>(&mut self, f: impl FnOnce(&mut Hoard) -> R) -> R {
         unsafe {
             let hoard = Hoard::new_unchecked(self);
             f(hoard)
@@ -252,3 +333,4 @@ fn calc_padding_bytes_required(offset: usize, buf: &[u8]) -> usize {
 mod tests {
     use super::*;
 }
+*/
