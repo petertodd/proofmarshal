@@ -1,6 +1,7 @@
 [workspace]
 members = [
 	"nonzero",
+	"singlelife",
 	"leint",
 	"owned",
 
