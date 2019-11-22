@@ -15,7 +15,9 @@ pub use self::primitive::*;
 
 pub unsafe trait Persist {}
 
-pub fn encode<T: ?Sized + Save<()>>(value: &T) -> Vec<u8> {
+unsafe impl Persist for ! {}
+
+pub fn encode<T: ?Sized + Save<!>>(value: &T) -> Vec<u8> {
     match value.save_poll(&mut value.init_save_state(), vec![]) {
         Ok((r, ())) => r,
         Err(never) => never,
@@ -30,13 +32,15 @@ pub fn decode<T: Decode<!>>(blob: &[u8]) -> Result<T, T::Error> {
     Ok(T::decode_blob(fully_valid_blob, &()))
 }
 
-pub unsafe trait Save<Q> : Pointee + Owned {
-    fn dyn_blob_layout(metadata: Self::Metadata) -> BlobLayout;
+pub unsafe trait Save<Z> : Pointee + Owned {
+    fn dyn_blob_layout(metadata: Self::Metadata) -> BlobLayout
+        where Z: BlobZone;
 
     type State;
     fn init_save_state(&self) -> Self::State;
 
-    fn save_poll<D: SavePtr<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, D::BlobPtr), D::Pending>;
+    fn save_poll<D: SavePtr<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, D::BlobPtr), D::Pending>
+        where Z: BlobZone;
 }
 
 pub trait Error : 'static + Any + fmt::Debug + Send {
@@ -49,115 +53,118 @@ impl<E: ?Sized + 'static + Any + fmt::Debug + Send> Error for E {
     }
 }
 
-pub trait Load<P> : Save<P> {
+pub trait Load<Z> : Save<Z> {
     type Error : Error;
 
-    type ValidateChildren : ValidateChildren<P>;
-    fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error>;
+    type ValidateChildren : ValidateChildren<Z>;
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<BlobValidator<'p, Self, Z>, Self::Error>
+        where Z: BlobZone;
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Self::Owned;
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Self::Owned
+        where Z: BlobZone;
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Ref<'p, Self>
+        where Z: BlobZone
+    {
         Ref::Owned(Self::decode_blob(blob, loader))
     }
 
-    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
-        where Self: Persist
+    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self
+        where Self: Persist, Z: BlobZone
     {
         todo!()
     }
 }
 
-pub trait ValidateChildren<P> {
+pub trait ValidateChildren<Z> {
     fn validate_children<V>(&mut self, validator: &mut V) -> Result<(), V::Error>
-        where V: ValidatePtr<P>;
+        where V: ValidatePtr<Z>, Z: BlobZone;
 }
 
-impl<P> ValidateChildren<P> for () {
+impl<Z> ValidateChildren<Z> for () {
     fn validate_children<V>(&mut self, _: &mut V) -> Result<(), V::Error>
-        where V: ValidatePtr<P>
+        where V: ValidatePtr<Z>, Z: BlobZone
     {
         Ok(())
     }
 }
 
-pub unsafe trait Encode<Q> : Sized {
-    fn blob_layout() -> BlobLayout;
+pub unsafe trait Encode<Z> : Sized {
+    fn blob_layout() -> BlobLayout
+        where Z: BlobZone;
 
     type State;
     fn init_encode_state(&self) -> Self::State;
 
-    fn encode_poll<D: SavePtr<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>;
-    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>;
+    fn encode_poll<D: SavePtr<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>
+        where Z: BlobZone;
 
-    fn encode_own<T: ?Sized + Pointee>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Q>>::State>
-        where T: Save<Q>,
-              Q: Encode<Q>,
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>
+        where Z: BlobZone;
+
+    fn encode_own<T: ?Sized + Pointee>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Z>>::State>
+        where T: Save<Z>,
+              Z: BlobZone + Encode<Z>,
               Self: Ptr
     {
         unimplemented!()
     }
 
     fn encode_own_value<T, D>(own: &Own<T,Self>, state: &mut T::State, dumper: D) -> Result<(D, Self::State), D::Pending>
-        where T: ?Sized + Save<Q>,
-              D: SavePtr<Q>,
-              Q: Encode<Q>,
+        where T: ?Sized + Save<Z>,
+              D: SavePtr<Z>,
+              Z: BlobZone + Encode<Z>,
               Self: Ptr
     {
         unimplemented!()
     }
-
-    /*
-    fn encode_own_ptr<W: WriteBlob>(&self, ptr_state: &Self::State, dst: W) -> Result<W::Ok, W::Error>
-        where Q: Encode<Q>,
-              Self: Ptr,
-    {
-        unimplemented!()
-    }
-    */
 }
 
-pub trait Decode<Q> : Encode<Q> {
+pub trait Decode<Z> : Encode<Z> {
     type Error : Error;
 
-    type ValidateChildren : ValidateChildren<Q>;
-    fn validate_blob<'p>(blob: Blob<'p, Self, Q>) -> Result<BlobValidator<'p, Self, Q>, Self::Error>;
+    type ValidateChildren : ValidateChildren<Z>;
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<BlobValidator<'p, Self, Z>, Self::Error>
+        where Z: BlobZone;
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Q>, loader: &impl LoadPtr<Q>) -> Self;
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Self
+        where Z: BlobZone;
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Q>, loader: &impl LoadPtr<Q>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Ref<'p, Self>
+        where Z: BlobZone
+    {
         Ref::Owned(Self::decode_blob(blob, loader))
     }
 
-    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, Q>) -> &'p Self
-        where Self: Persist
+    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self
+        where Self: Persist, Z: BlobZone
     {
         todo!()
     }
 
-    fn ptr_validate_blob<'a>(blob: Blob<'a, Self, Q>) -> Result<FullyValidBlob<'a, Self, Q>, Self::Error>
-        where Self: Ptr
+    fn ptr_validate_blob<'a>(blob: Blob<'a, Self, Z>) -> Result<FullyValidBlob<'a, Self, Z>, Self::Error>
+        where Self: Ptr, Z: BlobZone
     {
         unimplemented!()
     }
 
-    fn ptr_decode_blob<'a>(blob: FullyValidBlob<'a, Self, Q>) -> Self
-        where Self: Ptr
+    fn ptr_decode_blob<'a>(blob: FullyValidBlob<'a, Self, Z>) -> Self
+        where Self: Ptr, Z: BlobZone
     {
         unimplemented!()
     }
 
     fn ptr_validate_children<'p, T, V>(ptr: &'p FatPtr<T,Self>, validator: &mut V)
-            -> Result<Option<BlobValidator<'p, T, Q>>, V::Error>
-        where Self: Ptr,
-              T: ?Sized + Load<Q>,
-              V: ValidatePtr<Q>,
+            -> Result<Option<BlobValidator<'p, T, Z>>, V::Error>
+        where Self: Ptr, Z: BlobZone,
+              T: ?Sized + Load<Z>,
+              V: ValidatePtr<Z>,
     {
         unimplemented!()
     }
 }
 
-unsafe impl<Q, T> Encode<Q> for T
+unsafe impl<Z, T> Encode<Z> for T
 where T: Primitive
 {
     fn blob_layout() -> BlobLayout {
@@ -167,44 +174,54 @@ where T: Primitive
     type State = ();
     fn init_encode_state(&self) -> () { }
 
-    fn encode_poll<D: SavePtr<Q>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: SavePtr<Z>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending>
+        where Z: BlobZone
+    {
         Ok(dumper)
     }
 
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error>
+        where Z: BlobZone
+    {
         self.encode_blob(dst)
     }
 }
 
-impl<P, T> Decode<P> for T
+impl<Z, T> Decode<Z> for T
 where T: Primitive
 {
     type Error = T::Error;
 
     type ValidateChildren = ();
-    fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<BlobValidator<'p, Self, Z>, Self::Error>
+        where Z: BlobZone
+    {
         T::validate_blob(blob)?;
         Ok(blob.assume_valid(()))
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl LoadPtr<P>) -> Self {
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl LoadPtr<Z>) -> Self
+        where Z: BlobZone
+    {
         T::decode_blob(blob)
     }
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl LoadPtr<P>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, _: &impl LoadPtr<Z>) -> Ref<'p, Self>
+        where Z: BlobZone
+    {
         Self::load_blob(blob)
     }
 
-    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
-        where Self: Persist
+    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self
+        where Self: Persist, Z: BlobZone
     {
         Self::deref_blob(blob)
     }
 }
 
-unsafe impl<P, T: Encode<P>> Save<P> for T {
+unsafe impl<Z, T: Encode<Z>> Save<Z> for T {
     #[inline(always)]
-    fn dyn_blob_layout(_: ()) -> BlobLayout {
+    fn dyn_blob_layout(_: ()) -> BlobLayout where Z: BlobZone {
         T::blob_layout()
     }
 
@@ -213,7 +230,9 @@ unsafe impl<P, T: Encode<P>> Save<P> for T {
         self.init_encode_state()
     }
 
-    fn save_poll<D: SavePtr<P>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, D::BlobPtr), D::Pending> {
+    fn save_poll<D: SavePtr<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, D::BlobPtr), D::Pending>
+        where Z: BlobZone
+    {
         let dumper = self.encode_poll(state, dumper)?;
         dumper.save_blob(Self::dyn_blob_layout(()).size(), | dst | {
             match self.encode_blob(state, dst) {
@@ -224,40 +243,46 @@ unsafe impl<P, T: Encode<P>> Save<P> for T {
     }
 }
 
-impl<P, T: Decode<P>> Load<P> for T {
+impl<Z, T: Decode<Z>> Load<Z> for T {
     type Error = T::Error;
 
     type ValidateChildren = T::ValidateChildren;
-    fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<BlobValidator<'p, Self, Z>, Self::Error>
+        where Z: BlobZone
+    {
         T::validate_blob(blob)
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Self::Owned {
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Self::Owned
+        where Z: BlobZone
+    {
         T::decode_blob(blob, loader)
     }
 
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Ref<'p, Self> {
+    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Ref<'p, Self>
+        where Z: BlobZone
+    {
         T::load_blob(blob, loader)
     }
 
-    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
-        where Self: Persist
+    fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self
+        where Self: Persist, Z: BlobZone
     {
         T::deref_blob(blob)
     }
 }
 
-pub trait SavePtr<Q> : Sized {
+pub trait SavePtr<Z: BlobZone> : Sized {
     type Pending;
     type BlobPtr : 'static + Any;
 
-    fn try_save<T: ?Sized + Save<Q>>(self, value: &T) -> Result<(Self, Self::BlobPtr), Self::Pending> {
+    fn try_save<T: ?Sized + Save<Z>>(self, value: &T) -> Result<(Self, Self::BlobPtr), Self::Pending> {
         let mut state = value.init_save_state();
 
         value.save_poll(&mut state, self)
     }
 
-    fn save<T: ?Sized + Save<Q>>(self, value: &T) -> (Self, Self::BlobPtr)
+    fn save<T: ?Sized + Save<Z>>(self, value: &T) -> (Self, Self::BlobPtr)
         where Self::Pending: Into<!>
     {
         match self.try_save(value) {
@@ -270,12 +295,12 @@ pub trait SavePtr<Q> : Sized {
                                                                          Self::Pending>;
 }
 
-pub trait LoadPtr<P> {
-    fn load_blob<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T,P>) -> FullyValidBlob<'a, T, P>;
+pub trait LoadPtr<Z: BlobZone> {
+    fn load_blob<'a, T: ?Sized + Load<Z>>(&self, ptr: &'a ValidPtr<T, Z::BlobPtr>) -> FullyValidBlob<'a, T, Z>;
 }
 
-impl<P, L: LoadPtr<P>> LoadPtr<P> for &'_ L {
-    fn load_blob<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T,P>) -> FullyValidBlob<'a, T, P> {
+impl<Z: BlobZone, L: LoadPtr<Z>> LoadPtr<Z> for &'_ L {
+    fn load_blob<'a, T: ?Sized + Load<Z>>(&self, ptr: &'a ValidPtr<T, Z::BlobPtr>) -> FullyValidBlob<'a, T, Z> {
         (*self).load_blob(ptr)
     }
 }
@@ -286,11 +311,11 @@ impl LoadPtr<!> for () {
     }
 }
 
-pub trait ValidatePtr<Q> {
+pub trait ValidatePtr<Z: BlobZone> {
     type Error;
 
-    fn validate_ptr<'p, T: ?Sized + Load<Q>>(&mut self, ptr: &'p FatPtr<T,Q>)
-        -> Result<Option<BlobValidator<'p, T, Q>>, Self::Error>;
+    fn validate_ptr<'p, T: ?Sized + Load<Z>>(&mut self, ptr: &'p FatPtr<T,Z::BlobPtr>)
+        -> Result<Option<BlobValidator<'p, T, Z>>, Self::Error>;
 }
 
 impl ValidatePtr<!> for () {
@@ -303,7 +328,7 @@ impl ValidatePtr<!> for () {
     }
 }
 
-impl SavePtr<()> for Vec<u8> {
+impl SavePtr<!> for Vec<u8> {
     type Pending = !;
     type BlobPtr = ();
 

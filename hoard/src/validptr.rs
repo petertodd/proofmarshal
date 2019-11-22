@@ -3,10 +3,12 @@ use super::*;
 use core::cmp;
 use core::fmt;
 use core::hash;
+use core::mem;
 use core::ops;
 
 use crate::fatptr::FatPtr;
 use crate::marshal::Persist;
+use crate::coerce::{TryCast, TryCastRef, TryCastMut};
 
 #[repr(transparent)]
 pub struct ValidPtr<T: ?Sized + Pointee, P>(FatPtr<T,P>);
@@ -14,6 +16,30 @@ pub struct ValidPtr<T: ?Sized + Pointee, P>(FatPtr<T,P>);
 unsafe impl<T: ?Sized + Pointee, P> Persist for ValidPtr<T,P>
 where P: Persist,
       T::Metadata: Persist,
+{}
+
+unsafe impl<T: ?Sized + Pointee, P, Q> TryCastRef<ValidPtr<T,Q>> for ValidPtr<T,P>
+where P: TryCastRef<Q>
+{
+    type Error = P::Error;
+
+    fn try_cast_ref(&self) -> Result<&ValidPtr<T,Q>, Self::Error> {
+        self.0.try_cast_ref()
+            .map(|inner| unsafe { mem::transmute(inner) })
+    }
+}
+
+unsafe impl<T: ?Sized + Pointee, P, Q> TryCastMut<ValidPtr<T,Q>> for ValidPtr<T,P>
+where P: TryCastMut<Q>
+{
+    fn try_cast_mut(&mut self) -> Result<&mut ValidPtr<T,Q>, Self::Error> {
+        self.0.try_cast_mut()
+            .map(|inner| unsafe { mem::transmute(inner) })
+    }
+}
+
+unsafe impl<T: ?Sized + Pointee, P, Q> TryCast<ValidPtr<T,Q>> for ValidPtr<T,P>
+where P: TryCast<Q>
 {}
 
 impl<T: ?Sized + Pointee, P> ops::Deref for ValidPtr<T,P> {

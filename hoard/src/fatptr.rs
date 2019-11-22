@@ -8,11 +8,13 @@ use crate::marshal::{
     Encode, Decode, SavePtr, LoadPtr,
     Persist, Primitive,
     blob::{
-        BlobLayout,
+        BlobLayout, BlobZone,
         Blob, BlobValidator, FullyValidBlob,
         ValidateFields,
         WriteBlob},
 };
+
+use crate::coerce::{TryCast, TryCastRef, TryCastMut};
 
 #[repr(C)]
 pub struct FatPtr<T: ?Sized + Pointee, P> {
@@ -31,11 +33,40 @@ impl<T, P> From<P> for FatPtr<T,P> {
     }
 }
 
-
-unsafe impl<T: ?Sized + Pointee, P, Q> Encode<Q> for FatPtr<T,P>
-where P: Encode<Q>
+unsafe impl<T: ?Sized + Pointee, P, Q> TryCastRef<FatPtr<T,Q>> for FatPtr<T,P>
+where P: TryCastRef<Q>
 {
-    fn blob_layout() -> BlobLayout {
+    type Error = P::Error;
+
+    fn try_cast_ref(&self) -> Result<&FatPtr<T,Q>, Self::Error> {
+        match self.raw.try_cast_ref() {
+            Err(e) => Err(e),
+            Ok(_) => Ok(unsafe { &*(self as *const _ as *const _) })
+        }
+    }
+}
+
+unsafe impl<T: ?Sized + Pointee, P, Q> TryCastMut<FatPtr<T,Q>> for FatPtr<T,P>
+where P: TryCastMut<Q>
+{
+    fn try_cast_mut(&mut self) -> Result<&mut FatPtr<T,Q>, Self::Error> {
+        match self.raw.try_cast_mut() {
+            Err(e) => Err(e),
+            Ok(_) => Ok(unsafe { &mut *(self as *mut _ as *mut _) })
+        }
+    }
+}
+
+unsafe impl<T: ?Sized + Pointee, P, Q> TryCast<FatPtr<T,Q>> for FatPtr<T,P>
+where P: TryCast<Q>
+{}
+
+unsafe impl<T: ?Sized + Pointee, P, Z> Encode<Z> for FatPtr<T,P>
+where P: Encode<Z>
+{
+    fn blob_layout() -> BlobLayout
+        where Z: BlobZone
+    {
         P::blob_layout().extend(<T::Metadata as Primitive>::BLOB_LAYOUT)
     }
 
@@ -45,25 +76,31 @@ where P: Encode<Q>
         self.raw.init_encode_state()
     }
 
-    fn encode_poll<D: SavePtr<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: SavePtr<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>
+        where Z: BlobZone
+    {
         self.raw.encode_poll(state, dumper)
     }
 
-    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>
+        where Z: BlobZone
+    {
         dst.write(&self.raw, state)?
            .write_primitive(&self.metadata)?
            .finish()
     }
 }
 
-impl<T: ?Sized + Pointee, P, Q> Decode<Q> for FatPtr<T,P>
-where P: Decode<Q>
+impl<T: ?Sized + Pointee, P, Z> Decode<Z> for FatPtr<T,P>
+where P: Decode<Z>
 {
     type Error = FatPtrError<P::Error, <T::Metadata as Primitive>::Error>;
 
     type ValidateChildren = P::ValidateChildren;
 
-    fn validate_blob<'p>(blob: Blob<'p, Self, Q>) -> Result<BlobValidator<'p, Self, Q>, Self::Error> {
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<BlobValidator<'p, Self, Z>, Self::Error>
+        where Z: BlobZone
+    {
         let mut fields = blob.validate_struct();
         let state = fields.field::<P>().map_err(FatPtrError::Ptr)?;
         let _: () = fields.field::<T::Metadata>().map_err(FatPtrError::Metadata)?;
@@ -71,7 +108,9 @@ where P: Decode<Q>
         Ok(fields.done(state))
     }
 
-    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Q>, loader: &impl LoadPtr<Q>) -> Self {
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Z>, loader: &impl LoadPtr<Z>) -> Self
+        where Z: BlobZone
+    {
         let mut fields = blob.decode_struct(loader);
         Self {
             raw: fields.field(),

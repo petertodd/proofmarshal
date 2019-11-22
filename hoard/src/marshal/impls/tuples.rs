@@ -11,24 +11,28 @@ macro_rules! tuple {
     () => ();
     ( $(($name:ident, $state:ident),)+ ) => {
         #[allow(non_snake_case)]
-        unsafe impl<Q, $($name: Encode<Q>),+ > Encode<Q> for ($($name,)+) {
-            fn blob_layout() -> BlobLayout {
+        unsafe impl<Z, $($name: Encode<Z>),+ > Encode<Z> for ($($name,)+) {
+            fn blob_layout() -> BlobLayout
+                where Z: BlobZone
+            {
                 let layout = BlobLayout::new(0);
 
                 $(
-                    let layout = layout.extend(<$name as Encode<Q>>::blob_layout());
+                    let layout = layout.extend(<$name as Encode<Z>>::blob_layout());
                 )+
 
                 layout
             }
 
-            type State = ( $(<$name as Encode<Q>>::State,)+ );
+            type State = ( $(<$name as Encode<Z>>::State,)+ );
             fn init_encode_state(&self) -> Self::State {
                 let ($(ref $name,)+) = self;
                 ( $($name.init_encode_state(),)+ )
             }
 
-            fn encode_poll<D: SavePtr<Q>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
+            fn encode_poll<D: SavePtr<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>
+                where Z: BlobZone
+            {
                 let ($(ref $name,)+) = self;
                 let ($(ref mut $state,)+) = state;
                 $(
@@ -37,7 +41,9 @@ macro_rules! tuple {
                 Ok(dumper)
             }
 
-            fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+            fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>
+                where Z: BlobZone
+            {
                 let ($(ref $name,)+) = self;
                 let ($(ref $state,)+) = state;
                 $(
@@ -47,11 +53,13 @@ macro_rules! tuple {
             }
         }
 
-        impl<P, $($name: Decode<P>),+ > Decode<P> for ($($name,)+) {
+        impl<Z, $($name: Decode<Z>),+ > Decode<Z> for ($($name,)+) {
             type Error = TupleError;
 
             type ValidateChildren = ( $( <$name>::ValidateChildren, )+ );
-            fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
+            fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<BlobValidator<'p, Self, Z>, Self::Error>
+                where Z: BlobZone
+            {
                 let mut fields = blob.validate_struct();
                 let state = (
                     $( fields.field::<$name>().map_err(|_| TupleError)?, )+
@@ -59,16 +67,18 @@ macro_rules! tuple {
                 Ok(fields.done(state))
             }
 
-            fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl LoadPtr<P>) -> Self {
+            fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Self
+                where Z: BlobZone
+            {
                 let mut fields = blob.decode_struct(loader);
                 ( $( fields.field::<$name>(), )+ )
             }
         }
 
         #[allow(non_snake_case)]
-        impl<P, $($name: ValidateChildren<P>),+ > ValidateChildren<P> for ($($name,)+) {
+        impl<Z, $($name: ValidateChildren<Z>),+ > ValidateChildren<Z> for ($($name,)+) {
             fn validate_children<V>(&mut self, validator: &mut V) -> Result<(), V::Error>
-                where V: ValidatePtr<P>
+                where V: ValidatePtr<Z>, Z: BlobZone
             {
                 let ($(ref mut $name,)+) = self;
                 $(

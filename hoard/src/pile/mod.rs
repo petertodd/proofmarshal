@@ -2,66 +2,79 @@ use core::convert::TryFrom;
 use core::marker::PhantomData;
 use core::mem;
 use core::ops;
+use core::ptr::NonNull;
+use core::pin::Pin;
 
 use super::*;
 
 use crate::marshal::{*, blob::*};
 
-mod offset;
+use crate::coerce::TryCastRef;
+
+pub mod offset;
 use self::offset::Kind;
 pub use self::offset::{Offset, OffsetMut};
 
+mod snapshot;
+pub use self::snapshot::{Snapshot, Mapping};
+
 #[derive(Debug, Clone, Copy)]
-pub struct Pile<'s, 'p> {
-    marker: PhantomData<fn(&'p [u8]) -> &'p [u8]>,
-    slice: &'s &'s [u8],
+pub struct Pile<'s, 'm> {
+    marker: PhantomData<fn(&'s ())>,
+    snapshot: NonNull<Snapshot<'m>>,
 }
 
-impl<'s, 'p> Pile<'s, 'p> {
-    pub unsafe fn new_unchecked(slice: &'s &[u8]) -> Self {
-        Self { marker: PhantomData, slice }
-    }
-
-    pub fn get_blob(&self, offset: &Offset<'s, 'p>, len: usize) -> Option<&'s [u8]> {
-        let start = usize::from(*offset);
-        self.slice.get(start .. start + len)
-    }
-
-    pub fn root_offset<'a>(&'a self) -> Offset<'a, 'p> {
-        Offset::new(0).unwrap()
+impl<'s, 'm> Pile<'s, 'm> {
+    pub fn new(snapshot: &'s Snapshot<'m>) -> Self {
+        Self {
+            marker: PhantomData,
+            snapshot: NonNull::from(snapshot),
+        }
     }
 }
 
-
+#[derive(Debug)]
 pub enum ValidatePtrError {
-    Offset {
-        offset: Offset<'static, 'static>,
-        size: usize,
-    },
+    Offset(offset::OffsetError),
     Value(Box<dyn crate::marshal::Error>),
 }
 
-impl<'s,'p> ValidatePtr<Offset<'s,'p>> for Pile<'s,'p> {
+impl<'s,'m> ValidatePtr<Self> for Pile<'s,'m> {
     type Error = ValidatePtrError;
 
-    fn validate_ptr<'a, T>(&mut self, ptr: &'a FatPtr<T, Offset<'s,'p>>)
-        -> Result<Option<BlobValidator<'a, T, Offset<'s,'p>>>, Self::Error>
-    where T: ?Sized + Load<Offset<'s,'p>>
+    fn validate_ptr<'a, T>(&mut self, ptr: &'a FatPtr<T, Offset<'s,'m>>)
+        -> Result<Option<BlobValidator<'a, T, Self>>, Self::Error>
+    where T: ?Sized + Load<Self>
     {
-        let size = T::dyn_blob_layout(ptr.metadata).size();
-        let blob = self.get_blob(&ptr.raw, size)
-                       .ok_or_else(||
-                            ValidatePtrError::Offset {
-                                offset: ptr.raw.to_static(),
-                                size,
-                            }
-                       )?;
-        let blob = Blob::new(blob, ptr.metadata).unwrap();
+        let blob = Offset::get_blob_from_pile(ptr, self)
+                          .map_err(ValidatePtrError::Offset)?;
 
         T::validate_blob(blob).map(Some)
             .map_err(|e| ValidatePtrError::Value(Box::new(e)))
     }
 }
+
+impl<'s,'m> LoadPtr<Self> for Pile<'s,'m> {
+    fn load_blob<'a, T>(&self, ptr: &'a ValidPtr<T, Offset<'s,'m>>)
+        -> FullyValidBlob<'a, T, Self>
+    where T: ?Sized + Load<Self>
+    {
+        Offset::load_valid_blob_from_pile(ptr, self)
+            .expect("ValidPtr to be valid")
+    }
+}
+
+impl<'s,'m> LoadPtr<Self> for PileMut<'s,'m> {
+    fn load_blob<'a, T>(&self, ptr: &'a ValidPtr<T, Offset<'s,'m>>)
+        -> FullyValidBlob<'a, T, Self>
+    where T: ?Sized + Load<Self>
+    {
+        OffsetMut::load_valid_blob_from_pile(ptr, self)
+            .expect("ValidPtr to be valid")
+    }
+}
+
+/*
 
 impl<'s,'p> ValidatePtr<OffsetMut<'s,'p>> for PileMut<'s,'p> {
     type Error = ValidatePtrError;
@@ -90,17 +103,6 @@ impl<'s,'p> ValidatePtr<OffsetMut<'s,'p>> for PileMut<'s,'p> {
     }
 }
 
-impl<'s,'p> LoadPtr<Offset<'s,'p>> for Pile<'s,'p> {
-    fn load_blob<'a, T: ?Sized + Load<Offset<'s,'p>>>(&self, ptr: &'a ValidPtr<T, Offset<'s,'p>>)
-        -> FullyValidBlob<'a, T, Offset<'s,'p>>
-    {
-        let blob = self.get_blob(&ptr.raw, T::dyn_blob_layout(ptr.metadata).size())
-                       .expect("invalid ValidPtr");
-        let blob = Blob::new(blob, ptr.metadata).unwrap();
-
-        unsafe { blob.assume_fully_valid() }
-    }
-}
 
 impl<'s,'p> LoadPtr<OffsetMut<'s,'p>> for PileMut<'s,'p> {
     fn load_blob<'a, T: ?Sized + Load<OffsetMut<'s,'p>>>(&self, ptr: &'a ValidPtr<T, OffsetMut<'s,'p>>)
@@ -118,18 +120,19 @@ impl<'s,'p> LoadPtr<OffsetMut<'s,'p>> for PileMut<'s,'p> {
         }
     }
 }
+*/
 
 #[derive(Debug)]
-pub struct PileMut<'s, 'p>(Pile<'s, 'p>);
+pub struct PileMut<'s, 'm>(Pile<'s, 'm>);
 
-impl<'s,'p> From<Pile<'s,'p>> for PileMut<'s,'p> {
-    fn from(pile: Pile<'s,'p>) -> Self {
+impl<'s,'m> From<Pile<'s,'m>> for PileMut<'s,'m> {
+    fn from(pile: Pile<'s,'m>) -> Self {
         Self(pile)
     }
 }
 
-impl<'s,'p> ops::Deref for PileMut<'s,'p> {
-    type Target = Pile<'s,'p>;
+impl<'s,'m> ops::Deref for PileMut<'s,'m> {
+    type Target = Pile<'s,'m>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -138,9 +141,7 @@ impl<'s,'p> ops::Deref for PileMut<'s,'p> {
 
 impl Default for PileMut<'static, '_> {
     fn default() -> Self {
-        static EMPTY_SLICE: &[u8] = &[];
-
-        let pile = unsafe { Pile::new_unchecked(&EMPTY_SLICE) };
+        let pile = Pile::new(&snapshot::EMPTY_SNAPSHOT);
         Self(pile)
     }
 }
@@ -155,6 +156,10 @@ impl<'s,'p> Zone for Pile<'s,'p> {
     }
 }
 
+impl<'s,'m> BlobZone for Pile<'s,'m> {
+    type BlobPtr = Offset<'s,'m>;
+}
+
 impl<'s,'p> Zone for PileMut<'s,'p> {
     type Ptr = OffsetMut<'s,'p>;
 
@@ -167,18 +172,20 @@ impl<'s,'p> Zone for PileMut<'s,'p> {
     }
 }
 
+impl<'s,'p> BlobZone for PileMut<'s,'p> {
+    type BlobPtr = Offset<'s,'p>;
+}
+
 impl<'s,'p> Alloc for PileMut<'s,'p> {
     type Zone = Self;
     type Ptr = OffsetMut<'s,'p>;
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Ptr> {
-        /*
         src.take_unsized(|src| unsafe {
             let metadata = T::metadata(src);
-            Own::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata })
+            Own::new_unchecked(ValidPtr::<T,_>::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata }))
+            //Own::new_unchecked(ValidPtr::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata }))
         })
-        */
-        todo!()
     }
 
     fn zone(&self) -> Self::Zone {
@@ -186,23 +193,29 @@ impl<'s,'p> Alloc for PileMut<'s,'p> {
     }
 }
 
-impl Get for PileMut<'_, '_> {
-    fn get<'a, T: ?Sized + Load<Self::Ptr>>(&self, own: &'a Own<T, Self::Ptr>) -> Ref<'a, T> {
+impl<'s,'m> Get for Pile<'s, 'm> {
+    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a Own<T, Self::Ptr>) -> Ref<'a, T>
+        where Self: 'a
+    {
+        let blob = self.load_blob(ptr);
+        T::load_blob(blob, self)
+    }
+
+    fn take<T: ?Sized + Load<Self>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned {
+        let blob = self.load_blob(&ptr);
+        T::decode_blob(blob, self)
+    }
+}
+
+impl<'s,'m> Get for PileMut<'s, 'm> {
+    fn get<'a, T: ?Sized + Load<Self>>(&self, own: &'a Own<T, Self::Ptr>) -> Ref<'a, T>
+        where Self: 'a
+    {
         match own.raw.kind() {
-            Kind::Offset(offset) => {
-                /*
-                let offset = usize::try_from(offset.get()).unwrap();
-                let range = offset .. offset + T::blob_layout(own.metadata()).size();
-                let words = self.words().get(range.clone())
-                                        .unwrap_or_else(|| panic!("{:?}", range));
-
-                let blob = Blob::<T, OffsetMut<'p>>::new(words, own.metadata()).unwrap();
-
-                let blob = unsafe { blob.assume_fully_valid() };
-
+            Kind::Offset(_) => {
+                let ptr: &'a ValidPtr<T, Offset<'s,'m>> = own.try_cast_ref().unwrap();
+                let blob = self.load_blob(ptr);
                 T::load_blob(blob, self)
-                */
-                todo!()
             },
             Kind::Ptr(ptr) => {
                 let r: &'a T = unsafe {
@@ -213,30 +226,73 @@ impl Get for PileMut<'_, '_> {
         }
     }
 
-    fn take<T: ?Sized + Load<Self::Ptr>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned {
-        let ptr = ptr.into_inner().into_inner();
-
-        match unsafe { ptr.raw.try_take::<T>(ptr.metadata) } {
-            Ok(owned) => owned,
-            Err(offset) => {
-                /*
-                let offset = usize::try_from(offset.get()).unwrap();
-                let range = offset .. offset + T::blob_layout(metadata).size();
-                let words = self.words().get(range.clone())
-                                        .unwrap_or_else(|| panic!("{:?}", range));
-
-                let blob = Blob::<T, Self>::new(words, metadata).unwrap();
-
-                let blob = unsafe { blob.assume_fully_valid() };
-
+    fn take<T: ?Sized + Load<Self>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned {
+        let ptr = ptr.into_inner();
+        if let Ok(valid_offset_ptr) = ptr.try_cast_ref() {
+                let blob = self.load_blob(valid_offset_ptr);
                 T::decode_blob(blob, self)
-                */
-                todo!()
-            },
+        } else {
+            let FatPtr { raw, metadata } = ptr.into_inner();
+            match unsafe { raw.try_take::<T>(metadata) } {
+                Ok(owned) => owned,
+                Err(_offset) => unreachable!(),
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
+    #[test]
+    fn pile_load() {
+        let snapshot = unsafe { Snapshot::new_unchecked(vec![1,2,3,4]) };
+        let pile = Pile::new(&snapshot);
+
+        let offset = Offset::new(&snapshot, 0, 0).unwrap();
+        let fatptr: FatPtr<(),_> = FatPtr { raw: offset, metadata: () };
+        let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
+
+        let blob = pile.load_blob(&validptr);
+        assert_eq!(blob.len(), 0);
+
+        let offset = Offset::new(&snapshot, 2, 2).unwrap();
+        let fatptr: FatPtr<u16,_> = FatPtr { raw: offset, metadata: () };
+        let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
+
+        let blob = pile.load_blob(&validptr);
+        assert_eq!(&blob[..], &[3,4]);
+    }
+
+    #[test]
+    fn pilemut_get_owned() {
+        let mut alloc = PileMut::allocator();
+        let pile = alloc.zone();
+
+        let owned = alloc.alloc(42u8);
+        if let Ref::Borrowed(n) = pile.get(&owned) {
+            assert_eq!(*n, 42);
+        } else {
+            panic!()
+        }
+        assert_eq!(pile.take(owned), 42);
+    }
+
+    #[test]
+    fn pilemut_get_lifetimes() {
+        let mut alloc = PileMut::allocator();
+        let owned: Own<u8, OffsetMut<'static,'_>> = alloc.alloc(42u8);
+
+        fn test_get<'a,'s,'m>(pile: &PileMut<'s,'m>, ptr: &'a Own<u8, OffsetMut<'static, 'm>>) -> Ref<'a,u8> {
+            pile.get(ptr)
+        }
+
+        assert_eq!(*test_get(&alloc.zone(), &owned), 42);
+
+        let snapshot = unsafe { Snapshot::new_unchecked(vec![]) };
+        let pile = PileMut::from(Pile::new(&snapshot));
+
+        assert_eq!(*test_get(&pile, &owned), 42);
+    }
 }

@@ -20,13 +20,12 @@ use crate::marshal::{
     blob::*,
 };
 
+use crate::coerce::{TryCast, TryCastRef, TryCastMut};
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Offset<'s, 'p> {
-    marker: PhantomData<(
-         fn(&'s ()),
-         fn(&'p ()) -> &'p (),
-        )>,
+pub struct Offset<'s, 'm> {
+    marker: PhantomData<(&'s (), Snapshot<'m>)>,
     raw: Le<NonZeroU64>,
 }
 
@@ -47,20 +46,58 @@ impl From<Offset<'_, '_>> for usize {
     }
 }
 
-impl Offset<'_,'_> {
+#[derive(Debug)]
+pub struct OffsetError {
+    offset: usize,
+    size: usize,
+}
+
+impl<'s,'m> Offset<'s,'m> {
     pub const MAX: usize = (1 << 62) - 1;
 
-    pub fn new(offset: usize) -> Option<Self> {
-        if offset <= Self::MAX {
-            let offset = offset as u64;
-            Some(Self {
-                marker: PhantomData,
-                raw: NonZeroU64::new((offset << 1) | 1).unwrap().into(),
-            })
-        } else {
-            None
+    pub fn new(snap: &'s Snapshot<'m>, offset: usize, size: usize) -> Option<Self> {
+        snap.get(offset .. offset + size)
+            .map(|slice| unsafe { Self::new_unchecked(slice) })
+    }
+
+    pub unsafe fn new_unchecked(slice: &'s [u8]) -> Self {
+        let offset = slice.len() as u64;
+        Self {
+            marker: PhantomData,
+            raw: NonZeroU64::new((offset << 1) | 1).unwrap().into(),
         }
     }
+
+    fn get_slice_from_pile<'a>(&'a self, size: usize, pile: &Pile<'s,'m>) -> Result<&'a [u8], OffsetError> {
+        let snapshot: &Snapshot<'m> = unsafe { &*pile.snapshot.as_ptr() };
+
+        let start = self.get();
+        snapshot.get(start .. start + size).ok_or(OffsetError { offset: start, size })
+                .map(|slice| {
+                    // SAFETY: we can do this because we can only be created from a &'s [u8] slice.
+                    let slice: &'s [u8] = unsafe { mem::transmute(slice) };
+                    slice
+                })
+    }
+
+    pub(super) fn get_blob_from_pile<'a, T>(ptr: &'a FatPtr<T, Self>, pile: &Pile<'s,'m>)
+        -> Result<Blob<'a, T, Pile<'s,'m>>, OffsetError>
+    where T: ?Sized + Load<Pile<'s,'m>>
+    {
+        let size = T::dyn_blob_layout(ptr.metadata).size();
+        let slice = ptr.raw.get_slice_from_pile(size, pile).unwrap();
+
+        Ok(Blob::new(slice, ptr.metadata).unwrap())
+    }
+
+    pub(super) fn load_valid_blob_from_pile<'a, T>(ptr: &'a ValidPtr<T, Self>, pile: &Pile<'s,'m>)
+        -> Result<FullyValidBlob<'a, T, Pile<'s,'m>>, OffsetError>
+    where T: ?Sized + Load<Pile<'s,'m>>
+    {
+        Self::get_blob_from_pile(ptr, pile)
+            .map(|blob| unsafe { blob.assume_fully_valid() })
+    }
+
 
     pub fn to_static(&self) -> Offset<'static, 'static> {
         Offset {
@@ -79,6 +116,29 @@ impl Offset<'_,'_> {
 pub struct OffsetMut<'s,'p>(Offset<'s,'p>);
 unsafe impl Persist for OffsetMut<'_,'_> {}
 
+unsafe impl<'s,'p> TryCastRef<OffsetMut<'s,'p>> for Offset<'s,'p> {
+    type Error = !;
+
+    #[inline(always)]
+    fn try_cast_ref(&self) -> Result<&OffsetMut<'s,'p>, Self::Error> {
+        Ok(unsafe { mem::transmute(self) })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct TryCastOffsetMutError(());
+
+unsafe impl<'s,'p> TryCastRef<Offset<'s,'p>> for OffsetMut<'s,'p> {
+    type Error = TryCastOffsetMutError;
+
+    #[inline]
+    fn try_cast_ref(&self) -> Result<&Offset<'s,'p>, Self::Error> {
+        match self.kind() {
+            Kind::Offset(_) => Ok(&self.0),
+            Kind::Ptr(_) => Err(TryCastOffsetMutError(())),
+        }
+    }
+}
 
 impl<'s, 'p> From<Offset<'s,'p>> for OffsetMut<'s,'p> {
     fn from(offset: Offset<'s,'p>) -> Self {
@@ -101,7 +161,7 @@ impl fmt::Pointer for Offset<'_, '_> {
     }
 }
 
-unsafe impl Encode<Self> for Offset<'_,'_> {
+unsafe impl<'s,'p> Encode<Pile<'s,'p>> for Offset<'s,'p> {
     fn blob_layout() -> BlobLayout {
         BlobLayout::new_nonzero(mem::size_of::<Self>())
     }
@@ -109,7 +169,7 @@ unsafe impl Encode<Self> for Offset<'_,'_> {
     type State = ();
     fn init_encode_state(&self) -> Self::State {}
 
-    fn encode_poll<D: SavePtr<Self>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: SavePtr<Pile<'s,'p>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
         Ok(dumper)
     }
 
@@ -118,16 +178,31 @@ unsafe impl Encode<Self> for Offset<'_,'_> {
            .finish()
     }
 
-    fn encode_own<T: ?Sized + Save<Self>>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Self>>::State> {
+    fn encode_own<T: ?Sized + Save<Pile<'s,'p>>>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Pile<'s,'p>>>::State> {
         Ok(())
     }
+}
 
-    /*
-    fn encode_own_ptr<W: WriteBlob>(&self, _: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+unsafe impl<'s,'p> Encode<PileMut<'s,'p>> for Offset<'s,'p> {
+    fn blob_layout() -> BlobLayout {
+        BlobLayout::new_nonzero(mem::size_of::<Self>())
+    }
+
+    type State = ();
+    fn init_encode_state(&self) -> Self::State {}
+
+    fn encode_poll<D: SavePtr<PileMut<'s,'p>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
+        Ok(dumper)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
         dst.write_bytes(&self.raw.get().get().to_le_bytes())?
            .finish()
     }
-    */
+
+    fn encode_own<T: ?Sized + Save<PileMut<'s,'p>>>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<PileMut<'s,'p>>>::State> {
+        Ok(())
+    }
 }
 
 /*
@@ -187,19 +262,15 @@ impl Decode<Self> for Offset<'_> {
 
 impl Ptr for OffsetMut<'_, '_> {
     fn dealloc_own<T: ?Sized + Pointee>(owned: Own<T, Self>) {
-        /*
         Self::drop_take_unsized(owned, |value|
             unsafe {
                 core::ptr::drop_in_place(value)
             }
         )
-        */
-        todo!()
     }
 
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: Own<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
-        /*
-        let FatPtr { raw, metadata } = owned.into_inner();
+        let FatPtr { raw, metadata } = owned.into_inner().into_inner();
 
         match raw.kind() {
             Kind::Offset(_) => {},
@@ -217,8 +288,6 @@ impl Ptr for OffsetMut<'_, '_> {
                 }
             }
         }
-        */
-        todo!()
     }
 }
 
@@ -237,7 +306,7 @@ fn fix_layout(layout: Layout) -> Layout {
     }
 }
 
-impl<'s,'p> OffsetMut<'s,'p> {
+impl<'s,'m> OffsetMut<'s,'m> {
     pub unsafe fn from_ptr(ptr: NonNull<u16>) -> Self {
         let raw = ptr.as_ptr() as usize as u64;
 
@@ -247,14 +316,14 @@ impl<'s,'p> OffsetMut<'s,'p> {
         mem::transmute(ptr.as_ptr() as usize as u64)
     }
 
-    pub fn kind(&self) -> Kind<'s,'p> {
-        match self.0.raw.get().get() & 1 {
-            1 => Kind::Offset(self.0),
-            0 => Kind::Ptr(unsafe {
+    pub fn kind(&self) -> Kind<'s,'m> {
+        if self.0.raw.get().get() & 1 == 1 {
+            Kind::Offset(self.0)
+        } else {
+            Kind::Ptr(unsafe {
                 let raw = self.0.raw.get().get();
                 NonNull::new_unchecked(raw as usize as *mut u16)
-            }),
-            _ => unreachable!(),
+            })
         }
     }
 
@@ -277,7 +346,7 @@ impl<'s,'p> OffsetMut<'s,'p> {
     }
 
 
-    pub(super) unsafe fn try_take<T: ?Sized + Pointee + Owned>(self, metadata: T::Metadata) -> Result<T::Owned, Offset<'s,'p>> {
+    pub(super) unsafe fn try_take<T: ?Sized + Pointee + Owned>(self, metadata: T::Metadata) -> Result<T::Owned, Offset<'s,'m>> {
         let this = ManuallyDrop::new(self);
 
         match this.kind() {
@@ -296,6 +365,24 @@ impl<'s,'p> OffsetMut<'s,'p> {
                 Ok(owned)
             }
         }
+    }
+
+    pub(super) fn get_blob_from_pile<'a, T>(ptr: &'a FatPtr<T, Offset<'s,'m>>, pile: &PileMut<'s,'m>)
+        -> Result<Blob<'a, T, PileMut<'s,'m>>, OffsetError>
+    where T: ?Sized + Load<PileMut<'s,'m>>
+    {
+        let size = T::dyn_blob_layout(ptr.metadata).size();
+        let slice = ptr.raw.get_slice_from_pile(size, pile).unwrap();
+
+        Ok(Blob::new(slice, ptr.metadata).unwrap())
+    }
+
+    pub(super) fn load_valid_blob_from_pile<'a, T>(ptr: &'a ValidPtr<T, Offset<'s,'m>>, pile: &PileMut<'s,'m>)
+        -> Result<FullyValidBlob<'a, T, PileMut<'s,'m>>, OffsetError>
+    where T: ?Sized + Load<PileMut<'s,'m>>
+    {
+        Self::get_blob_from_pile(ptr, pile)
+            .map(|blob| unsafe { blob.assume_fully_valid() })
     }
 }
 

@@ -16,6 +16,8 @@ use core::task::Poll;
 use pointee::Pointee;
 use owned::{Owned, Ref, Take};
 
+pub mod coerce;
+
 pub mod pointee;
 use self::pointee::*;
 
@@ -35,7 +37,7 @@ pub mod never;
 pub mod heap;
 pub mod pile;
 
-pub mod hoard;
+//pub mod hoard;
 
 pub mod bag;
 
@@ -101,10 +103,11 @@ impl<A: Alloc> Alloc for &'_ mut A {
 pub trait TryGet : Zone {
     type Error;
 
-    fn get<'p, T: ?Sized + Load<Self::Ptr>>(&self, ptr: &'p Own<T, Self::Ptr>) -> Result<Ref<'p, T>, Self::Error>;
+    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a Own<T, Self::Ptr>) -> Result<Ref<'a, T>, Self::Error>;
 }
 
 pub trait Get : Zone {
-    fn get<'p, T: ?Sized + Load<Self::Ptr>>(&self, ptr: &'p Own<T, Self::Ptr>) -> Ref<'p, T>;
-    fn take<'p, T: ?Sized + Load<Self::Ptr>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned;
+    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a Own<T, Self::Ptr>) -> Ref<'a, T>
+        where Self: 'a;
+    fn take<T: ?Sized + Load<Self>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned;
 }

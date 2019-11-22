@@ -8,12 +8,24 @@ use core::ops;
 
 use crate::marshal::*;
 use crate::marshal::blob::*;
+use crate::coerce::TryCastRef;
 
 /// An owned pointer.
-#[repr(C)]
+#[repr(transparent)]
 pub struct Own<T: ?Sized + Pointee, P: Ptr> {
     marker: PhantomData<T>,
     inner: ManuallyDrop<ValidPtr<T,P>>,
+}
+
+unsafe impl<T: ?Sized + Pointee, P: Ptr, Q: Ptr> TryCastRef<Own<T,Q>> for Own<T,P>
+where P: TryCastRef<Q>
+{
+    type Error = P::Error;
+
+    fn try_cast_ref(&self) -> Result<&Own<T,Q>, Self::Error> {
+        self.inner.try_cast_ref()
+            .map(|inner| unsafe { mem::transmute(inner) })
+    }
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> ops::Deref for Own<T,P> {
@@ -68,22 +80,27 @@ pub enum EncodeOwnState<T: ?Sized + Save<Q>, P: Encode<Q>, Q> {
     Ptr(P::State),
 }
 
-unsafe impl<T, P, Q> Encode<Q> for Own<T,P>
-where Q: Encode<Q>,
-      P: Ptr + Encode<Q>,
-      T: ?Sized + Save<Q>,
+unsafe impl<T, P, Z> Encode<Z> for Own<T,P>
+where Z: Encode<Z>,
+      P: Ptr + Encode<Z>,
+      T: ?Sized + Save<Z>,
 {
-    fn blob_layout() -> BlobLayout {
-        Q::blob_layout().extend(<T::Metadata as Primitive>::BLOB_LAYOUT)
+    fn blob_layout() -> BlobLayout
+        where Z: BlobZone
+    {
+        Z::blob_layout().extend(<T::Metadata as Primitive>::BLOB_LAYOUT)
     }
 
-    type State = EncodeOwnState<T, P, Q>;
+    type State = EncodeOwnState<T, P, Z>;
 
     fn init_encode_state(&self) -> Self::State {
         EncodeOwnState::Initial
     }
 
-    fn encode_poll<D: SavePtr<Q>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: SavePtr<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>
+        where Z: BlobZone
+    {
+        /*
         loop {
             match state {
                 EncodeOwnState::Initial => {
@@ -102,15 +119,22 @@ where Q: Encode<Q>,
                 EncodeOwnState::Ptr(state) => break self.raw.encode_poll(state, dumper),
             }
         }
+        */
+        todo!()
     }
 
-    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>
+        where Z: BlobZone
+    {
+        /*
         if let EncodeOwnState::Ptr(state) = state {
             dst.write(&self.raw, state)?
                .finish()
         } else {
             panic!()
         }
+        */
+        todo!()
     }
 }
 
@@ -121,15 +145,18 @@ pub enum LoadOwnError<P,M> {
     Metadata(M),
 }
 
-impl<T: ?Sized + Pointee, P: Ptr, Q> Decode<Q> for Own<T,P>
-where T: Load<Q>,
-      P: Decode<Q>,
-      Q: Encode<Q>,
+impl<T: ?Sized + Pointee, P: Ptr, Z> Decode<Z> for Own<T,P>
+where T: Load<Z>,
+      P: Decode<Z>,
+      Z: Encode<Z>,
 {
     type Error = LoadOwnError<P::Error, <T::Metadata as Primitive>::Error>;
 
-    type ValidateChildren = OwnValidator<T,P,Q>;
-    fn validate_blob<'a>(blob: Blob<'a, Self, Q>) -> Result<BlobValidator<'a, Self, Q>, Self::Error> {
+    type ValidateChildren = OwnValidator<T,P,Z>;
+    fn validate_blob<'a>(blob: Blob<'a, Self, Z>) -> Result<BlobValidator<'a, Self, Z>, Self::Error>
+        where Z: BlobZone
+    {
+        /*
         let mut fields = blob.validate_struct();
 
         let raw = fields.field_blob::<P>();
@@ -142,15 +169,22 @@ where T: Load<Q>,
 
         let fatptr = FatPtr { raw, metadata };
         Ok(fields.done(OwnValidator::FatPtr(fatptr)))
+        */
+        todo!()
     }
 
-    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Q>, loader: &impl LoadPtr<Q>) -> Self {
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Z>, loader: &impl LoadPtr<Z>) -> Self
+        where Z: BlobZone
+    {
+        /*
         let mut fields = blob.decode_struct(loader);
         let fatptr = fields.field();
 
         unsafe {
             Self::new_unchecked(ValidPtr::new_unchecked(fatptr))
         }
+        */
+        todo!()
     }
 }
 
@@ -160,12 +194,13 @@ pub enum OwnValidator<T: ?Sized + Load<Q>, P: Decode<Q>, Q> {
     Done,
 }
 
-impl<T: ?Sized + Load<Q>, P: Decode<Q>, Q> ValidateChildren<Q> for OwnValidator<T,P,Q>
+impl<T: ?Sized + Load<Z>, P: Decode<Z>, Z> ValidateChildren<Z> for OwnValidator<T,P,Z>
 where P: Ptr
 {
     fn validate_children<V>(&mut self, ptr_validator: &mut V) -> Result<(), V::Error>
-        where V: ValidatePtr<Q>
+        where V: ValidatePtr<Z>, Z: BlobZone
     {
+        /*
         loop {
             match self {
                 Self::Done => break Ok(()),
@@ -181,6 +216,8 @@ where P: Ptr
                 }
             }
         }
+        */
+        todo!()
     }
 }
 

@@ -21,7 +21,7 @@ pub trait WriteBlob : Sized {
 
     /// Write an encodable value.
     #[inline(always)]
-    fn write<P, T: Encode<P>>(self, value: &T, state: &T::State) -> Result<Self, Self::Error> {
+    fn write<Z: BlobZone, T: Encode<Z>>(self, value: &T, state: &T::State) -> Result<Self, Self::Error> {
         let value_writer = ValueWriter::new(self, T::blob_layout().size());
         value.encode_blob(state, value_writer)
     }
