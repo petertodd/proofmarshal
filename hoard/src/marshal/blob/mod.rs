@@ -15,7 +15,7 @@ mod writeblob;
 pub use self::writeblob::*;
 
 pub trait BlobZone : Sized {
-    type BlobPtr : Persist + Encode<Self>;
+    type BlobPtr : Ptr + Persist + Decode<Self>;
 }
 
 impl BlobZone for ! {

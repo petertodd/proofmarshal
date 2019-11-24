@@ -13,47 +13,43 @@ use memmap::Mmap;
 
 use owned::{Ref, Take};
 
+use singlelife::Unique;
+
 use crate::{
-    Alloc,
-    Get,
-    FatPtr,
-    Zone,
-    own::Own,
-    bag::Bag,
-    pile::*,
-    pointee::Pointee,
-    never::NeverAllocator,
-    marshal::{*, blob::*},
+    FatPtr, ValidPtr,
+    marshal::{Load, Decode},
+    pile::{Pile, Offset, Snapshot, Mapping},
 };
 
 pub mod disk;
 use self::disk::*;
 
-#[derive(Debug)]
-pub struct Hoard<'h, V = ()> {
-    marker: PhantomData<fn(V)>,
-    anchor: &'h mut (),
-    fd: File,
-    snapshot: Snapshot<'h>,
+unsafe impl Mapping for Mmap {
+    fn as_bytes(&self) -> &[u8] {
+        &self[..]
+    }
 }
 
 #[derive(Debug)]
-pub struct HoardMut<'h, V = ()>(Hoard<'h, V>);
+pub struct Hoard<V = ()> {
+    marker: PhantomData<fn(V)>,
+    fd: File,
+    mapping: Arc<Mmap>,
+}
 
-impl<V: Flavor> Hoard<'static, V> {
-    pub fn open<F, R>(path: impl AsRef<Path>, f: F) -> io::Result<R>
-        where F: for<'h> FnOnce(Hoard<'h, V>) -> R
-    {
+#[derive(Debug)]
+pub struct HoardMut<V = ()>(Hoard<V>);
+
+impl<V: Flavor> Hoard<V> {
+    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let fd = OpenOptions::new()
                     .read(true)
                     .open(path)?;
 
-        Self::open_fd(fd, f)
+        Self::open_fd(fd)
     }
 
-    pub fn open_fd<F, R>(mut fd: File, f: F) -> io::Result<R>
-        where F: for<'h> FnOnce(Hoard<'h, V>) -> R
-    {
+    pub fn open_fd(mut fd: File) -> io::Result<Self> {
         fd.seek(SeekFrom::Start(0))?;
         let header = FileHeader::<V>::read(&mut fd)?;
 
@@ -61,83 +57,89 @@ impl<V: Flavor> Hoard<'static, V> {
 
         fd.seek(SeekFrom::End(0))?;
 
-        let mut anchor = ();
-        unsafe {
-            let this = Hoard::new_unchecked(fd, &mut anchor)?;
-            Ok(f(this))
-        }
-    }
-}
+        let mapping = unsafe { Mmap::map(&fd)? };
 
-impl<'h, V> Hoard<'h, V> {
-    unsafe fn new_unchecked(fd: File, anchor: &'h mut ()) -> io::Result<Self> {
         Ok(Self {
             marker: PhantomData,
-            anchor,
-            snapshot: Snapshot::new(Mapping::from_file(&fd)?),
+            mapping: Arc::new(mapping),
             fd,
         })
     }
 
-    pub fn roots<T>(&self) -> IterRoots<'h, T> {
-        IterRoots::new(self.snapshot.clone())
+    pub fn snapshot<'h>(self: &'h Unique<Self>) -> Snapshot<'h, Arc<Mmap>> {
+        unsafe {
+            Snapshot::new_unchecked_with_range(
+                self.mapping.clone(),
+                mem::size_of::<FileHeader>() ..
+            ).expect("mapping to have file header")
+        }
+    }
+
+    pub fn roots<'h, T>(self: &'h Unique<Self>) -> IterRoots<'h, T>
+        where T: Decode<Pile<'static, 'h>>
+    {
+        IterRoots::new(self.snapshot())
     }
 }
 
 #[derive(Debug)]
 pub struct Root<'h, T> {
     marker: PhantomData<fn() -> T>,
-    snapshot: Snapshot<'h>,
+    snapshot: Snapshot<'h, Arc<Mmap>>,
 }
 
 impl<'h, T> Root<'h, T> {
-    fn new(snapshot: Snapshot<'h>) -> Self {
+    fn new(snapshot: Snapshot<'h, Arc<Mmap>>) -> Self {
         Self { marker: PhantomData, snapshot }
     }
 }
 
-#[derive(Debug)]
-pub enum ValidateRootError<E> {
-    Offset,
-    Root(E),
-}
-
-impl<'h, T> Root<'h, T> {
-    pub fn validate<'a>(&'a self) -> Result<Ref<'a, T>, ValidateRootError<T::Error>>
-        where T: Decode<Offset<'static, 'h>>
-    {
-        let offset = self.snapshot.mapping.len()
+impl<'h, T> Root<'h, T>
+where T: Decode<Pile<'static, 'h>>
+{
+    pub fn validate<'a>(&'a self) -> Result<Ref<'a, T>, T::Error> {
+        /*
+        let offset = self.snapshot.len()
                          .checked_sub(T::blob_layout().size())
-                         .map(|offset| Offset::new(offset).unwrap())
                          .ok_or(ValidateRootError::Offset)?;
 
+        let offset = self.snapshot.len().saturating_sub(T::blob_layout().size());
+        let offset = Offset::new(&self.snapshot, offset, T::blob_layout().size())
+                            .ok_or(ValidateRootError::Offset)?;
         let pile = self.snapshot.pile();
+        */
 
         todo!()
     }
 }
 
+/*
 #[derive(Debug)]
 pub struct RootMut<'h, T>(Root<'h, T>);
+*/
 
 #[derive(Debug, Clone)]
 pub struct IterRoots<'h, T> {
     marker: PhantomData<fn() -> T>,
-    snapshot: Snapshot<'h>,
+    snapshot: Snapshot<'h, Arc<Mmap>>,
     idx_front: usize,
     idx_back: usize,
 }
 
+/*
 #[derive(Debug, Clone)]
 pub struct IterRootsMut<'h, T>(IterRoots<'h,T>);
+*/
 
+impl<'h, T> IterRoots<'h, T>
+where T: Decode<Pile<'static, 'h>>
+{
+    pub fn new(snapshot: Snapshot<'h, Arc<Mmap>>) -> Self {
+        let marks = Mark::as_marks(&snapshot);
 
-impl<'h, T> IterRoots<'h, T> {
-    pub fn new(snapshot: Snapshot<'h>) -> Self {
-        let marks = snapshot.mapping.as_marks();
         Self {
             marker: PhantomData,
-            idx_front: 0,
+            idx_front: (T::blob_layout().size() + mem::size_of::<Mark>() - 1) / mem::size_of::<Mark>(),
             idx_back: marks.len().saturating_sub(1),
             snapshot,
         }
@@ -148,39 +150,41 @@ impl<'h, T> Iterator for IterRoots<'h, T> {
     type Item = Root<'h, T>;
 
     fn next(&mut self) -> Option<Root<'h, T>> {
-        debug_assert!(self.idx_front <= self.idx_back);
-
-        if self.idx_front == self.idx_back {
-            None
-        } else if self.snapshot.mapping.as_marks()[self.idx_front].is_valid(self.idx_front) {
-            let mut root_snap = self.snapshot.clone();
-            root_snap.truncate(self.idx_front * mem::size_of::<Mark>());
-
+        while self.idx_front < self.idx_back {
+            let idx = self.idx_front;
             self.idx_front += 1;
-            Some(Root::new(root_snap))
-        } else {
-            None
+
+            let marks = Mark::as_marks(&self.snapshot);
+            if marks[idx].is_valid(idx) {
+                let mut root_snap = self.snapshot.clone();
+                root_snap.truncate(idx * mem::size_of::<Mark>());
+
+                return Some(Root::new(root_snap))
+            }
         }
+        None
     }
 }
 
 impl<'h, T> DoubleEndedIterator for IterRoots<'h, T> {
     fn next_back(&mut self) -> Option<Root<'h, T>> {
-        debug_assert!(self.idx_front <= self.idx_back);
-        if self.idx_front == self.idx_back {
-            None
-        } else if self.snapshot.mapping.as_marks()[self.idx_back].is_valid(self.idx_back) {
-            let mut root_snap = self.snapshot.clone();
-            root_snap.truncate(self.idx_back * mem::size_of::<Mark>());
-
+        while self.idx_front < self.idx_back {
+            let idx = self.idx_back;
             self.idx_back -= 1;
-            Some(Root::new(root_snap))
-        } else {
-            None
+
+            let marks = Mark::as_marks(&self.snapshot);
+            if marks[idx].is_valid(idx) {
+                let mut root_snap = self.snapshot.clone();
+                root_snap.truncate(idx * mem::size_of::<Mark>());
+
+                return Some(Root::new(root_snap))
+            }
         }
+        None
     }
 }
 
+/*
 impl<'h, T> Iterator for IterRootsMut<'h, T> {
     type Item = RootMut<'h, T>;
 
@@ -531,4 +535,5 @@ mod tests {
         })
     }
 }
+*/
 */

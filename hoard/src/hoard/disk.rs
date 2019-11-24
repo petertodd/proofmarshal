@@ -83,67 +83,13 @@ impl Mark {
     pub fn is_valid(&self, mark_offset: usize) -> bool {
         *self == Self::new(mark_offset)
     }
-}
 
-
-#[derive(Debug, Clone)]
-pub struct Mapping {
-    mapping: Arc<dyn fmt::Debug + Send + Sync>,
-    slice: &'static [u8],
-}
-
-impl Mapping {
-    pub fn from_file(fd: &File) -> io::Result<Self> {
-        let mapping = unsafe { Mmap::map(&fd)? };
-
-        let slice = mapping.get(size_of::<FileHeader>() .. )
-                           .expect("missing header");
-
-        Ok(Self {
-            slice: unsafe { mem::transmute(slice) },
-            mapping: Arc::new(mapping),
-        })
-    }
-
-    pub fn from_buf<B>(buf: B) -> Self
-        where B: 'static + AsRef<[u8]> + fmt::Debug + Send + Sync,
-    {
-        // Important to do this first so as to pin down the buffer's memory location.
-        let buf = Arc::new(buf);
-
-        // Remember that as_ref() doesn't necessarily have to return the same slice each time, so
-        // we have to be careful to call as_ref() exactly once.
-        let slice = (*buf).as_ref();
-        Self {
-            slice: unsafe { mem::transmute(slice) },
-            mapping: buf,
-        }
-    }
-
-    pub fn as_marks(&self) -> &[Mark] {
+    pub fn as_marks(bytes: &[u8]) -> &[Mark] {
         unsafe {
-            let (prefix, marks, _padding) = self.align_to();
+            let (prefix, marks, _padding) = bytes.align_to();
             assert_eq!(prefix.len(), 0);
             marks
         }
-    }
-
-    pub fn truncate(&mut self, len: usize) {
-        if let Some(slice) = self.slice.get(0 .. len) {
-            self.slice = slice;
-        }
-    }
-
-    pub fn slice(&self) -> &&[u8] {
-        &self.slice
-    }
-}
-
-impl ops::Deref for Mapping {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        self.slice()
     }
 }
 

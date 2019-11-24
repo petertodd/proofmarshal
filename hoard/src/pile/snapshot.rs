@@ -6,6 +6,8 @@ use core::ops;
 use core::slice::SliceIndex;
 use core::slice;
 
+use std::sync::Arc;
+
 use super::Offset;
 
 #[derive(Debug, Clone)]
@@ -17,12 +19,27 @@ pub struct Snapshot<'p, M: ?Sized = dyn Mapping> {
     mapping: M,
 }
 
-pub unsafe trait Mapping : fmt::Debug + Any + ops::Deref<Target=[u8]> + Sync {
+pub unsafe trait Mapping : fmt::Debug + Any + Sync {
+    fn as_bytes(&self) -> &[u8];
 }
 
-unsafe impl Mapping for &'static [u8] {}
-unsafe impl Mapping for Box<[u8]> {}
-unsafe impl Mapping for Vec<u8> {}
+unsafe impl Mapping for &'static [u8] {
+    fn as_bytes(&self) -> &[u8] {
+        self
+    }
+}
+
+unsafe impl Mapping for Vec<u8> {
+    fn as_bytes(&self) -> &[u8] {
+        &self[..]
+    }
+}
+
+unsafe impl<M: Mapping + Send> Mapping for Arc<M> {
+    fn as_bytes(&self) -> &[u8] {
+        (**self).as_bytes()
+    }
+}
 
 unsafe impl<M: Sync> Sync for Snapshot<'_, M> {}
 
@@ -44,7 +61,7 @@ impl<'m, M: Mapping> Snapshot<'m, M> {
     {
         // Remember that as_ref() doesn't necessarily have to return the same slice each time, so
         // we have to be careful to call as_ref() exactly once.
-        if let Some(slice) = mapping.get(range) {
+        if let Some(slice) = mapping.as_bytes().get(range) {
             Some(Self {
                 marker: PhantomData,
                 slice_ptr: slice.as_ptr(),

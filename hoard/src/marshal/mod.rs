@@ -104,7 +104,7 @@ pub unsafe trait Encode<Z> : Sized {
 
     fn encode_own<T: ?Sized + Pointee>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Z>>::State>
         where T: Save<Z>,
-              Z: BlobZone + Encode<Z>,
+              Z: BlobZone,
               Self: Ptr
     {
         unimplemented!()
@@ -113,7 +113,7 @@ pub unsafe trait Encode<Z> : Sized {
     fn encode_own_value<T, D>(own: &Own<T,Self>, state: &mut T::State, dumper: D) -> Result<(D, Self::State), D::Pending>
         where T: ?Sized + Save<Z>,
               D: SavePtr<Z>,
-              Z: BlobZone + Encode<Z>,
+              Z: BlobZone,
               Self: Ptr
     {
         unimplemented!()
@@ -139,7 +139,11 @@ pub trait Decode<Z> : Encode<Z> {
     fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self
         where Self: Persist, Z: BlobZone
     {
-        todo!()
+        assert_eq!(mem::align_of::<Self>(), 1);
+        assert_eq!(mem::size_of::<Self>(), blob.len());
+        unsafe {
+            blob.assume_valid()
+        }
     }
 
     fn ptr_validate_blob<'a>(blob: Blob<'a, Self, Z>) -> Result<FullyValidBlob<'a, Self, Z>, Self::Error>
@@ -297,17 +301,27 @@ pub trait SavePtr<Z: BlobZone> : Sized {
 
 pub trait LoadPtr<Z: BlobZone> {
     fn load_blob<'a, T: ?Sized + Load<Z>>(&self, ptr: &'a ValidPtr<T, Z::BlobPtr>) -> FullyValidBlob<'a, T, Z>;
+
+    fn blob_zone(&self) -> &Z;
 }
 
 impl<Z: BlobZone, L: LoadPtr<Z>> LoadPtr<Z> for &'_ L {
     fn load_blob<'a, T: ?Sized + Load<Z>>(&self, ptr: &'a ValidPtr<T, Z::BlobPtr>) -> FullyValidBlob<'a, T, Z> {
         (*self).load_blob(ptr)
     }
+
+    fn blob_zone(&self) -> &Z {
+        (*self).blob_zone()
+    }
 }
 
 impl LoadPtr<!> for () {
     fn load_blob<'a, T: ?Sized + Load<!>>(&self, ptr: &'a ValidPtr<T,!>) -> FullyValidBlob<'a, T, !> {
         match ptr.raw {}
+    }
+
+    fn blob_zone(&self) -> &! {
+        panic!()
     }
 }
 

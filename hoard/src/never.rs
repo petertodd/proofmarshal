@@ -35,7 +35,7 @@ impl Ptr for ! {
 
 impl Zone for ! {
     type Ptr = !;
-    //type PersistPtr = !;
+    type PersistPtr = !;
     type Allocator = NeverAllocator<!>;
 
     fn allocator() -> Self::Allocator {

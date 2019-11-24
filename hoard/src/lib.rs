@@ -3,6 +3,7 @@
 #![feature(alloc_layout_extra)]
 #![feature(slice_from_raw_parts)]
 #![feature(manually_drop_take)]
+#![feature(arbitrary_self_types)]
 
 #![allow(unused_imports)]
 #![allow(unused_variables)]
@@ -22,7 +23,7 @@ pub mod pointee;
 use self::pointee::*;
 
 pub mod marshal;
-use self::marshal::Load;
+use self::marshal::{Load, Primitive};
 
 mod fatptr;
 pub use self::fatptr::FatPtr;
@@ -34,7 +35,7 @@ mod own;
 pub use self::own::Own;
 
 pub mod never;
-pub mod heap;
+//pub mod heap;
 pub mod pile;
 
 //pub mod hoard;
@@ -72,6 +73,7 @@ pub trait Ptr : Sized + fmt::Debug {
 }
 pub trait Zone : Sized {
     type Ptr : Ptr;
+    type PersistPtr : Primitive;
 
     type Allocator : Alloc<Zone = Self, Ptr = Self::Ptr>;
 

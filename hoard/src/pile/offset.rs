@@ -57,11 +57,11 @@ impl<'s,'m> Offset<'s,'m> {
 
     pub fn new(snap: &'s Snapshot<'m>, offset: usize, size: usize) -> Option<Self> {
         snap.get(offset .. offset + size)
-            .map(|slice| unsafe { Self::new_unchecked(slice) })
+            .map(|slice| unsafe { Self::new_unchecked(offset) })
     }
 
-    pub unsafe fn new_unchecked(slice: &'s [u8]) -> Self {
-        let offset = slice.len() as u64;
+    pub unsafe fn new_unchecked(offset: usize) -> Self {
+        let offset = offset as u64;
         Self {
             marker: PhantomData,
             raw: NonZeroU64::new((offset << 1) | 1).unwrap().into(),
@@ -205,28 +205,27 @@ unsafe impl<'s,'p> Encode<PileMut<'s,'p>> for Offset<'s,'p> {
     }
 }
 
-/*
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum DecodeOffsetError {
     Ptr(u64),
     OutOfRange(u64),
 }
 
-impl Decode<Self> for Offset<'_> {
+impl<'s,'m> Decode<Pile<'s,'m>> for Offset<'s,'m> {
     type Error = DecodeOffsetError;
 
     type ValidateChildren = ();
 
-    fn validate_blob<'a>(blob: Blob<'a, Self, Self>) -> Result<BlobValidator<'a, Self, Self>, Self::Error> {
+    fn validate_blob<'a>(blob: Blob<'a, Self, Pile<'s,'m>>) -> Result<BlobValidator<'a, Self, Pile<'s,'m>>, Self::Error> {
         Self::ptr_validate_blob(blob)?;
         Ok(blob.assume_valid(()))
     }
 
-    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Self>, _: &impl LoadPtr<Self>) -> Self {
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Pile<'s,'m>>, _: &impl LoadPtr<Pile<'s,'m>>) -> Self {
         Self::ptr_decode_blob(blob)
     }
 
+    /*
     fn deref_blob<'a>(blob: FullyValidBlob<'a, Self, Self>) -> &'a Self {
         unsafe { blob.assume_valid() }
     }
@@ -245,20 +244,36 @@ impl Decode<Self> for Offset<'_> {
             unsafe { Ok(blob.assume_fully_valid()) }
         }
     }
+    */
 
-    fn ptr_decode_blob<'a>(blob: FullyValidBlob<'a, Self, Self>) -> Self {
-        *<Self as Decode<Self>>::deref_blob(blob)
+    fn ptr_decode_blob<'a>(blob: FullyValidBlob<'a, Self, Pile<'s,'m>>) -> Self {
+        *<Self as Decode<Pile<'s,'m>>>::deref_blob(blob)
     }
 
+    /*
     fn ptr_validate_children<T, V>(ptr: &FatPtr<T,Self>, validator: &mut V) -> Result<Option<T::ValidateChildren>, V::Error>
         where T: ?Sized + Load<Self>,
               V: ValidatePtr<Self>,
     {
         validator.validate_ptr(ptr)
     }
+    */
 }
 
-*/
+impl<'s,'m> Decode<PileMut<'s,'m>> for Offset<'s,'m> {
+    type Error = DecodeOffsetError;
+
+    type ValidateChildren = ();
+
+    fn validate_blob<'a>(blob: Blob<'a, Self, PileMut<'s,'m>>) -> Result<BlobValidator<'a, Self, PileMut<'s,'m>>, Self::Error> {
+        Self::ptr_validate_blob(blob)?;
+        Ok(blob.assume_valid(()))
+    }
+
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, PileMut<'s,'m>>, _: &impl LoadPtr<PileMut<'s,'m>>) -> Self {
+        Self::ptr_decode_blob(blob)
+    }
+}
 
 impl Ptr for OffsetMut<'_, '_> {
     fn dealloc_own<T: ?Sized + Pointee>(owned: Own<T, Self>) {
@@ -397,87 +412,3 @@ impl fmt::Pointer for OffsetMut<'_,'_> {
         fmt::Debug::fmt(self, f)
     }
 }
-
-/*
-impl<'p> Encode<Self> for OffsetMut<'p> {
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
-
-    type State = Offset<'static>;
-    fn init_encode_state(&self) -> Self::State {
-        panic!()
-    }
-
-    fn encode_poll<D: SavePtr<Self>>(&self, _: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
-        Ok(dumper)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, offset: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        self.encode_own_ptr(offset, dst)
-    }
-
-    fn encode_own<T: ?Sized + Save<Self>>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Self>>::State> {
-        match own.raw.kind() {
-            Kind::Offset(offset) => Ok(offset.persist()),
-            Kind::Ptr(ptr) => {
-                let value = unsafe { &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), own.metadata) };
-                Err(value.init_save_state())
-            },
-        }
-    }
-
-    fn encode_own_value<T, D>(own: &Own<T,Self>, state: &mut T::State, dumper: D) -> Result<(D, Self::State), D::Pending>
-        where T: ?Sized + Save<Self>,
-              D: SavePtr<Self>
-    {
-        match own.raw.kind() {
-            Kind::Ptr(ptr) => {
-                let value = unsafe { &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), own.metadata) };
-                let (dumper, blob_ptr) = value.save_poll(state, dumper)?;
-
-                if let Some(offset) = Any::downcast_ref(&blob_ptr) {
-                    Ok((dumper, *offset))
-                } else {
-                    unreachable!()
-                }
-            },
-            Kind::Offset(_) => unreachable!(),
-        }
-    }
-
-    fn encode_own_ptr<W: WriteBlob>(&self, offset: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        offset.encode_blob(&(), dst)
-    }
-}
-
-impl Decode<Self> for OffsetMut<'_> {
-    type Error = DecodeOffsetError;
-
-    type ValidateChildren = ();
-
-    fn validate_blob<'q>(blob: Blob<'q, Self, Self>) -> Result<BlobValidator<'q, Self, Self>, Self::Error> {
-        Self::ptr_validate_blob(blob)?;
-        Ok(blob.assume_valid(()))
-    }
-
-    fn decode_blob(blob: FullyValidBlob<'_, Self, Self>, _: &impl LoadPtr<Self>) -> Self {
-        Self::ptr_decode_blob(blob)
-    }
-
-    fn deref_blob<'a>(blob: FullyValidBlob<'a, Self, Self>) -> &'a Self {
-        unsafe { blob.assume_valid() }
-    }
-
-    fn ptr_validate_blob<'a>(blob: Blob<'a, Self, Self>) -> Result<FullyValidBlob<'a, Self, Self>, Self::Error> {
-        let offset_blob = Blob::new(&blob[..], ()).unwrap();
-        <Offset as Decode<Offset>>::ptr_validate_blob(offset_blob)?;
-
-        unsafe { Ok(blob.assume_fully_valid()) }
-    }
-
-    fn ptr_decode_blob<'a>(blob: FullyValidBlob<'a, Self, Self>) -> Self {
-        let inner = <Self as Decode<Self>>::deref_blob(blob).0;
-        // TODO: add assertion
-        Self(inner)
-    }
-}
-*/

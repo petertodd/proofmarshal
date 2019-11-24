@@ -5,6 +5,8 @@ use core::ops;
 use core::ptr::NonNull;
 use core::pin::Pin;
 
+use leint::Le;
+
 use super::*;
 
 use crate::marshal::{*, blob::*};
@@ -62,6 +64,10 @@ impl<'s,'m> LoadPtr<Self> for Pile<'s,'m> {
         Offset::load_valid_blob_from_pile(ptr, self)
             .expect("ValidPtr to be valid")
     }
+
+    fn blob_zone(&self) -> &Self {
+        self
+    }
 }
 
 impl<'s,'m> LoadPtr<Self> for PileMut<'s,'m> {
@@ -72,55 +78,11 @@ impl<'s,'m> LoadPtr<Self> for PileMut<'s,'m> {
         OffsetMut::load_valid_blob_from_pile(ptr, self)
             .expect("ValidPtr to be valid")
     }
-}
 
-/*
-
-impl<'s,'p> ValidatePtr<OffsetMut<'s,'p>> for PileMut<'s,'p> {
-    type Error = ValidatePtrError;
-
-    fn validate_ptr<'a, T>(&mut self, ptr: &'a FatPtr<T, OffsetMut<'s,'p>>)
-        -> Result<Option<BlobValidator<'a, T, OffsetMut<'s,'p>>>, Self::Error>
-    where T: ?Sized + Load<OffsetMut<'s,'p>>
-    {
-        match ptr.raw.kind() {
-            Kind::Ptr(_) => Ok(None),
-            Kind::Offset(offset) => {
-                let size = T::dyn_blob_layout(ptr.metadata).size();
-                let blob = self.get_blob(&offset, size)
-                               .ok_or_else(||
-                                    ValidatePtrError::Offset {
-                                        offset: offset.to_static(),
-                                        size,
-                                    }
-                               )?;
-                let blob = Blob::new(blob, ptr.metadata).unwrap();
-
-                T::validate_blob(blob).map(Some)
-                    .map_err(|e| ValidatePtrError::Value(Box::new(e)))
-            }
-        }
+    fn blob_zone(&self) -> &Self {
+        self
     }
 }
-
-
-impl<'s,'p> LoadPtr<OffsetMut<'s,'p>> for PileMut<'s,'p> {
-    fn load_blob<'a, T: ?Sized + Load<OffsetMut<'s,'p>>>(&self, ptr: &'a ValidPtr<T, OffsetMut<'s,'p>>)
-        -> FullyValidBlob<'a, T, OffsetMut<'s,'p>>
-    {
-        match ptr.raw.kind() {
-            Kind::Ptr(_) => panic!(),
-            Kind::Offset(offset) => {
-                let blob = self.get_blob(&offset, T::dyn_blob_layout(ptr.metadata).size())
-                               .expect("invalid ValidPtr");
-                let blob = Blob::new(blob, ptr.metadata).unwrap();
-
-                unsafe { blob.assume_fully_valid() }
-            },
-        }
-    }
-}
-*/
 
 #[derive(Debug)]
 pub struct PileMut<'s, 'm>(Pile<'s, 'm>);
@@ -148,6 +110,7 @@ impl Default for PileMut<'static, '_> {
 
 impl<'s,'p> Zone for Pile<'s,'p> {
     type Ptr = Offset<'s,'p>;
+    type PersistPtr = Le<u64>;
 
     type Allocator = crate::never::NeverAllocator<Self>;
 
@@ -162,6 +125,7 @@ impl<'s,'m> BlobZone for Pile<'s,'m> {
 
 impl<'s,'p> Zone for PileMut<'s,'p> {
     type Ptr = OffsetMut<'s,'p>;
+    type PersistPtr = Le<u64>;
 
     type Allocator = Self;
 
@@ -241,6 +205,37 @@ impl<'s,'m> Get for PileMut<'s, 'm> {
     }
 }
 
+unsafe impl<'s,'m> Encode<Self> for PileMut<'s,'m> {
+    type State = ();
+
+    fn blob_layout() -> BlobLayout {
+        BlobLayout::new(0)
+    }
+
+    fn init_encode_state(&self) -> () {}
+
+    fn encode_poll<D: SavePtr<Self>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
+        Ok(dumper)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
+        dst.finish()
+    }
+}
+
+impl<'s,'m> Decode<Self> for PileMut<'s,'m> {
+    type Error = !;
+    type ValidateChildren = ();
+
+    fn validate_blob<'a>(blob: Blob<'a, Self, Self>) -> Result<BlobValidator<'a, Self, Self>, !> {
+        Ok(blob.assume_valid(()))
+    }
+
+    fn decode_blob<'a>(_: FullyValidBlob<'a, Self, Self>, loader: &impl LoadPtr<Self>) -> Self {
+        todo!()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -263,6 +258,39 @@ mod test {
 
         let blob = pile.load_blob(&validptr);
         assert_eq!(&blob[..], &[3,4]);
+    }
+
+    #[test]
+    fn pile_load_owned_ptr() {
+        let mapping = vec![42, 1,0,0,0,0,0,0,0];
+        let snapshot = unsafe { Snapshot::new_unchecked(mapping) };
+        let pile = Pile::new(&snapshot);
+
+        let offset = Offset::new(&snapshot, 1, 8).unwrap();
+        let fatptr: FatPtr<Own<u8, Offset>, Offset> = FatPtr { raw: offset, metadata: () };
+        let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
+
+        let blob = pile.load_blob(&validptr);
+
+        let loaded = <Own<u8, Offset> as Decode<Pile<'_,'_>>>::load_blob(blob, &pile);
+        assert_eq!(loaded.raw.get(), 0);
+
+        assert_eq!(*pile.get(&loaded), 42);
+    }
+
+    #[test]
+    fn pile_save_owned_ptr() {
+        let mapping = vec![1,0,0,0,0,0,0,0];
+        let snapshot = unsafe { Snapshot::new_unchecked(mapping) };
+        let pile = Pile::new(&snapshot);
+
+        let offset = Offset::new(&snapshot, 0, 8).unwrap();
+        let fatptr: FatPtr<Own<(), Offset>, Offset> = FatPtr { raw: offset, metadata: () };
+        let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
+
+        let owned: Own<Own<(), Offset>, Offset> = unsafe { Own::new_unchecked(validptr) };
+
+        let _state = <Own<Own<(), Offset>, Offset> as Encode<Pile>>::init_encode_state(&owned);
     }
 
     #[test]

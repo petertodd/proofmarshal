@@ -8,6 +8,7 @@ edition = "2018"
 nonzero = { path = "../nonzero" }
 owned = { path = "../owned" }
 leint = { path = "../leint" }
+singlelife = { path = "../singlelife" }
 
 memmap = "0.7.0"
 

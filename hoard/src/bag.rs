@@ -2,8 +2,8 @@ use super::*;
 
 use core::fmt;
 
-//use crate::marshal::blob::*;
-//use crate::marshal::*;
+use crate::marshal::blob::*;
+use crate::marshal::*;
 
 /// An owned pointer to a value in a `Zone`.
 #[derive(Debug)]
@@ -27,30 +27,67 @@ impl<T: ?Sized + Pointee, Z: Zone> Bag<T,Z> {
     }
 }
 
-/*
-impl<T: ?Sized + Load<Z::Ptr>, Z: Zone> Bag<T,Z> {
-    pub fn get<'a>(&'a self) -> Ref<'a, T>
-        where Z: Get
-    {
+impl<T: ?Sized + Pointee, Z: Zone> Bag<T,Z>
+where T: Load<Z>, Z: Get
+{
+    pub fn get(&self) -> Ref<T> {
         self.zone.get(&self.ptr)
     }
 
-    pub fn take<'a>(self) -> T::Owned
-        where Z: Get
-    {
+    pub fn take(self) -> T::Owned {
         self.zone.take(self.ptr)
     }
 }
-*/
 
-/*
-impl<T, Z, Q> Encode<Q> for Bag<T, Z>
-where Q: Ptr + Encode<Q>,
-      Z::Ptr: Encode<Q>,
-      T: ?Sized + Save<Q>,
+unsafe impl<T, Z, Y> Encode<Y> for Bag<T, Z>
+where Y: BlobZone,
+      Z: Zone + Encode<Y>,
+      T: ?Sized + Save<Y>,
 {
-    const BLOB_LAYOUT: BlobLayout = <Own<T, Z::Ptr> as Encode<Q>>
-    */
+    type State = (); //<Own<T, Z::Ptr> as Encode<Y>>::State;
+
+    fn blob_layout() -> BlobLayout {
+        //<Own<T, Z::Ptr> as Encode<Y>>::blob_layout()
+        todo!()
+    }
+
+    fn init_encode_state(&self) -> Self::State {
+        //self.ptr.init_encode_state()
+        todo!()
+    }
+
+    fn encode_poll<D: SavePtr<Y>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
+        //<Own<T, Z::Ptr> as Encode<Y>>::encode_poll(&self.ptr, state, dumper)
+        todo!()
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+        //<Own<T, Z::Ptr> as Encode<Y>>::encode_blob(&self.ptr, state, dst)
+        todo!()
+    }
+}
+
+impl<T, Z, Y> Decode<Y> for Bag<T, Z>
+where Y: BlobZone,
+      Z: Zone + Decode<Y>,
+      T: ?Sized + Load<Y>,
+{
+    type Error = !;
+    type ValidateChildren = ();
+
+    fn validate_blob<'a>(blob: Blob<'a, Self, Y>) -> Result<BlobValidator<'a, Self, Y>, Self::Error> {
+        /*
+        let mut fields = blob.validate_struct();
+        let ptr_state = fields.field::<Own<T, Z::Ptr>>()?;
+        Ok(fields.done(ptr_state))
+        */
+        todo!()
+    }
+
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Y>, loader: &impl LoadPtr<Y>) -> Self {
+        todo!()
+    }
+}
 
 impl<T: ?Sized + Pointee, Z: Zone> fmt::Pointer for Bag<T,Z>
 where Z::Ptr: fmt::Pointer,
@@ -64,18 +101,15 @@ where Z::Ptr: fmt::Pointer,
 mod test {
     use super::*;
 
-    use crate::heap::Heap;
+    use crate::pile::PileMut;
 
     #[test]
-    fn test() {
-        let _bag: Bag<_, Heap> = Bag::new(42u16);
+    fn test_pile() {
+        let bagged_u8 = Bag::<u8, PileMut>::new(42);
+        assert_eq!(*bagged_u8.get(), 42);
 
-        let _bag = Bag::new_in(42u16, Heap);
+        let bag2 = Bag::<_, PileMut>::new(bagged_u8);
 
-        //let _bag = Bag::<[u8], Heap>::new(vec![1u8,2,3]);
-
-        let bag = Bag::new_in(42u16, Heap);
-        //assert_eq!(*bag.get(), 42u16);
-        //assert_eq!(bag.take(), 42u16);
+        bag2.get();
     }
 }

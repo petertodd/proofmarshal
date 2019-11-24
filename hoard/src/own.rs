@@ -74,21 +74,19 @@ where P: fmt::Pointer,
     }
 }
 
-pub enum EncodeOwnState<T: ?Sized + Save<Q>, P: Encode<Q>, Q> {
+pub enum EncodeOwnState<T: ?Sized + Save<Z>, P: Encode<Z>, Z> {
     Initial,
     Value(T::State),
     Ptr(P::State),
 }
 
 unsafe impl<T, P, Z> Encode<Z> for Own<T,P>
-where Z: Encode<Z>,
+where Z: BlobZone,
       P: Ptr + Encode<Z>,
       T: ?Sized + Save<Z>,
 {
-    fn blob_layout() -> BlobLayout
-        where Z: BlobZone
-    {
-        Z::blob_layout().extend(<T::Metadata as Primitive>::BLOB_LAYOUT)
+    fn blob_layout() -> BlobLayout {
+        <Z::BlobPtr as Encode<Z>>::blob_layout().extend(<T::Metadata as Primitive>::BLOB_LAYOUT)
     }
 
     type State = EncodeOwnState<T, P, Z>;
@@ -97,10 +95,7 @@ where Z: Encode<Z>,
         EncodeOwnState::Initial
     }
 
-    fn encode_poll<D: SavePtr<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>
-        where Z: BlobZone
-    {
-        /*
+    fn encode_poll<D: SavePtr<Z>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Pending> {
         loop {
             match state {
                 EncodeOwnState::Initial => {
@@ -119,22 +114,15 @@ where Z: Encode<Z>,
                 EncodeOwnState::Ptr(state) => break self.raw.encode_poll(state, dumper),
             }
         }
-        */
-        todo!()
     }
 
-    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>
-        where Z: BlobZone
-    {
-        /*
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
         if let EncodeOwnState::Ptr(state) = state {
             dst.write(&self.raw, state)?
                .finish()
         } else {
             panic!()
         }
-        */
-        todo!()
     }
 }
 
@@ -148,7 +136,7 @@ pub enum LoadOwnError<P,M> {
 impl<T: ?Sized + Pointee, P: Ptr, Z> Decode<Z> for Own<T,P>
 where T: Load<Z>,
       P: Decode<Z>,
-      Z: Encode<Z>,
+      Z: BlobZone,
 {
     type Error = LoadOwnError<P::Error, <T::Metadata as Primitive>::Error>;
 
@@ -173,18 +161,13 @@ where T: Load<Z>,
         todo!()
     }
 
-    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Z>, loader: &impl LoadPtr<Z>) -> Self
-        where Z: BlobZone
-    {
-        /*
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Z>, loader: &impl LoadPtr<Z>) -> Self {
         let mut fields = blob.decode_struct(loader);
         let fatptr = fields.field();
 
         unsafe {
             Self::new_unchecked(ValidPtr::new_unchecked(fatptr))
         }
-        */
-        todo!()
     }
 }
 
