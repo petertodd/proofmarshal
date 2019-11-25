@@ -13,7 +13,7 @@ use crate::coerce::TryCastRef;
 /// An owned pointer.
 #[repr(transparent)]
 pub struct OwnedPtr<T: ?Sized + Pointee, P: Ptr> {
-    marker: PhantomData<T>,
+    marker: PhantomData<Box<T>>,
     inner: ManuallyDrop<ValidPtr<T,P>>,
 }
 
