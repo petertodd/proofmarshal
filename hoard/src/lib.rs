@@ -23,7 +23,7 @@ pub mod pointee;
 use self::pointee::*;
 
 pub mod marshal;
-use self::marshal::{Load, Primitive};
+use self::marshal::{Encode, Decode, Load, Primitive};
 
 mod fatptr;
 pub use self::fatptr::FatPtr;
@@ -72,28 +72,26 @@ pub trait Ptr : Sized + fmt::Debug {
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>));
 }
 pub trait Zone : Sized {
-    type Ptr : Ptr;
-    type PersistPtr : Primitive;
+    type Ptr : Ptr + Encode<Self>;
+    type PersistPtr : Ptr + Decode<Self> + Into<Self::Ptr>;
 
-    type Allocator : Alloc<Zone = Self, Ptr = Self::Ptr>;
+    type Allocator : Alloc<Zone = Self>;
 
     fn allocator() -> Self::Allocator
         where Self: Default;
 }
 
 pub trait Alloc : Sized {
-    type Zone : Zone<Ptr=Self::Ptr>;
-    type Ptr : Ptr;
+    type Zone : Zone;
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, Self::Ptr>;
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, <Self::Zone as Zone>::Ptr>;
     fn zone(&self) -> Self::Zone;
 }
 
 impl<A: Alloc> Alloc for &'_ mut A {
     type Zone = A::Zone;
-    type Ptr = A::Ptr;
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, Self::Ptr> {
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, <Self::Zone as Zone>::Ptr> {
         (**self).alloc(src)
     }
 

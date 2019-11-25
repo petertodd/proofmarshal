@@ -110,7 +110,7 @@ impl Default for PileMut<'static, '_> {
 
 impl<'s,'p> Zone for Pile<'s,'p> {
     type Ptr = Offset<'s,'p>;
-    type PersistPtr = Le<u64>;
+    type PersistPtr = Offset<'s,'p>;
 
     type Allocator = crate::never::NeverAllocator<Self>;
 
@@ -125,7 +125,7 @@ impl<'s,'m> BlobZone for Pile<'s,'m> {
 
 impl<'s,'p> Zone for PileMut<'s,'p> {
     type Ptr = OffsetMut<'s,'p>;
-    type PersistPtr = Le<u64>;
+    type PersistPtr = Offset<'s,'p>;
 
     type Allocator = Self;
 
@@ -142,9 +142,8 @@ impl<'s,'p> BlobZone for PileMut<'s,'p> {
 
 impl<'s,'p> Alloc for PileMut<'s,'p> {
     type Zone = Self;
-    type Ptr = OffsetMut<'s,'p>;
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, Self::Ptr> {
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, OffsetMut<'s,'p>> {
         src.take_unsized(|src| unsafe {
             let metadata = T::metadata(src);
             OwnedPtr::new_unchecked(ValidPtr::<T,_>::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata }))

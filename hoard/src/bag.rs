@@ -19,7 +19,7 @@ impl<T: ?Sized + Pointee, Z: Zone> Bag<T,Z> {
         Self::new_in(value, Z::allocator())
     }
 
-    pub fn new_in(value: impl Take<T>, mut alloc: impl Alloc<Zone=Z, Ptr=Z::Ptr>) -> Self {
+    pub fn new_in(value: impl Take<T>, mut alloc: impl Alloc<Zone=Z>) -> Self {
         Self {
             ptr: alloc.alloc(value),
             zone: alloc.zone(),

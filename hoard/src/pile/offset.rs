@@ -205,6 +205,28 @@ unsafe impl<'s,'p> Encode<PileMut<'s,'p>> for Offset<'s,'p> {
     }
 }
 
+unsafe impl<'s,'p> Encode<PileMut<'s,'p>> for OffsetMut<'s,'p> {
+    fn blob_layout() -> BlobLayout {
+        BlobLayout::new_nonzero(mem::size_of::<Self>())
+    }
+
+    type State = ();
+    fn init_encode_state(&self) -> Self::State {}
+
+    fn encode_poll<D: SavePtr<PileMut<'s,'p>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
+        Ok(dumper)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
+        dst.write_bytes(&self.0.raw.get().get().to_le_bytes())?
+           .finish()
+    }
+
+    fn encode_own<T: ?Sized + Save<PileMut<'s,'p>>>(own: &OwnedPtr<T,Self>) -> Result<Self::State, <T as Save<PileMut<'s,'p>>>::State> {
+        Ok(())
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum DecodeOffsetError {
     Ptr(u64),
