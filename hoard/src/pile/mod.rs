@@ -144,11 +144,11 @@ impl<'s,'p> Alloc for PileMut<'s,'p> {
     type Zone = Self;
     type Ptr = OffsetMut<'s,'p>;
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Ptr> {
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, Self::Ptr> {
         src.take_unsized(|src| unsafe {
             let metadata = T::metadata(src);
-            Own::new_unchecked(ValidPtr::<T,_>::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata }))
-            //Own::new_unchecked(ValidPtr::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata }))
+            OwnedPtr::new_unchecked(ValidPtr::<T,_>::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata }))
+            //OwnedPtr::new_unchecked(ValidPtr::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata }))
         })
     }
 
@@ -158,21 +158,21 @@ impl<'s,'p> Alloc for PileMut<'s,'p> {
 }
 
 impl<'s,'m> Get for Pile<'s, 'm> {
-    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a Own<T, Self::Ptr>) -> Ref<'a, T>
+    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a OwnedPtr<T, Self::Ptr>) -> Ref<'a, T>
         where Self: 'a
     {
         let blob = self.load_blob(ptr);
         T::load_blob(blob, self)
     }
 
-    fn take<T: ?Sized + Load<Self>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned {
+    fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self::Ptr>) -> T::Owned {
         let blob = self.load_blob(&ptr);
         T::decode_blob(blob, self)
     }
 }
 
 impl<'s,'m> Get for PileMut<'s, 'm> {
-    fn get<'a, T: ?Sized + Load<Self>>(&self, own: &'a Own<T, Self::Ptr>) -> Ref<'a, T>
+    fn get<'a, T: ?Sized + Load<Self>>(&self, own: &'a OwnedPtr<T, Self::Ptr>) -> Ref<'a, T>
         where Self: 'a
     {
         match own.raw.kind() {
@@ -190,7 +190,7 @@ impl<'s,'m> Get for PileMut<'s, 'm> {
         }
     }
 
-    fn take<T: ?Sized + Load<Self>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned {
+    fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self::Ptr>) -> T::Owned {
         let ptr = ptr.into_inner();
         if let Ok(valid_offset_ptr) = ptr.try_cast_ref() {
                 let blob = self.load_blob(valid_offset_ptr);
@@ -267,12 +267,12 @@ mod test {
         let pile = Pile::new(&snapshot);
 
         let offset = Offset::new(&snapshot, 1, 8).unwrap();
-        let fatptr: FatPtr<Own<u8, Offset>, Offset> = FatPtr { raw: offset, metadata: () };
+        let fatptr: FatPtr<OwnedPtr<u8, Offset>, Offset> = FatPtr { raw: offset, metadata: () };
         let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
 
         let blob = pile.load_blob(&validptr);
 
-        let loaded = <Own<u8, Offset> as Decode<Pile<'_,'_>>>::load_blob(blob, &pile);
+        let loaded = <OwnedPtr<u8, Offset> as Decode<Pile<'_,'_>>>::load_blob(blob, &pile);
         assert_eq!(loaded.raw.get(), 0);
 
         assert_eq!(*pile.get(&loaded), 42);
@@ -285,12 +285,12 @@ mod test {
         let pile = Pile::new(&snapshot);
 
         let offset = Offset::new(&snapshot, 0, 8).unwrap();
-        let fatptr: FatPtr<Own<(), Offset>, Offset> = FatPtr { raw: offset, metadata: () };
+        let fatptr: FatPtr<OwnedPtr<(), Offset>, Offset> = FatPtr { raw: offset, metadata: () };
         let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
 
-        let owned: Own<Own<(), Offset>, Offset> = unsafe { Own::new_unchecked(validptr) };
+        let owned: OwnedPtr<OwnedPtr<(), Offset>, Offset> = unsafe { OwnedPtr::new_unchecked(validptr) };
 
-        let _state = <Own<Own<(), Offset>, Offset> as Encode<Pile>>::init_encode_state(&owned);
+        let _state = <OwnedPtr<OwnedPtr<(), Offset>, Offset> as Encode<Pile>>::init_encode_state(&owned);
     }
 
     #[test]
@@ -310,9 +310,9 @@ mod test {
     #[test]
     fn pilemut_get_lifetimes() {
         let mut alloc = PileMut::allocator();
-        let owned: Own<u8, OffsetMut<'static,'_>> = alloc.alloc(42u8);
+        let owned: OwnedPtr<u8, OffsetMut<'static,'_>> = alloc.alloc(42u8);
 
-        fn test_get<'a,'s,'m>(pile: &PileMut<'s,'m>, ptr: &'a Own<u8, OffsetMut<'static, 'm>>) -> Ref<'a,u8> {
+        fn test_get<'a,'s,'m>(pile: &PileMut<'s,'m>, ptr: &'a OwnedPtr<u8, OffsetMut<'static, 'm>>) -> Ref<'a,u8> {
             pile.get(ptr)
         }
 

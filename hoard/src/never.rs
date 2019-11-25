@@ -14,7 +14,7 @@ impl<Z: Zone> Alloc for NeverAllocator<Z> {
     type Zone = Z;
     type Ptr = Z::Ptr;
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, _src: impl Take<T>) -> Own<T, Z::Ptr> {
+    fn alloc<T: ?Sized + Pointee>(&mut self, _src: impl Take<T>) -> OwnedPtr<T, Z::Ptr> {
         match self.never {}
     }
 
@@ -24,11 +24,11 @@ impl<Z: Zone> Alloc for NeverAllocator<Z> {
 }
 
 impl Ptr for ! {
-    fn dealloc_own<T: ?Sized + Pointee>(ptr: Own<T,Self>) {
+    fn dealloc_own<T: ?Sized + Pointee>(ptr: OwnedPtr<T,Self>) {
         match ptr.raw {}
     }
 
-    fn drop_take_unsized<T: ?Sized + Pointee>(ptr: Own<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
+    fn drop_take_unsized<T: ?Sized + Pointee>(ptr: OwnedPtr<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
         match ptr.raw {}
     }
 }
@@ -46,11 +46,11 @@ impl Zone for ! {
 
 /*
 impl Get for ! {
-    fn get<'p, T: ?Sized + Owned + Pointee>(&self, _ptr: &'p Own<T, !>) -> Ref<'p, T> {
+    fn get<'p, T: ?Sized + Owned + Pointee>(&self, _ptr: &'p OwnedPtr<T, !>) -> Ref<'p, T> {
         match *self {}
     }
 
-    fn take<T: ?Sized + Owned + Pointee>(&self, _ptr: Own<T, !>) -> T::Owned {
+    fn take<T: ?Sized + Owned + Pointee>(&self, _ptr: OwnedPtr<T, !>) -> T::Owned {
         match *self {}
     }
 }

@@ -8,7 +8,7 @@ use crate::marshal::*;
 /// An owned pointer to a value in a `Zone`.
 #[derive(Debug)]
 pub struct Bag<T: ?Sized + Pointee, Z: Zone> {
-    ptr: Own<T,Z::Ptr>,
+    ptr: OwnedPtr<T,Z::Ptr>,
     zone: Z,
 }
 
@@ -44,10 +44,10 @@ where Y: BlobZone,
       Z: Zone + Encode<Y>,
       T: ?Sized + Save<Y>,
 {
-    type State = (); //<Own<T, Z::Ptr> as Encode<Y>>::State;
+    type State = (); //<OwnedPtr<T, Z::Ptr> as Encode<Y>>::State;
 
     fn blob_layout() -> BlobLayout {
-        //<Own<T, Z::Ptr> as Encode<Y>>::blob_layout()
+        //<OwnedPtr<T, Z::Ptr> as Encode<Y>>::blob_layout()
         todo!()
     }
 
@@ -57,12 +57,12 @@ where Y: BlobZone,
     }
 
     fn encode_poll<D: SavePtr<Y>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending> {
-        //<Own<T, Z::Ptr> as Encode<Y>>::encode_poll(&self.ptr, state, dumper)
+        //<OwnedPtr<T, Z::Ptr> as Encode<Y>>::encode_poll(&self.ptr, state, dumper)
         todo!()
     }
 
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        //<Own<T, Z::Ptr> as Encode<Y>>::encode_blob(&self.ptr, state, dst)
+        //<OwnedPtr<T, Z::Ptr> as Encode<Y>>::encode_blob(&self.ptr, state, dst)
         todo!()
     }
 }
@@ -78,7 +78,7 @@ where Y: BlobZone,
     fn validate_blob<'a>(blob: Blob<'a, Self, Y>) -> Result<BlobValidator<'a, Self, Y>, Self::Error> {
         /*
         let mut fields = blob.validate_struct();
-        let ptr_state = fields.field::<Own<T, Z::Ptr>>()?;
+        let ptr_state = fields.field::<OwnedPtr<T, Z::Ptr>>()?;
         Ok(fields.done(ptr_state))
         */
         todo!()

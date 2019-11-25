@@ -147,11 +147,11 @@ impl<'s, 'p> From<Offset<'s,'p>> for OffsetMut<'s,'p> {
 }
 
 impl Ptr for Offset<'_, '_> {
-    fn dealloc_own<T: ?Sized + Pointee>(own: Own<T, Self>) {
+    fn dealloc_own<T: ?Sized + Pointee>(own: OwnedPtr<T, Self>) {
         let _ = own.into_inner();
     }
 
-    fn drop_take_unsized<T: ?Sized + Pointee>(_: Own<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
+    fn drop_take_unsized<T: ?Sized + Pointee>(_: OwnedPtr<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
     }
 }
 
@@ -178,7 +178,7 @@ unsafe impl<'s,'p> Encode<Pile<'s,'p>> for Offset<'s,'p> {
            .finish()
     }
 
-    fn encode_own<T: ?Sized + Save<Pile<'s,'p>>>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Pile<'s,'p>>>::State> {
+    fn encode_own<T: ?Sized + Save<Pile<'s,'p>>>(own: &OwnedPtr<T,Self>) -> Result<Self::State, <T as Save<Pile<'s,'p>>>::State> {
         Ok(())
     }
 }
@@ -200,7 +200,7 @@ unsafe impl<'s,'p> Encode<PileMut<'s,'p>> for Offset<'s,'p> {
            .finish()
     }
 
-    fn encode_own<T: ?Sized + Save<PileMut<'s,'p>>>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<PileMut<'s,'p>>>::State> {
+    fn encode_own<T: ?Sized + Save<PileMut<'s,'p>>>(own: &OwnedPtr<T,Self>) -> Result<Self::State, <T as Save<PileMut<'s,'p>>>::State> {
         Ok(())
     }
 }
@@ -276,7 +276,7 @@ impl<'s,'m> Decode<PileMut<'s,'m>> for Offset<'s,'m> {
 }
 
 impl Ptr for OffsetMut<'_, '_> {
-    fn dealloc_own<T: ?Sized + Pointee>(owned: Own<T, Self>) {
+    fn dealloc_own<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
         Self::drop_take_unsized(owned, |value|
             unsafe {
                 core::ptr::drop_in_place(value)
@@ -284,7 +284,7 @@ impl Ptr for OffsetMut<'_, '_> {
         )
     }
 
-    fn drop_take_unsized<T: ?Sized + Pointee>(owned: Own<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
+    fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
         let FatPtr { raw, metadata } = owned.into_inner().into_inner();
 
         match raw.kind() {

@@ -102,7 +102,7 @@ pub unsafe trait Encode<Z> : Sized {
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>
         where Z: BlobZone;
 
-    fn encode_own<T: ?Sized + Pointee>(own: &Own<T,Self>) -> Result<Self::State, <T as Save<Z>>::State>
+    fn encode_own<T: ?Sized + Pointee>(own: &OwnedPtr<T,Self>) -> Result<Self::State, <T as Save<Z>>::State>
         where T: Save<Z>,
               Z: BlobZone,
               Self: Ptr
@@ -110,7 +110,7 @@ pub unsafe trait Encode<Z> : Sized {
         unimplemented!()
     }
 
-    fn encode_own_value<T, D>(own: &Own<T,Self>, state: &mut T::State, dumper: D) -> Result<(D, Self::State), D::Pending>
+    fn encode_own_value<T, D>(own: &OwnedPtr<T,Self>, state: &mut T::State, dumper: D) -> Result<(D, Self::State), D::Pending>
         where T: ?Sized + Save<Z>,
               D: SavePtr<Z>,
               Z: BlobZone,

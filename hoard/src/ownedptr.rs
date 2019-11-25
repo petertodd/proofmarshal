@@ -12,23 +12,23 @@ use crate::coerce::TryCastRef;
 
 /// An owned pointer.
 #[repr(transparent)]
-pub struct Own<T: ?Sized + Pointee, P: Ptr> {
+pub struct OwnedPtr<T: ?Sized + Pointee, P: Ptr> {
     marker: PhantomData<T>,
     inner: ManuallyDrop<ValidPtr<T,P>>,
 }
 
-unsafe impl<T: ?Sized + Pointee, P: Ptr, Q: Ptr> TryCastRef<Own<T,Q>> for Own<T,P>
+unsafe impl<T: ?Sized + Pointee, P: Ptr, Q: Ptr> TryCastRef<OwnedPtr<T,Q>> for OwnedPtr<T,P>
 where P: TryCastRef<Q>
 {
     type Error = P::Error;
 
-    fn try_cast_ref(&self) -> Result<&Own<T,Q>, Self::Error> {
+    fn try_cast_ref(&self) -> Result<&OwnedPtr<T,Q>, Self::Error> {
         self.inner.try_cast_ref()
             .map(|inner| unsafe { mem::transmute(inner) })
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> ops::Deref for Own<T,P> {
+impl<T: ?Sized + Pointee, P: Ptr> ops::Deref for OwnedPtr<T,P> {
     type Target = ValidPtr<T,P>;
 
     fn deref(&self) -> &ValidPtr<T,P> {
@@ -36,7 +36,7 @@ impl<T: ?Sized + Pointee, P: Ptr> ops::Deref for Own<T,P> {
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> Own<T,P> {
+impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T,P> {
     pub unsafe fn new_unchecked(ptr: ValidPtr<T,P>) -> Self {
         Self {
             marker: PhantomData,
@@ -51,14 +51,14 @@ impl<T: ?Sized + Pointee, P: Ptr> Own<T,P> {
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> Drop for Own<T,P> {
+impl<T: ?Sized + Pointee, P: Ptr> Drop for OwnedPtr<T,P> {
     fn drop(&mut self) {
         let this = unsafe { core::ptr::read(self) };
         P::dealloc_own(this)
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> fmt::Debug for Own<T,P>
+impl<T: ?Sized + Pointee, P: Ptr> fmt::Debug for OwnedPtr<T,P>
 where T: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -66,7 +66,7 @@ where T: fmt::Debug
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> fmt::Pointer for Own<T,P>
+impl<T: ?Sized + Pointee, P: Ptr> fmt::Pointer for OwnedPtr<T,P>
 where P: fmt::Pointer,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -74,13 +74,13 @@ where P: fmt::Pointer,
     }
 }
 
-pub enum EncodeOwnState<T: ?Sized + Save<Z>, P: Encode<Z>, Z> {
+pub enum EncodeOwnedPtrState<T: ?Sized + Save<Z>, P: Encode<Z>, Z> {
     Initial,
     Value(T::State),
     Ptr(P::State),
 }
 
-unsafe impl<T, P, Z> Encode<Z> for Own<T,P>
+unsafe impl<T, P, Z> Encode<Z> for OwnedPtr<T,P>
 where Z: BlobZone,
       P: Ptr + Encode<Z>,
       T: ?Sized + Save<Z>,
@@ -89,35 +89,35 @@ where Z: BlobZone,
         <Z::BlobPtr as Encode<Z>>::blob_layout().extend(<T::Metadata as Primitive>::BLOB_LAYOUT)
     }
 
-    type State = EncodeOwnState<T, P, Z>;
+    type State = EncodeOwnedPtrState<T, P, Z>;
 
     fn init_encode_state(&self) -> Self::State {
-        EncodeOwnState::Initial
+        EncodeOwnedPtrState::Initial
     }
 
     fn encode_poll<D: SavePtr<Z>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Pending> {
         loop {
             match state {
-                EncodeOwnState::Initial => {
+                EncodeOwnedPtrState::Initial => {
                     *state = match P::encode_own(self) {
-                        Ok(ptr_state) => EncodeOwnState::Ptr(ptr_state),
-                        Err(value_state) => EncodeOwnState::Value(value_state),
+                        Ok(ptr_state) => EncodeOwnedPtrState::Ptr(ptr_state),
+                        Err(value_state) => EncodeOwnedPtrState::Value(value_state),
                     };
                 },
-                EncodeOwnState::Value(value_state) => {
+                EncodeOwnedPtrState::Value(value_state) => {
                     let metadata = self.metadata;
                     let (d, ptr_state) = P::encode_own_value(self, value_state, dumper)?;
                     dumper = d;
 
-                    *state = EncodeOwnState::Ptr(ptr_state);
+                    *state = EncodeOwnedPtrState::Ptr(ptr_state);
                 },
-                EncodeOwnState::Ptr(state) => break self.raw.encode_poll(state, dumper),
+                EncodeOwnedPtrState::Ptr(state) => break self.raw.encode_poll(state, dumper),
             }
         }
     }
 
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        if let EncodeOwnState::Ptr(state) = state {
+        if let EncodeOwnedPtrState::Ptr(state) = state {
             dst.write(&self.raw, state)?
                .finish()
         } else {
@@ -128,19 +128,19 @@ where Z: BlobZone,
 
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum LoadOwnError<P,M> {
+pub enum LoadOwnedPtrError<P,M> {
     Ptr(P),
     Metadata(M),
 }
 
-impl<T: ?Sized + Pointee, P: Ptr, Z> Decode<Z> for Own<T,P>
+impl<T: ?Sized + Pointee, P: Ptr, Z> Decode<Z> for OwnedPtr<T,P>
 where T: Load<Z>,
       P: Decode<Z>,
       Z: BlobZone,
 {
-    type Error = LoadOwnError<P::Error, <T::Metadata as Primitive>::Error>;
+    type Error = LoadOwnedPtrError<P::Error, <T::Metadata as Primitive>::Error>;
 
-    type ValidateChildren = OwnValidator<T,P,Z>;
+    type ValidateChildren = OwnedPtrValidator<T,P,Z>;
     fn validate_blob<'a>(blob: Blob<'a, Self, Z>) -> Result<BlobValidator<'a, Self, Z>, Self::Error>
         where Z: BlobZone
     {
@@ -148,15 +148,15 @@ where T: Load<Z>,
         let mut fields = blob.validate_struct();
 
         let raw = fields.field_blob::<P>();
-        let raw = P::ptr_validate_blob(raw).map_err(LoadOwnError::Ptr)?;
+        let raw = P::ptr_validate_blob(raw).map_err(LoadOwnedPtrError::Ptr)?;
         let raw = P::ptr_decode_blob(raw);
 
         let metadata = fields.field_blob::<T::Metadata>();
-        let metadata = <T::Metadata as Primitive>::validate_blob(metadata).map_err(LoadOwnError::Metadata)?;
+        let metadata = <T::Metadata as Primitive>::validate_blob(metadata).map_err(LoadOwnedPtrError::Metadata)?;
         let metadata = <T::Metadata as Primitive>::decode_blob(metadata);
 
         let fatptr = FatPtr { raw, metadata };
-        Ok(fields.done(OwnValidator::FatPtr(fatptr)))
+        Ok(fields.done(OwnedPtrValidator::FatPtr(fatptr)))
         */
         todo!()
     }
@@ -171,13 +171,13 @@ where T: Load<Z>,
     }
 }
 
-pub enum OwnValidator<T: ?Sized + Load<Q>, P: Decode<Q>, Q> {
+pub enum OwnedPtrValidator<T: ?Sized + Load<Q>, P: Decode<Q>, Q> {
     FatPtr(FatPtr<T,P>),
     Value(T::ValidateChildren),
     Done,
 }
 
-impl<T: ?Sized + Load<Z>, P: Decode<Z>, Z> ValidateChildren<Z> for OwnValidator<T,P,Z>
+impl<T: ?Sized + Load<Z>, P: Decode<Z>, Z> ValidateChildren<Z> for OwnedPtrValidator<T,P,Z>
 where P: Ptr
 {
     fn validate_children<V>(&mut self, ptr_validator: &mut V) -> Result<(), V::Error>
@@ -204,7 +204,7 @@ where P: Ptr
     }
 }
 
-impl<T: ?Sized + Load<Q>, P: Decode<Q>, Q> fmt::Debug for OwnValidator<T,P,Q>
+impl<T: ?Sized + Load<Q>, P: Decode<Q>, Q> fmt::Debug for OwnedPtrValidator<T,P,Q>
 where P: Ptr + fmt::Debug,
       T::ValidateChildren: fmt::Debug,
 {
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn validator_size() {
         assert_eq!(mem::size_of::<<
-            (Own<(Own<u8,!>, Own<Own<u8,!>,!>), !>, Own<u8,!>)
+            (OwnedPtr<(OwnedPtr<u8,!>, OwnedPtr<OwnedPtr<u8,!>,!>), !>, OwnedPtr<u8,!>)
             as Decode<!>>::ValidateChildren>(), 3);
     }
 }
