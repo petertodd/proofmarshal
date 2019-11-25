@@ -9,6 +9,12 @@
 #![allow(unused_variables)]
 #![allow(dead_code)]
 
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("64-bit pointers required");
+
+#[cfg(not(target_endian = "little"))]
+compile_error!("little endian required");
+
 use core::any::type_name;
 use core::fmt;
 use core::mem::ManuallyDrop;
