@@ -242,7 +242,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn write_exact_u8_slice() -> Result<(), Box<dyn std::error::Error>> {
+    fn write_exact_u8_slice() -> Result<(), !> {
         let mut buf = [0,0,0];
 
         let w = &mut buf[..];

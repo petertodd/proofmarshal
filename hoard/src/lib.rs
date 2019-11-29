@@ -1,4 +1,3 @@
-#![feature(never_type)]
 #![feature(associated_type_bounds)]
 #![feature(alloc_layout_extra)]
 #![feature(slice_from_raw_parts)]
