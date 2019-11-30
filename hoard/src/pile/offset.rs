@@ -147,7 +147,7 @@ impl<'s, 'p> From<Offset<'s,'p>> for OffsetMut<'s,'p> {
 }
 
 impl Ptr for Offset<'_, '_> {
-    fn dealloc_own<T: ?Sized + Pointee>(own: OwnedPtr<T, Self>) {
+    fn dealloc_owned<T: ?Sized + Pointee>(own: OwnedPtr<T, Self>) {
         let _ = own.into_inner();
     }
 
@@ -298,7 +298,7 @@ impl<'s,'m> Decode<PileMut<'s,'m>> for Offset<'s,'m> {
 }
 
 impl Ptr for OffsetMut<'_, '_> {
-    fn dealloc_own<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
+    fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
         Self::drop_take_unsized(owned, |value|
             unsafe {
                 core::ptr::drop_in_place(value)

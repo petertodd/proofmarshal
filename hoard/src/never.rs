@@ -23,7 +23,7 @@ impl<Z: Zone> Alloc for NeverAllocator<Z> {
 }
 
 impl Ptr for ! {
-    fn dealloc_own<T: ?Sized + Pointee>(ptr: OwnedPtr<T,Self>) {
+    fn dealloc_owned<T: ?Sized + Pointee>(ptr: OwnedPtr<T,Self>) {
         match ptr.raw {}
     }
 

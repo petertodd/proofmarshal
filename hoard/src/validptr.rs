@@ -10,6 +10,9 @@ use crate::fatptr::FatPtr;
 use crate::marshal::Persist;
 use crate::coerce::{TryCast, TryCastRef, TryCastMut};
 
+/// Wrapper around a `FatPtr` guaranteeing that the target of the pointer is valid.
+///
+/// Implements `Deref<Target=FatPtr>` so the fields of the wrapped pointer are available.
 #[repr(transparent)]
 pub struct ValidPtr<T: ?Sized + Pointee, P>(FatPtr<T,P>);
 
@@ -51,16 +54,23 @@ impl<T: ?Sized + Pointee, P> ops::Deref for ValidPtr<T,P> {
 }
 
 impl<T: ?Sized + Pointee, P> ValidPtr<T,P> {
+    /// Creates a new `ValidPtr` from a `FatPtr`.
+    ///
+    /// # Safety
+    ///
+    /// You are asserting that the pointer is in fact valid.
     pub unsafe fn new_unchecked(ptr: FatPtr<T,P>) -> Self {
         Self(ptr)
     }
 
+    /// Unwraps the pointer.
     pub fn into_inner(self) -> FatPtr<T,P> {
         self.0
     }
 }
 
 impl<T: ?Sized + Pointee, P> From<ValidPtr<T,P>> for FatPtr<T,P> {
+    /// Forwards to `into_inner()`
     fn from(valid: ValidPtr<T,P>) -> Self {
         valid.into_inner()
     }

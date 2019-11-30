@@ -25,14 +25,19 @@ impl BlobZone for ! {
 #[derive(Debug, PartialEq, Eq)]
 pub struct PaddingError(());
 
+/// A blob of bytes that could be a valid value in a blob zone.
 pub struct Blob<'a, T: ?Sized + Pointee, Z> {
     marker: PhantomData<(fn() -> &'a T, fn() -> Z)>,
     ptr: *const u8,
     metadata: T::Metadata,
 }
 
+/// Wrapper around `Blob` indicating that the blob itself is valid for the type.
+///
+/// Children of the blob however are not necessarily valid!
 pub struct ValidBlob<'a, T: ?Sized + Pointee, Z>(Blob<'a, T, Z>);
 
+/// Wrapper around `ValidBlob` indicating that all children are also valid.
 pub struct FullyValidBlob<'a, T: ?Sized + Pointee, Z>(ValidBlob<'a, T, Z>);
 
 pub struct BlobValidator<'a, T: ?Sized + Load<Z>, Z> {

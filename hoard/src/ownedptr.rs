@@ -11,6 +11,9 @@ use crate::marshal::blob::*;
 use crate::coerce::TryCastRef;
 
 /// An owned pointer.
+///
+/// Extends`ValidPtr` with ownership semantics, acting like it owns a `T` value and properly
+/// deallocating the pointer on drop.
 #[repr(transparent)]
 pub struct OwnedPtr<T: ?Sized + Pointee, P: Ptr> {
     marker: PhantomData<Box<T>>,
@@ -37,6 +40,13 @@ impl<T: ?Sized + Pointee, P: Ptr> ops::Deref for OwnedPtr<T,P> {
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T,P> {
+
+    /// Creates a new `OwnedPtr` from a `ValidPtr`.
+    ///
+    /// # Safety
+    ///
+    /// The `ValidPtr` must point to a uniquely owned value that can be safely dropped via
+    /// `Ptr::dealloc_owned()`.
     pub unsafe fn new_unchecked(ptr: ValidPtr<T,P>) -> Self {
         Self {
             marker: PhantomData,
@@ -44,6 +54,10 @@ impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T,P> {
         }
     }
 
+    /// Unwraps the inner `ValidPtr`.
+    ///
+    /// The value is *not* deallocated! It is the callee's responsibility to do that; failing to do
+    /// so may leak memory.
     pub fn into_inner(self) -> ValidPtr<T,P> {
         let mut this = ManuallyDrop::new(self);
 
@@ -54,7 +68,7 @@ impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T,P> {
 impl<T: ?Sized + Pointee, P: Ptr> Drop for OwnedPtr<T,P> {
     fn drop(&mut self) {
         let this = unsafe { core::ptr::read(self) };
-        P::dealloc_own(this)
+        P::dealloc_owned(this)
     }
 }
 

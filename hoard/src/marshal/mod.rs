@@ -32,7 +32,9 @@ pub fn decode<T: Decode<!>>(blob: &[u8]) -> Result<T, T::Error> {
     Ok(T::decode_blob(fully_valid_blob, &()))
 }
 
+/// A type whose values can be saved behind pointers in a zone.
 pub unsafe trait Save<Z> : Pointee + Owned {
+    /// Makes a blob layout from the pointer metadata.
     fn dyn_blob_layout(metadata: Self::Metadata) -> BlobLayout
         where Z: BlobZone;
 
@@ -53,6 +55,7 @@ impl<E: ?Sized + 'static + Any + fmt::Debug + Send> Error for E {
     }
 }
 
+/// A type whose values can be loaded from pointers in a zone.
 pub trait Load<Z> : Save<Z> {
     type Error : Error;
 
@@ -89,7 +92,11 @@ impl<Z> ValidateChildren<Z> for () {
     }
 }
 
+/// A type that can be encoded in a zone.
 pub unsafe trait Encode<Z> : Sized {
+    /// Returns the layout of a value of this type as a blob.
+    ///
+    /// Note: this would be an associated constant, except that we need the `Z: BlobZone` bound.
     fn blob_layout() -> BlobLayout
         where Z: BlobZone;
 
@@ -120,6 +127,7 @@ pub unsafe trait Encode<Z> : Sized {
     }
 }
 
+/// A type that can be decoded from a zone.
 pub trait Decode<Z> : Encode<Z> {
     type Error : Error;
 

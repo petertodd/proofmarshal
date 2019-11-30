@@ -51,7 +51,7 @@ pub mod bag;
 
 /// Generic pointer.
 pub trait Ptr : Sized + fmt::Debug {
-    fn dealloc_own<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>);
+    fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>);
 
     fn fmt_debug_own<T: ?Sized + Pointee>(owned: &OwnedPtr<T, Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result
         where T: fmt::Debug

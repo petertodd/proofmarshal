@@ -16,6 +16,7 @@ use crate::marshal::{
 
 use crate::coerce::{TryCast, TryCastRef, TryCastMut};
 
+/// A zone pointer with metadata. *Not* necessarily valid.
 #[repr(C)]
 pub struct FatPtr<T: ?Sized + Pointee, P> {
     pub raw: P,

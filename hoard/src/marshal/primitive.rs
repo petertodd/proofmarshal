@@ -14,6 +14,9 @@ use core::num::{
 
 use leint::Le;
 
+/// A type that contains no pointers, and thus can be stored in any zone.
+///
+/// `Encode` and `Decode` is implemented for any `T: Primitive`
 pub trait Primitive : Sized {
     type Error : super::Error;
 
