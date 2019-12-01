@@ -101,6 +101,7 @@ where Z::Ptr: fmt::Pointer,
 mod test {
     use super::*;
 
+    /*
     use crate::pile::PileMut;
 
     #[test]
@@ -112,4 +113,5 @@ mod test {
 
         bag2.get();
     }
+    */
 }

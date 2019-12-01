@@ -3,6 +3,7 @@
 #![feature(slice_from_raw_parts)]
 #![feature(manually_drop_take)]
 #![feature(arbitrary_self_types)]
+#![feature(const_if_match)]
 
 #![allow(unused_imports)]
 #![allow(unused_variables)]
@@ -40,12 +41,12 @@ mod ownedptr;
 pub use self::ownedptr::OwnedPtr;
 
 pub mod never;
-//pub mod heap;
+pub mod heap;
 pub mod pile;
 
 //pub mod hoard;
 
-pub mod bag;
+//pub mod bag;
 
 //pub mod linkedlist;
 
@@ -77,8 +78,8 @@ pub trait Ptr : Sized + fmt::Debug {
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>));
 }
 pub trait Zone : Sized {
-    type Ptr : Ptr + Encode<Self>;
-    type PersistPtr : Ptr + Decode<Self> + Into<Self::Ptr>;
+    type Ptr : Ptr;
+    type PersistPtr : Ptr + Primitive + Into<Self::Ptr>;
 
     type Allocator : Alloc<Zone = Self>;
 

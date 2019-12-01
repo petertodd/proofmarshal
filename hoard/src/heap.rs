@@ -13,7 +13,7 @@ pub struct Heap;
 
 impl Zone for Heap {
     type Ptr = HeapPtr;
-    //type PersistPtr = !;
+    type PersistPtr = !;
 
     type Allocator = Self;
 
@@ -38,12 +38,11 @@ impl Get for Heap {
 
 impl Alloc for Heap {
     type Zone = Heap;
-    type Ptr = HeapPtr;
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Ptr> {
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, HeapPtr> {
         src.take_unsized(|src| unsafe {
             let metadata = T::metadata(src);
-            Own::new_unchecked(
+            OwnedPtr::new_unchecked(
                 ValidPtr::new_unchecked(
                     FatPtr {
                         raw: HeapPtr::alloc::<T>(src),
@@ -62,8 +61,14 @@ impl Alloc for Heap {
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct HeapPtr(NonNull<()>);
 
+impl From<!> for HeapPtr {
+    fn from(never: !) -> Self {
+        match never {}
+    }
+}
+
 impl Ptr for HeapPtr {
-    fn dealloc_own<T: ?Sized + Pointee>(owned: Own<T, Self>) {
+    fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
         Self::drop_take_unsized(owned, |value|
             unsafe {
                 core::ptr::drop_in_place(value)
@@ -71,7 +76,7 @@ impl Ptr for HeapPtr {
         )
     }
 
-    fn drop_take_unsized<T: ?Sized + Pointee>(owned: Own<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
+    fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
         let FatPtr { raw: Self(non_null), metadata } = owned.into_inner().into();
 
         unsafe {

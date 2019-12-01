@@ -119,10 +119,6 @@ impl<'s,'p> Zone for Pile<'s,'p> {
     }
 }
 
-impl<'s,'m> BlobZone for Pile<'s,'m> {
-    type BlobPtr = Offset<'s,'m>;
-}
-
 impl<'s,'p> Zone for PileMut<'s,'p> {
     type Ptr = OffsetMut<'s,'p>;
     type PersistPtr = Offset<'s,'p>;
@@ -136,18 +132,13 @@ impl<'s,'p> Zone for PileMut<'s,'p> {
     }
 }
 
-impl<'s,'p> BlobZone for PileMut<'s,'p> {
-    type BlobPtr = Offset<'s,'p>;
-}
-
 impl<'s,'p> Alloc for PileMut<'s,'p> {
     type Zone = Self;
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, OffsetMut<'s,'p>> {
         src.take_unsized(|src| unsafe {
             let metadata = T::metadata(src);
-            OwnedPtr::new_unchecked(ValidPtr::<T,_>::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata }))
-            //OwnedPtr::new_unchecked(ValidPtr::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata }))
+            OwnedPtr::new_unchecked(ValidPtr::new_unchecked(FatPtr { raw: OffsetMut::alloc::<T>(src), metadata }))
         })
     }
 
@@ -204,6 +195,7 @@ impl<'s,'m> Get for PileMut<'s, 'm> {
     }
 }
 
+/*
 unsafe impl<'s,'m> Encode<Self> for PileMut<'s,'m> {
     type State = ();
 
@@ -213,7 +205,7 @@ unsafe impl<'s,'m> Encode<Self> for PileMut<'s,'m> {
 
     fn init_encode_state(&self) -> () {}
 
-    fn encode_poll<D: SavePtr<Self>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: Dumper<Self>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
         Ok(dumper)
     }
 
@@ -234,6 +226,7 @@ impl<'s,'m> Decode<Self> for PileMut<'s,'m> {
         todo!()
     }
 }
+*/
 
 #[cfg(test)]
 mod test {
@@ -244,11 +237,49 @@ mod test {
         dst: Vec<u8>,
     }
 
-    impl<'s,'m> SavePtr<Pile<'s,'m>> for DeepDump {
+    impl<'s,'m> Dumper<Pile<'s,'m>> for DeepDump {
         type Pending = !;
-        type BlobPtr = Offset<'static, 'static>;
 
-        fn save_blob(mut self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, Self::BlobPtr), !> {
+        fn try_save_ptr<'p, T: ?Sized + Pointee>(&self, ptr: &'p ValidPtr<T, Offset<'s,'m>>)
+            -> Result<Offset<'s,'m>, &'p T>
+        {
+            Ok(ptr.raw)
+        }
+
+        fn try_save_blob(mut self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, Offset<'s,'m>), !> {
+            let offset = self.dst.len();
+            self.dst.resize(offset + size, 0);
+
+            f(&mut self.dst[offset..]);
+
+            let offset = unsafe { Offset::new_unchecked(offset) };
+            Ok((self, offset))
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct DeepDumpMut {
+        dst: Vec<u8>,
+    }
+
+    impl<'s,'m> Dumper<PileMut<'s,'m>> for DeepDumpMut {
+        type Pending = !;
+
+        fn try_save_ptr<'p, T: ?Sized + Pointee>(&self, ptr: &'p ValidPtr<T, OffsetMut<'s,'m>>)
+            -> Result<Offset<'s,'m>, &'p T>
+        {
+            match ptr.raw.kind() {
+                Kind::Offset(offset) => Ok(offset),
+                Kind::Ptr(nonnull) => {
+                    let r: &'p T = unsafe {
+                        &*T::make_fat_ptr(nonnull.cast().as_ptr(), ptr.metadata)
+                    };
+                    Err(r)
+                },
+            }
+        }
+
+        fn try_save_blob(mut self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, Offset<'s,'m>), !> {
             let offset = self.dst.len();
             self.dst.resize(offset + size, 0);
 
@@ -270,10 +301,31 @@ mod test {
 
         let dumper = DeepDump::default();
 
-        let (dumper, offset) = dumper.save(&owned_ptr);
-        assert_eq!(dumper.dst, &[0x78,0x56,0x34,0x12]);
+        let offset = dumper.try_save_ptr(&owned_ptr).unwrap();
+        assert_eq!(dumper.dst, &[]);
     }
 
+    #[test]
+    fn deepdump_pilemut() {
+        let snapshot = unsafe { Snapshot::new_unchecked(vec![0x78,0x56,0x34,0x12]) };
+        let mut pile = PileMut::from(Pile::new(&snapshot));
+
+        let offset = OffsetMut::from(Offset::new(&snapshot, 0, 0).unwrap());
+        let fatptr: FatPtr<u32,_> = FatPtr { raw: offset, metadata: () };
+        let owned_ptr = unsafe { OwnedPtr::new_unchecked(ValidPtr::new_unchecked(fatptr)) };
+
+        let dumper = DeepDumpMut::default();
+
+        let offset = dumper.try_save_ptr(&owned_ptr).unwrap();
+        assert_eq!(dumper.dst, &[]);
+
+        let owned_ptr = pile.alloc(0xabcd_u16);
+        let r = dumper.try_save_ptr(&owned_ptr).unwrap_err();
+        assert_eq!(r, &0xabcd);
+        assert_eq!(dumper.dst, &[]);
+    }
+
+    /*
     #[test]
     fn pile_load() {
         let snapshot = unsafe { Snapshot::new_unchecked(vec![1,2,3,4]) };
@@ -357,4 +409,5 @@ mod test {
 
         assert_eq!(*test_get(&pile, &owned), 42);
     }
+    */
 }

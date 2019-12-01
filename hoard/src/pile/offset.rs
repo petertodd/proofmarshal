@@ -15,7 +15,7 @@ use leint::Le;
 use super::*;
 
 use crate::marshal::{
-    Encode, Save, SavePtr,
+    Encode, Save, Dumper,
     Persist,
     blob::*,
 };
@@ -161,144 +161,27 @@ impl fmt::Pointer for Offset<'_, '_> {
     }
 }
 
-unsafe impl<'s,'p> Encode<Pile<'s,'p>> for Offset<'s,'p> {
-    fn blob_layout() -> BlobLayout {
-        BlobLayout::new_nonzero(mem::size_of::<Self>())
-    }
-
-    type State = ();
-    fn init_encode_state(&self) -> Self::State {}
-
-    fn encode_poll<D: SavePtr<Pile<'s,'p>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
-        Ok(dumper)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
-        dst.write_bytes(&self.raw.get().get().to_le_bytes())?
-           .finish()
-    }
-
-    fn ptr_init_encode_state<T: ?Sized + Save<Pile<'s,'p>>>(ptr: &ValidPtr<T,Self>)
-        -> Result<<Pile<'s,'p> as BlobZone>::BlobPtr, <T as Save<Pile<'s,'p>>>::State>
-    {
-        Ok(ptr.raw)
-    }
-}
-
-unsafe impl<'s,'p> Encode<PileMut<'s,'p>> for Offset<'s,'p> {
-    fn blob_layout() -> BlobLayout {
-        BlobLayout::new_nonzero(mem::size_of::<Self>())
-    }
-
-    type State = ();
-    fn init_encode_state(&self) -> Self::State {}
-
-    fn encode_poll<D: SavePtr<PileMut<'s,'p>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
-        Ok(dumper)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
-        dst.write_bytes(&self.raw.get().get().to_le_bytes())?
-           .finish()
-    }
-
-    fn ptr_init_encode_state<T: ?Sized + Save<PileMut<'s,'p>>>(ptr: &ValidPtr<T,Self>)
-        -> Result<<PileMut<'s,'p> as BlobZone>::BlobPtr, <T as Save<PileMut<'s,'p>>>::State>
-    {
-        Ok(ptr.raw)
-    }
-}
-
-unsafe impl<'s,'p> Encode<PileMut<'s,'p>> for OffsetMut<'s,'p> {
-    fn blob_layout() -> BlobLayout {
-        BlobLayout::new_nonzero(mem::size_of::<Self>())
-    }
-
-    type State = ();
-    fn init_encode_state(&self) -> Self::State {}
-
-    fn encode_poll<D: SavePtr<PileMut<'s,'p>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
-        Ok(dumper)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
-        todo!()
-    }
-
-    fn ptr_init_encode_state<T: ?Sized + Save<PileMut<'s,'p>>>(ptr: &ValidPtr<T,Self>)
-        -> Result<<PileMut<'s,'p> as BlobZone>::BlobPtr, <T as Save<PileMut<'s,'p>>>::State>
-    {
-        todo!()
-    }
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum DecodeOffsetError {
     Ptr(u64),
     OutOfRange(u64),
 }
 
-impl<'s,'m> Decode<Pile<'s,'m>> for Offset<'s,'m> {
+impl Primitive for Offset<'_,'_> {
     type Error = DecodeOffsetError;
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
 
-    type ValidateChildren = ();
-
-    fn validate_blob<'a>(blob: Blob<'a, Self, Pile<'s,'m>>) -> Result<BlobValidator<'a, Self, Pile<'s,'m>>, Self::Error> {
-        Self::ptr_validate_blob(blob)?;
-        Ok(blob.assume_valid(()))
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        dst.write_bytes(&self.raw.get().get().to_le_bytes())?
+           .finish()
     }
 
-    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Pile<'s,'m>>, _: &impl LoadPtr<Pile<'s,'m>>) -> Self {
-        Self::ptr_decode_blob(blob)
+    fn validate_blob<'a, Z: Zone>(blob: Blob<'a, Self, Z>) -> Result<FullyValidBlob<'a, Self, Z>, Self::Error> {
+        todo!()
     }
 
-    /*
-    fn deref_blob<'a>(blob: FullyValidBlob<'a, Self, Self>) -> &'a Self {
-        unsafe { blob.assume_valid() }
-    }
-
-    fn ptr_validate_blob<'a>(blob: Blob<'a, Self, Self>) -> Result<FullyValidBlob<'a, Self, Self>, Self::Error> {
-        let mut raw = [0;8];
-        raw.copy_from_slice(&blob[..]);
-        let raw = u64::from_le_bytes(raw);
-
-        if raw & 1 != 1 {
-            Err(DecodeOffsetError::Ptr(raw))
-        } else {
-            let offset = raw >> 1;
-            Offset::new(offset).ok_or(DecodeOffsetError::OutOfRange(offset))?;
-
-            unsafe { Ok(blob.assume_fully_valid()) }
-        }
-    }
-    */
-
-    fn ptr_decode_blob<'a>(blob: FullyValidBlob<'a, Self, Pile<'s,'m>>) -> Self {
-        *<Self as Decode<Pile<'s,'m>>>::deref_blob(blob)
-    }
-
-    /*
-    fn ptr_validate_children<T, V>(ptr: &FatPtr<T,Self>, validator: &mut V) -> Result<Option<T::ValidateChildren>, V::Error>
-        where T: ?Sized + Load<Self>,
-              V: ValidatePtr<Self>,
-    {
-        validator.validate_ptr(ptr)
-    }
-    */
-}
-
-impl<'s,'m> Decode<PileMut<'s,'m>> for Offset<'s,'m> {
-    type Error = DecodeOffsetError;
-
-    type ValidateChildren = ();
-
-    fn validate_blob<'a>(blob: Blob<'a, Self, PileMut<'s,'m>>) -> Result<BlobValidator<'a, Self, PileMut<'s,'m>>, Self::Error> {
-        Self::ptr_validate_blob(blob)?;
-        Ok(blob.assume_valid(()))
-    }
-
-    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, PileMut<'s,'m>>, _: &impl LoadPtr<PileMut<'s,'m>>) -> Self {
-        Self::ptr_decode_blob(blob)
+    fn decode_blob<'a, Z: Zone>(blob: FullyValidBlob<'a, Self, Z>) -> Self {
+        todo!()
     }
 }
 

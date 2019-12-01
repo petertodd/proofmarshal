@@ -88,8 +88,8 @@ where P: fmt::Pointer,
     }
 }
 
-pub enum EncodeOwnedPtrState<T: ?Sized + Save<Z>, Z: BlobZone> {
-    /// Initial encoding state; `encode_poll()` has not been called.
+pub enum EncodeOwnedPtrState<T: ?Sized + Save<Z>, Z: Zone> {
+    /// Initial state; `encode_poll()` has not been called.
     Initial,
 
     /// We have a value that needs encoding.
@@ -97,20 +97,16 @@ pub enum EncodeOwnedPtrState<T: ?Sized + Save<Z>, Z: BlobZone> {
 
     /// We've finished encoding the value (or never needed too) and now have a pointer that needs
     /// encoding.
-    BlobPtr {
-        ptr: Z::BlobPtr,
-        state: <Z::BlobPtr as Encode<Z>>::State,
-    },
+    Ptr(Z::PersistPtr),
 }
 
 unsafe impl<T, P, Z> Encode<Z> for OwnedPtr<T,P>
-where Z: BlobZone,
-      P: Ptr + Encode<Z>,
+where Z: Zone<Ptr=P>,
+      P: Ptr + From<Z::PersistPtr>,
       T: ?Sized + Save<Z>,
 {
-    fn blob_layout() -> BlobLayout {
-        <Z::BlobPtr as Encode<Z>>::blob_layout().extend(<T::Metadata as Primitive>::BLOB_LAYOUT)
-    }
+    const BLOB_LAYOUT: BlobLayout = <Z::PersistPtr as Encode<Z>>::BLOB_LAYOUT
+                                        .extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
 
     type State = EncodeOwnedPtrState<T, Z>;
 
@@ -118,40 +114,34 @@ where Z: BlobZone,
         EncodeOwnedPtrState::Initial
     }
 
-    fn encode_poll<D: SavePtr<Z>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: Dumper<Z>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Pending> {
         loop {
             match state {
                 EncodeOwnedPtrState::Initial => {
-                    *state = match P::ptr_init_encode_state(self) {
-                        Ok(ptr) => EncodeOwnedPtrState::BlobPtr {
-                            state: ptr.init_encode_state(),
-                            ptr,
-                        },
-                        Err(value_state) => EncodeOwnedPtrState::Value(value_state),
+                    *state = match dumper.try_save_ptr(self) {
+                        Ok(ptr) => EncodeOwnedPtrState::Ptr(ptr),
+                        Err(value) => EncodeOwnedPtrState::Value(value.init_save_state()),
                     };
                 },
                 EncodeOwnedPtrState::Value(value_state) => {
-                    /*
-                    let metadata = self.metadata;
-                    let (d, ptr_state) = P::ptr_encode_valid_value(self, value_state, dumper)?;
+                    let value = dumper.try_save_ptr(self).expect_err("dumper try_save_ptr() inconsistent");
+                    let (d, persist_ptr) = value.save_poll(value_state, dumper)?;
                     dumper = d;
 
-                    *state = EncodeOwnedPtrState::Ptr(ptr_state);
-                    */
-                    todo!()
+                    *state = EncodeOwnedPtrState::Ptr(persist_ptr);
                 },
-                EncodeOwnedPtrState::BlobPtr { ptr, state } => break ptr.encode_poll(state, dumper),
+                EncodeOwnedPtrState::Ptr(ptr) => break ptr.encode_poll(&mut (), dumper),
             }
         }
     }
 
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        if let EncodeOwnedPtrState::BlobPtr { ptr, state} = state {
-            dst.write(ptr, state)?
+        if let EncodeOwnedPtrState::Ptr(ptr) = state {
+            dst.write_primitive(ptr)?
                .write_primitive(&self.metadata)?
                .finish()
         } else {
-            panic!()
+            panic!("encode_blob() called prior to encode_poll() finishing")
         }
     }
 }
@@ -163,6 +153,7 @@ pub enum LoadOwnedPtrError<P,M> {
     Metadata(M),
 }
 
+/*
 impl<T: ?Sized + Pointee, P: Ptr, Z> Decode<Z> for OwnedPtr<T,P>
 where T: Load<Z>,
       P: Decode<Z>,
@@ -200,7 +191,9 @@ where T: Load<Z>,
         }
     }
 }
+*/
 
+/*
 pub enum OwnedPtrValidator<T: ?Sized + Load<Q>, P: Decode<Q>, Q> {
     FatPtr(FatPtr<T,P>),
     Value(T::ValidateChildren),
@@ -211,7 +204,7 @@ impl<T: ?Sized + Load<Z>, P: Decode<Z>, Z> ValidateChildren<Z> for OwnedPtrValid
 where P: Ptr
 {
     fn validate_children<V>(&mut self, ptr_validator: &mut V) -> Result<(), V::Error>
-        where V: ValidatePtr<Z>, Z: BlobZone
+        where V: ValidatePtr<Z>
     {
         /*
         loop {
@@ -253,8 +246,11 @@ mod tests {
 
     #[test]
     fn validator_size() {
+        /*
         assert_eq!(mem::size_of::<<
             (OwnedPtr<(OwnedPtr<u8,!>, OwnedPtr<OwnedPtr<u8,!>,!>), !>, OwnedPtr<u8,!>)
             as Decode<!>>::ValidateChildren>(), 3);
+        */
     }
 }
+*/
