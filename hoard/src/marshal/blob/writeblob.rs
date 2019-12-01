@@ -15,8 +15,7 @@ pub trait WriteBlob : Sized {
     /// Write an encodable value.
     #[inline(always)]
     fn write_primitive<T: Primitive>(self, value: &T) -> Result<Self, Self::Error> {
-        //self.write::<!, T>(value)
-        todo!()
+        self.write::<!, T>(value, &())
     }
 
     /// Write an encodable value.

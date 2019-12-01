@@ -178,8 +178,10 @@ unsafe impl<'s,'p> Encode<Pile<'s,'p>> for Offset<'s,'p> {
            .finish()
     }
 
-    fn encode_own<T: ?Sized + Save<Pile<'s,'p>>>(own: &OwnedPtr<T,Self>) -> Result<Self::State, <T as Save<Pile<'s,'p>>>::State> {
-        Ok(())
+    fn ptr_init_encode_state<T: ?Sized + Save<Pile<'s,'p>>>(ptr: &ValidPtr<T,Self>)
+        -> Result<<Pile<'s,'p> as BlobZone>::BlobPtr, <T as Save<Pile<'s,'p>>>::State>
+    {
+        Ok(ptr.raw)
     }
 }
 
@@ -200,8 +202,10 @@ unsafe impl<'s,'p> Encode<PileMut<'s,'p>> for Offset<'s,'p> {
            .finish()
     }
 
-    fn encode_own<T: ?Sized + Save<PileMut<'s,'p>>>(own: &OwnedPtr<T,Self>) -> Result<Self::State, <T as Save<PileMut<'s,'p>>>::State> {
-        Ok(())
+    fn ptr_init_encode_state<T: ?Sized + Save<PileMut<'s,'p>>>(ptr: &ValidPtr<T,Self>)
+        -> Result<<PileMut<'s,'p> as BlobZone>::BlobPtr, <T as Save<PileMut<'s,'p>>>::State>
+    {
+        Ok(ptr.raw)
     }
 }
 
@@ -218,12 +222,13 @@ unsafe impl<'s,'p> Encode<PileMut<'s,'p>> for OffsetMut<'s,'p> {
     }
 
     fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
-        dst.write_bytes(&self.0.raw.get().get().to_le_bytes())?
-           .finish()
+        todo!()
     }
 
-    fn encode_own<T: ?Sized + Save<PileMut<'s,'p>>>(own: &OwnedPtr<T,Self>) -> Result<Self::State, <T as Save<PileMut<'s,'p>>>::State> {
-        Ok(())
+    fn ptr_init_encode_state<T: ?Sized + Save<PileMut<'s,'p>>>(ptr: &ValidPtr<T,Self>)
+        -> Result<<PileMut<'s,'p> as BlobZone>::BlobPtr, <T as Save<PileMut<'s,'p>>>::State>
+    {
+        todo!()
     }
 }
 

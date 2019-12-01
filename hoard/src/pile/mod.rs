@@ -239,6 +239,41 @@ impl<'s,'m> Decode<Self> for PileMut<'s,'m> {
 mod test {
     use super::*;
 
+    #[derive(Debug, Default)]
+    struct DeepDump {
+        dst: Vec<u8>,
+    }
+
+    impl<'s,'m> SavePtr<Pile<'s,'m>> for DeepDump {
+        type Pending = !;
+        type BlobPtr = Offset<'static, 'static>;
+
+        fn save_blob(mut self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, Self::BlobPtr), !> {
+            let offset = self.dst.len();
+            self.dst.resize(offset + size, 0);
+
+            f(&mut self.dst[offset..]);
+
+            let offset = unsafe { Offset::new_unchecked(offset) };
+            Ok((self, offset))
+        }
+    }
+
+    #[test]
+    fn deepdump_pile() {
+        let snapshot = unsafe { Snapshot::new_unchecked(vec![0x78,0x56,0x34,0x12]) };
+        let pile = Pile::new(&snapshot);
+
+        let offset = Offset::new(&snapshot, 0, 0).unwrap();
+        let fatptr: FatPtr<u32,_> = FatPtr { raw: offset, metadata: () };
+        let owned_ptr = unsafe { OwnedPtr::new_unchecked(ValidPtr::new_unchecked(fatptr)) };
+
+        let dumper = DeepDump::default();
+
+        let (dumper, offset) = dumper.save(&owned_ptr);
+        assert_eq!(dumper.dst, &[0x78,0x56,0x34,0x12]);
+    }
+
     #[test]
     fn pile_load() {
         let snapshot = unsafe { Snapshot::new_unchecked(vec![1,2,3,4]) };

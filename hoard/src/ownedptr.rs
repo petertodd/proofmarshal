@@ -88,10 +88,19 @@ where P: fmt::Pointer,
     }
 }
 
-pub enum EncodeOwnedPtrState<T: ?Sized + Save<Z>, P: Encode<Z>, Z> {
+pub enum EncodeOwnedPtrState<T: ?Sized + Save<Z>, Z: BlobZone> {
+    /// Initial encoding state; `encode_poll()` has not been called.
     Initial,
+
+    /// We have a value that needs encoding.
     Value(T::State),
-    Ptr(P::State),
+
+    /// We've finished encoding the value (or never needed too) and now have a pointer that needs
+    /// encoding.
+    BlobPtr {
+        ptr: Z::BlobPtr,
+        state: <Z::BlobPtr as Encode<Z>>::State,
+    },
 }
 
 unsafe impl<T, P, Z> Encode<Z> for OwnedPtr<T,P>
@@ -103,7 +112,7 @@ where Z: BlobZone,
         <Z::BlobPtr as Encode<Z>>::blob_layout().extend(<T::Metadata as Primitive>::BLOB_LAYOUT)
     }
 
-    type State = EncodeOwnedPtrState<T, P, Z>;
+    type State = EncodeOwnedPtrState<T, Z>;
 
     fn init_encode_state(&self) -> Self::State {
         EncodeOwnedPtrState::Initial
@@ -113,26 +122,33 @@ where Z: BlobZone,
         loop {
             match state {
                 EncodeOwnedPtrState::Initial => {
-                    *state = match P::encode_own(self) {
-                        Ok(ptr_state) => EncodeOwnedPtrState::Ptr(ptr_state),
+                    *state = match P::ptr_init_encode_state(self) {
+                        Ok(ptr) => EncodeOwnedPtrState::BlobPtr {
+                            state: ptr.init_encode_state(),
+                            ptr,
+                        },
                         Err(value_state) => EncodeOwnedPtrState::Value(value_state),
                     };
                 },
                 EncodeOwnedPtrState::Value(value_state) => {
+                    /*
                     let metadata = self.metadata;
-                    let (d, ptr_state) = P::encode_own_value(self, value_state, dumper)?;
+                    let (d, ptr_state) = P::ptr_encode_valid_value(self, value_state, dumper)?;
                     dumper = d;
 
                     *state = EncodeOwnedPtrState::Ptr(ptr_state);
+                    */
+                    todo!()
                 },
-                EncodeOwnedPtrState::Ptr(state) => break self.raw.encode_poll(state, dumper),
+                EncodeOwnedPtrState::BlobPtr { ptr, state } => break ptr.encode_poll(state, dumper),
             }
         }
     }
 
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        if let EncodeOwnedPtrState::Ptr(state) = state {
-            dst.write(&self.raw, state)?
+        if let EncodeOwnedPtrState::BlobPtr { ptr, state} = state {
+            dst.write(ptr, state)?
+               .write_primitive(&self.metadata)?
                .finish()
         } else {
             panic!()

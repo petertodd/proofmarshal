@@ -109,7 +109,14 @@ pub unsafe trait Encode<Z> : Sized {
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>
         where Z: BlobZone;
 
-    fn encode_own<T: ?Sized + Pointee>(own: &OwnedPtr<T,Self>) -> Result<Self::State, <T as Save<Z>>::State>
+    /// Hook for pointer encoding; non-pointer types do not need to implement this.
+    ///
+    /// This implements the equivalent of `init_encode_state()`, except taking a `ValidPtr` to
+    /// complete the incomplete pointer type.
+    ///
+    /// Returns a blob pointer if the value doesn't need to be encoded. Otherwise returns the value
+    /// state.
+    fn ptr_init_encode_state<T: ?Sized + Pointee>(ptr: &ValidPtr<T,Self>) -> Result<Z::BlobPtr, <T as Save<Z>>::State>
         where T: Save<Z>,
               Z: BlobZone,
               Self: Ptr
@@ -117,7 +124,11 @@ pub unsafe trait Encode<Z> : Sized {
         unimplemented!()
     }
 
-    fn encode_own_value<T, D>(own: &OwnedPtr<T,Self>, state: &mut T::State, dumper: D) -> Result<(D, Self::State), D::Pending>
+    /// Hook for pointer encoding; non-pointer types do not need to implement this.
+    ///
+    /// Encodes the value behind the pointer, returning a blob pointer when finished.
+    fn ptr_encode_value_poll<T, D>(ptr: &ValidPtr<T,Self>, state: &mut T::State, dumper: D)
+        -> Result<(D, Z::BlobPtr), D::Pending>
         where T: ?Sized + Save<Z>,
               D: SavePtr<Z>,
               Z: BlobZone,
