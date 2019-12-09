@@ -178,7 +178,7 @@ impl<'s,'p> Alloc for PileMut<'s,'p> {
 }
 
 impl<'s,'m> Get for Pile<'s, 'm> {
-    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a OwnedPtr<T, Self::Ptr>) -> Ref<'a, T>
+    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self::Ptr>) -> Ref<'a, T>
         where Self: 'a
     {
         let blob = self.load_blob(ptr);
@@ -192,7 +192,7 @@ impl<'s,'m> Get for Pile<'s, 'm> {
 }
 
 impl<'s,'m> Get for PileMut<'s, 'm> {
-    fn get<'a, T: ?Sized + Load<Self>>(&self, own: &'a OwnedPtr<T, Self::Ptr>) -> Ref<'a, T>
+    fn get<'a, T: ?Sized + Load<Self>>(&self, own: &'a ValidPtr<T, Self::Ptr>) -> Ref<'a, T>
         where Self: 'a
     {
         match own.raw.kind() {

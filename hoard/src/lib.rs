@@ -111,12 +111,13 @@ impl<A: Alloc> Alloc for &'_ mut A {
 pub trait TryGet : Zone {
     type Error;
 
-    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a OwnedPtr<T, Self::Ptr>) -> Result<Ref<'a, T>, Self::Error>;
+    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self::Ptr>) -> Result<Ref<'a, T>, Self::Error>;
 }
 
 pub trait Get : Zone {
-    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a OwnedPtr<T, Self::Ptr>) -> Ref<'a, T>
+    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self::Ptr>) -> Ref<'a, T>
         where Self: 'a;
+
     fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self::Ptr>) -> T::Owned;
 
     fn get_ref<'a, T: ?Sized + Load<Self>>(&self, ptr: Ref<'a, OwnedPtr<T, Self::Ptr>>) -> Ref<'a, T>
