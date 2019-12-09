@@ -37,6 +37,7 @@ impl Get for Heap {
 */
 
 impl Alloc for Heap {
+    type Ptr = HeapPtr;
     type Zone = Heap;
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, HeapPtr> {

@@ -162,6 +162,7 @@ impl<'s,'p> Zone for PileMut<'s,'p> {
 }
 
 impl<'s,'p> Alloc for PileMut<'s,'p> {
+    type Ptr = OffsetMut<'s,'p>;
     type Zone = Self;
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, OffsetMut<'s,'p>> {

@@ -48,7 +48,7 @@ pub mod hoard;
 
 //pub mod bag;
 
-//pub mod linkedlist;
+pub mod linkedlist;
 
 /// Generic pointer.
 pub trait Ptr : Sized + fmt::Debug {
@@ -79,22 +79,24 @@ pub trait Ptr : Sized + fmt::Debug {
 }
 pub trait Zone : Sized {
     type Ptr : Ptr;
-    type PersistPtr : Ptr + Primitive + Into<Self::Ptr>;
+    type PersistPtr : Ptr + Primitive;
 
-    type Allocator : Alloc<Zone = Self>;
+    type Allocator : Alloc<Ptr = Self::Ptr, Zone = Self>;
 
     fn allocator() -> Self::Allocator
         where Self: Default;
 }
 
 pub trait Alloc : Sized {
-    type Zone : Zone;
+    type Ptr : Ptr;
+    type Zone : Zone<Ptr = Self::Ptr>;
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, <Self::Zone as Zone>::Ptr>;
     fn zone(&self) -> Self::Zone;
 }
 
 impl<A: Alloc> Alloc for &'_ mut A {
+    type Ptr = A::Ptr;
     type Zone = A::Zone;
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, <Self::Zone as Zone>::Ptr> {
@@ -116,4 +118,13 @@ pub trait Get : Zone {
     fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a OwnedPtr<T, Self::Ptr>) -> Ref<'a, T>
         where Self: 'a;
     fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self::Ptr>) -> T::Owned;
+
+    fn get_ref<'a, T: ?Sized + Load<Self>>(&self, ptr: Ref<'a, OwnedPtr<T, Self::Ptr>>) -> Ref<'a, T>
+        where Self: 'a
+    {
+        match ptr {
+            Ref::Borrowed(ptr) => self.get(ptr),
+            Ref::Owned(ptr) => Ref::Owned(self.take(ptr)),
+        }
+    }
 }

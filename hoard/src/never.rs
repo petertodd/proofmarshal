@@ -11,6 +11,7 @@ pub struct NeverAllocator<Z> {
 }
 
 impl<Z: Zone> Alloc for NeverAllocator<Z> {
+    type Ptr = Z::Ptr;
     type Zone = Z;
 
     fn alloc<T: ?Sized + Pointee>(&mut self, _src: impl Take<T>) -> OwnedPtr<T, Z::Ptr> {
