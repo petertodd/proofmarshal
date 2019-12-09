@@ -100,23 +100,25 @@ impl Mark {
 }
 
 #[derive(Debug)]
-pub struct BlobDumper<'f> {
+pub struct BlobDumper<'f, 'h> {
+    marker: PhantomData<fn(&'h ()) -> &'h ()>,
     fd: &'f mut File,
     written: Option<u64>,
     pending: Vec<u8>,
 }
 
-impl<'f> BlobDumper<'f> {
+impl<'f, 'h> BlobDumper<'f, 'h> {
     pub fn new(fd: &'f mut File) -> io::Result<Self> {
         Self::with_capacity(8192, fd)
     }
 
-    pub fn with_capacity(capacity: usize, mut fd: &'f mut File) -> io::Result<Self> {
+    pub fn with_capacity(capacity: usize, fd: &'f mut File) -> io::Result<Self> {
         let written = fd.seek(SeekFrom::End(0))?
                         .checked_sub(size_of::<FileHeader>() as u64)
                         .expect("missing header");
 
         Ok(Self {
+            marker: PhantomData,
             written: Some(written),
             pending: Vec::with_capacity(capacity),
             fd,

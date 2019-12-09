@@ -71,16 +71,17 @@ impl<V: Flavor> Hoard<V> {
         })
     }
 
-    pub fn snapshot<'h>(self: &'h Unique<Self>) -> Snapshot<'h, Arc<Mmap>> {
+    pub fn snapshot<'h>(self: &Unique<'h, Self>) -> Snapshot<'h, Arc<Mmap>> {
+        let mapping = self.mapping.clone();
         unsafe {
             Snapshot::new_unchecked_with_range(
-                self.mapping.clone(),
+                mapping,
                 mem::size_of::<FileHeader>() ..
             ).expect("mapping to have file header")
         }
     }
 
-    pub fn roots<'h, T>(self: &'h Unique<Self>) -> IterRoots<'h, T>
+    pub fn roots<'h, T>(self: &Unique<'h, Self>) -> IterRoots<'h, T>
         where T: Decode<Pile<'static, 'h>>
     {
         IterRoots::new(self.snapshot())
@@ -320,19 +321,16 @@ impl<V: Flavor> HoardMut<V> {
     }
 
 
-    pub fn roots<'h, T>(self: &'h Unique<Self>) -> IterRootsMut<'h, T>
+    pub fn roots<'h, T>(self: &Unique<'h, Self>) -> IterRootsMut<'h, T>
         where T: Decode<PileMut<'static, 'h>>
     {
         IterRootsMut::new(self.as_hoard().snapshot())
     }
 
-    pub fn push_root<'s, 'h, T>(self: &'h mut Unique<Self>, root: T) -> io::Result<u64>
+    pub fn push_root<'s, 'h, T>(self: &mut Unique<'h, Self>, root: T) -> io::Result<u64>
         where T: Encode<PileMut<'s, 'h>>
     {
-        // HACK: We need to borrow the fd again later to rebuild the mapping, which the borrow
-        // checker isn't happy with.
-        let fd = unsafe { &mut *(&mut self.0.fd as *mut _) };
-        let mut dumper = BlobDumper::new(fd)?;
+        let mut dumper = BlobDumper::new(&mut self.0.fd)?;
 
         let mut state = root.init_encode_state();
         root.encode_poll(&mut state, &mut dumper)?;
@@ -353,15 +351,15 @@ impl<V: Flavor> HoardMut<V> {
         Ok(root_offset)
     }
 
-    pub fn as_hoard<'h>(self: &'h Unique<Self>) -> &'h Unique<Hoard<V>> {
-        // Safe because we're a #[repr(transparent)] wrapper.
+    pub fn as_hoard<'a, 'h>(self: &'a Unique<'h, Self>) -> &'a Unique<'h, Hoard<V>> {
+        // Safe because we were created from a unique Hoard
         unsafe {
-            &*(self as *const _ as *const _)
+            Unique::map_unchecked(self, |this| &this.0)
         }
     }
 }
 
-impl<'s, 'h> Dumper<PileMut<'s, 'h>> for &'_ mut BlobDumper<'h> {
+impl<'s, 'h> Dumper<PileMut<'s, 'h>> for &'_ mut BlobDumper<'_, 'h> {
     type Pending = io::Error;
 
     fn try_save_ptr<'p, T: ?Sized + Pointee>(&self, ptr: &'p ValidPtr<T, OffsetMut<'s, 'h>>) -> Result<Offset<'s, 'h>, &'p T> {
@@ -403,7 +401,7 @@ mod tests {
             tmpdir.path().join("hoardmut")
         )?;
 
-        Unique::new(hoard, |hoard| {
+        Unique::new(hoard, |mut hoard| {
             let mut alloc = PileMut::allocator();
             let owned = alloc.alloc(42u8);
 
@@ -427,8 +425,21 @@ mod tests {
                 panic!()
             }
 
-            let owned = alloc.alloc((root, 42u8));
-            //assert_eq!(hoard.push_root(owned)?, 16);
+            let owned = alloc.alloc((root, 43u8));
+            assert_eq!(hoard.push_root(owned)?, 48);
+
+            assert_eq!(&hoard.0.mapping[..],
+                &[0, 72, 111, 97, 114, 100, 32, 70, 105, 108, 101,  0,  0,  0,  0,  0,
+                 76, 76,  76, 76,  76,  76, 76, 76,  76,  76,  76, 76, 76, 76, 76, 76,
+                 42,
+                      0, 0, 0, 0, 0, 0, 0,
+                  1, 0, 0, 0, 0, 0, 0, 0,
+                  253, 255, 255, 255, 255, 255, 255, 255,
+                  1,  0, 0, 0, 0, 0, 0, 0,
+                  43, 0, 0, 0, 0, 0, 0, 0,
+                  49, 0, 0, 0, 0, 0, 0, 0,
+                  249, 255, 255, 255, 255, 255, 255, 255,
+                ][..]);
 
             Ok(())
         })
@@ -442,7 +453,7 @@ mod tests {
             tmpdir.path().join("hoardmut")
         )?;
 
-        Unique::new(hoard, |hoard| {
+        Unique::new(hoard, |mut hoard| {
             let v = (8u8, 16u16, 32u32);
             assert_eq!(hoard.push_root(v)?, 8);
 
@@ -463,7 +474,7 @@ mod tests {
             tmpdir.path().join("hoardmut")
         )?;
 
-        Unique::new(hoard, |hoard| {
+        Unique::new(hoard, |mut hoard| {
             assert_eq!(hoard.push_root(0u8)?, 8);
             assert_eq!(hoard.push_root(1u8)?, 24);
             assert_eq!(hoard.push_root(2u8)?, 40);
