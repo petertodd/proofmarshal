@@ -44,7 +44,7 @@ pub mod never;
 pub mod heap;
 pub mod pile;
 
-//pub mod hoard;
+pub mod hoard;
 
 //pub mod bag;
 

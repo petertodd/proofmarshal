@@ -153,65 +153,66 @@ pub enum LoadOwnedPtrError<P,M> {
     Metadata(M),
 }
 
-/*
-impl<T: ?Sized + Pointee, P: Ptr, Z> Decode<Z> for OwnedPtr<T,P>
-where T: Load<Z>,
-      P: Decode<Z>,
-      Z: BlobZone,
+impl<T, P, Z> Decode<Z> for OwnedPtr<T,P>
+where Z: Zone<Ptr=P>,
+      P: Ptr + From<Z::PersistPtr>,
+      T: ?Sized + Load<Z>,
 {
-    type Error = LoadOwnedPtrError<P::Error, <T::Metadata as Primitive>::Error>;
+    type Error = LoadOwnedPtrError<<Z::PersistPtr as Primitive>::Error, <T::Metadata as Primitive>::Error>;
 
-    type ValidateChildren = OwnedPtrValidator<T,P,Z>;
-    fn validate_blob<'a>(blob: Blob<'a, Self, Z>) -> Result<BlobValidator<'a, Self, Z>, Self::Error>
-        where Z: BlobZone
-    {
-        /*
-        let mut fields = blob.validate_struct();
+    type ValidateChildren = OwnedPtrValidator<T,Z>;
 
-        let raw = fields.field_blob::<P>();
-        let raw = P::ptr_validate_blob(raw).map_err(LoadOwnedPtrError::Ptr)?;
-        let raw = P::ptr_decode_blob(raw);
+    fn validate_blob<'a>(blob: Blob<'a, Self, Z>) -> Result<BlobValidator<'a, Self, Z>, Self::Error> {
+        // There's no bound guaranteeing that Z::PersistPtr outlives 'a, so create a new blob with
+        // a shorter lifetime to do the decoding.
+        let mut blob2 = Blob::<Self, Z>::new(&blob[..], ()).unwrap();
+        let mut fields = blob2.validate_struct();
 
+        // If we hadn't done that, the following line would create a Blob<'a, Z::PersistPtr, Z>,
+        // and fail with a "<Z as Zone>::PersistPtr may not live long enough" error.
+        let raw = fields.field_blob::<Z::PersistPtr>();
+        let raw = <Z::PersistPtr as Primitive>::validate_blob(raw).map_err(LoadOwnedPtrError::Ptr)?;
+        let raw = <Z::PersistPtr as Primitive>::decode_blob(raw);
+
+        // Metadata doesn't have this issue as it's always valid for the 'static lifetime.
         let metadata = fields.field_blob::<T::Metadata>();
         let metadata = <T::Metadata as Primitive>::validate_blob(metadata).map_err(LoadOwnedPtrError::Metadata)?;
         let metadata = <T::Metadata as Primitive>::decode_blob(metadata);
 
-        let fatptr = FatPtr { raw, metadata };
-        Ok(fields.done(OwnedPtrValidator::FatPtr(fatptr)))
-        */
-        todo!()
+        let fatptr = FatPtr::<T,_> { raw, metadata };
+        Ok(blob.assume_valid(OwnedPtrValidator::FatPtr(fatptr)))
     }
 
     fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Z>, loader: &impl LoadPtr<Z>) -> Self {
         let mut fields = blob.decode_struct(loader);
-        let fatptr = fields.field();
+
+        let fatptr = FatPtr {
+            raw: P::from(fields.field::<Z::PersistPtr>()),
+            metadata: fields.field(),
+        };
+        fields.assert_done();
 
         unsafe {
             Self::new_unchecked(ValidPtr::new_unchecked(fatptr))
         }
     }
 }
-*/
 
-/*
-pub enum OwnedPtrValidator<T: ?Sized + Load<Q>, P: Decode<Q>, Q> {
-    FatPtr(FatPtr<T,P>),
+pub enum OwnedPtrValidator<T: ?Sized + Load<Z>, Z: Zone> {
+    FatPtr(FatPtr<T, Z::PersistPtr>),
     Value(T::ValidateChildren),
     Done,
 }
 
-impl<T: ?Sized + Load<Z>, P: Decode<Z>, Z> ValidateChildren<Z> for OwnedPtrValidator<T,P,Z>
-where P: Ptr
-{
+impl<T: ?Sized + Load<Z>, Z: Zone> ValidateChildren<Z> for OwnedPtrValidator<T,Z> {
     fn validate_children<V>(&mut self, ptr_validator: &mut V) -> Result<(), V::Error>
         where V: ValidatePtr<Z>
     {
-        /*
         loop {
             match self {
                 Self::Done => break Ok(()),
                 Self::FatPtr(fatptr) => {
-                    *self = match P::ptr_validate_children(fatptr, ptr_validator)? {
+                    *self = match ptr_validator.validate_ptr(fatptr)? {
                         Some(blob_validator) => Self::Value(blob_validator.into_state()),
                         None => Self::Done,
                     };
@@ -222,11 +223,10 @@ where P: Ptr
                 }
             }
         }
-        */
-        todo!()
     }
 }
 
+/*
 impl<T: ?Sized + Load<Q>, P: Decode<Q>, Q> fmt::Debug for OwnedPtrValidator<T,P,Q>
 where P: Ptr + fmt::Debug,
       T::ValidateChildren: fmt::Debug,

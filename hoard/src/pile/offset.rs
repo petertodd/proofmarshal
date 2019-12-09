@@ -177,11 +177,33 @@ impl Primitive for Offset<'_,'_> {
     }
 
     fn validate_blob<'a, Z: Zone>(blob: Blob<'a, Self, Z>) -> Result<FullyValidBlob<'a, Self, Z>, Self::Error> {
-        todo!()
+        let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
+
+        if raw & 1 == 0 {
+            Err(DecodeOffsetError::Ptr(raw))
+        } else {
+            let raw = raw >> 1;
+            if raw <= Self::MAX as u64 {
+                unsafe { Ok(blob.assume_fully_valid()) }
+            } else {
+                Err(DecodeOffsetError::OutOfRange(raw))
+            }
+        }
     }
 
     fn decode_blob<'a, Z: Zone>(blob: FullyValidBlob<'a, Self, Z>) -> Self {
-        todo!()
+        <Self as Primitive>::deref_blob(blob).clone()
+    }
+
+    fn load_blob<'a, Z: Zone>(blob: FullyValidBlob<'a, Self, Z>) -> Ref<'a, Self> {
+        Ref::Borrowed(<Self as Primitive>::deref_blob(blob))
+    }
+
+    fn deref_blob<'a, Z: Zone>(blob: FullyValidBlob<'a, Self, Z>) -> &'a Self {
+        match <Self as Primitive>::validate_blob(Blob::from(blob)) {
+            Ok(_) => unsafe { blob.assume_valid() },
+            Err(e) => panic!("fully valid offset not valid: {:?}", e),
+        }
     }
 }
 

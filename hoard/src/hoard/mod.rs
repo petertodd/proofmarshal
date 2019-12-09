@@ -17,8 +17,13 @@ use singlelife::Unique;
 
 use crate::{
     FatPtr, ValidPtr,
-    marshal::{Load, Decode},
-    pile::{Pile, Offset, Snapshot, Mapping},
+    Alloc, Zone,
+    pointee::Pointee,
+    marshal::{Load, Decode, Dumper, Encode},
+    pile::{
+        Pile, PileMut, Offset, OffsetMut, Snapshot, Mapping,
+        offset::Kind,
+    },
 };
 
 pub mod disk;
@@ -92,31 +97,74 @@ impl<'h, T> Root<'h, T> {
     fn new(snapshot: Snapshot<'h, Arc<Mmap>>) -> Self {
         Self { marker: PhantomData, snapshot }
     }
-}
 
-impl<'h, T> Root<'h, T>
-where T: Decode<Pile<'static, 'h>>
-{
-    pub fn validate<'a>(&'a self) -> Result<Ref<'a, T>, T::Error> {
-        /*
+    pub fn offset<'s>(&'s self) -> FatPtr<T, Offset<'s, 'h>>
+        where T: Decode<Pile<'s, 'h>>
+    {
+        let padding = align_offset(T::BLOB_LAYOUT.size() as u64, mem::size_of::<Mark>());
         let offset = self.snapshot.len()
-                         .checked_sub(T::blob_layout().size())
-                         .ok_or(ValidateRootError::Offset)?;
+                         .saturating_sub(T::BLOB_LAYOUT.size() + padding);
+        let offset = Offset::new(&self.snapshot, offset, T::BLOB_LAYOUT.size())
+                            .expect("undersized snapshot");
+        FatPtr {
+            raw: offset,
+            metadata: (),
+        }
+    }
 
-        let offset = self.snapshot.len().saturating_sub(T::blob_layout().size());
-        let offset = Offset::new(&self.snapshot, offset, T::blob_layout().size())
-                            .ok_or(ValidateRootError::Offset)?;
-        let pile = self.snapshot.pile();
-        */
+    pub fn fully_validate<'s>(&'s self) -> Result<T, T::Error>
+        where T: Decode<Pile<'s, 'h>>
+    {
+        let mut pile = Pile::new(&self.snapshot);
 
-        todo!()
+        let root = self.offset();
+        let blob = pile.get_blob(&root).unwrap();
+
+        let mut validator = T::validate_blob(blob)?;
+
+        let fully_valid_blob = validator.poll(&mut pile).expect("FIXME");
+
+        Ok(T::decode_blob(fully_valid_blob, &pile))
     }
 }
 
-/*
 #[derive(Debug)]
 pub struct RootMut<'h, T>(Root<'h, T>);
-*/
+
+impl<'h, T> RootMut<'h, T> {
+    fn new(snapshot: Snapshot<'h, Arc<Mmap>>) -> Self {
+         Self(Root::new(snapshot))
+    }
+
+    pub fn offset<'s>(&'s self) -> FatPtr<T, Offset<'s, 'h>>
+        where T: Decode<PileMut<'s, 'h>>
+    {
+        let padding = align_offset(T::BLOB_LAYOUT.size() as u64, mem::size_of::<Mark>());
+        let offset = self.0.snapshot.len()
+                         .saturating_sub(T::BLOB_LAYOUT.size() + padding);
+        let offset = Offset::new(&self.0.snapshot, offset, T::BLOB_LAYOUT.size())
+                            .expect("undersized snapshot");
+        FatPtr {
+            raw: offset,
+            metadata: (),
+        }
+    }
+
+    pub fn fully_validate<'s>(&'s self) -> Result<T, T::Error>
+        where T: Decode<PileMut<'s, 'h>>
+    {
+        let mut pile = PileMut::from(Pile::new(&self.0.snapshot));
+
+        let root = self.offset();
+        let blob = pile.get_blob(&root).unwrap();
+
+        let mut validator = T::validate_blob(blob)?;
+
+        let fully_valid_blob = validator.poll(&mut pile).expect("FIXME");
+
+        Ok(T::decode_blob(fully_valid_blob, &pile))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct IterRoots<'h, T> {
@@ -126,27 +174,42 @@ pub struct IterRoots<'h, T> {
     idx_back: usize,
 }
 
-/*
 #[derive(Debug, Clone)]
 pub struct IterRootsMut<'h, T>(IterRoots<'h,T>);
-*/
 
 impl<'h, T> IterRoots<'h, T>
 where T: Decode<Pile<'static, 'h>>
 {
-    pub fn new(snapshot: Snapshot<'h, Arc<Mmap>>) -> Self {
+    fn new(snapshot: Snapshot<'h, Arc<Mmap>>) -> Self {
         let marks = Mark::as_marks(&snapshot);
 
         Self {
             marker: PhantomData,
-            idx_front: (T::blob_layout().size() + mem::size_of::<Mark>() - 1) / mem::size_of::<Mark>(),
-            idx_back: marks.len().saturating_sub(1),
+            idx_front: (T::BLOB_LAYOUT.size() + mem::size_of::<Mark>() - 1) / mem::size_of::<Mark>(),
+            idx_back: marks.len(),
             snapshot,
         }
     }
 }
 
-impl<'h, T> Iterator for IterRoots<'h, T> {
+impl<'h, T> IterRootsMut<'h, T>
+where T: Decode<PileMut<'static, 'h>>
+{
+    fn new(snapshot: Snapshot<'h, Arc<Mmap>>) -> Self {
+        let marks = Mark::as_marks(&snapshot);
+
+        Self(IterRoots {
+            marker: PhantomData,
+            idx_front: (T::BLOB_LAYOUT.size() + mem::size_of::<Mark>() - 1) / mem::size_of::<Mark>(),
+            idx_back: marks.len(),
+            snapshot,
+        })
+    }
+}
+
+impl<'h, T> Iterator for IterRoots<'h, T>
+where T: Decode<Pile<'static, 'h>>
+{
     type Item = Root<'h, T>;
 
     fn next(&mut self) -> Option<Root<'h, T>> {
@@ -155,7 +218,7 @@ impl<'h, T> Iterator for IterRoots<'h, T> {
             self.idx_front += 1;
 
             let marks = Mark::as_marks(&self.snapshot);
-            if marks[idx].is_valid(idx) {
+            if marks[idx].is_valid(idx.try_into().unwrap()) {
                 let mut root_snap = self.snapshot.clone();
                 root_snap.truncate(idx * mem::size_of::<Mark>());
 
@@ -166,14 +229,16 @@ impl<'h, T> Iterator for IterRoots<'h, T> {
     }
 }
 
-impl<'h, T> DoubleEndedIterator for IterRoots<'h, T> {
+impl<'h, T> DoubleEndedIterator for IterRoots<'h, T>
+where T: Decode<Pile<'static, 'h>>
+{
     fn next_back(&mut self) -> Option<Root<'h, T>> {
         while self.idx_front < self.idx_back {
-            let idx = self.idx_back;
             self.idx_back -= 1;
+            let idx = self.idx_back;
 
             let marks = Mark::as_marks(&self.snapshot);
-            if marks[idx].is_valid(idx) {
+            if marks[idx].is_valid(idx.try_into().unwrap()) {
                 let mut root_snap = self.snapshot.clone();
                 root_snap.truncate(idx * mem::size_of::<Mark>());
 
@@ -184,25 +249,63 @@ impl<'h, T> DoubleEndedIterator for IterRoots<'h, T> {
     }
 }
 
-/*
-impl<'h, T> Iterator for IterRootsMut<'h, T> {
+impl<'h, T> Iterator for IterRootsMut<'h, T>
+where T: Decode<PileMut<'static, 'h>>
+{
     type Item = RootMut<'h, T>;
 
     fn next(&mut self) -> Option<RootMut<'h, T>> {
-        self.0.next().map(|root| RootMut(root))
+        while self.0.idx_front < self.0.idx_back {
+            let idx = self.0.idx_front;
+            self.0.idx_front += 1;
+
+            let marks = Mark::as_marks(&self.0.snapshot);
+            if marks[idx].is_valid(idx.try_into().unwrap()) {
+                let mut root_snap = self.0.snapshot.clone();
+                root_snap.truncate(idx * mem::size_of::<Mark>());
+
+                return Some(RootMut::new(root_snap))
+            }
+        }
+        None
     }
 }
 
-impl<'h, T> DoubleEndedIterator for IterRootsMut<'h, T> {
+impl<'h, T> DoubleEndedIterator for IterRootsMut<'h, T>
+where T: Decode<PileMut<'static, 'h>>
+{
     fn next_back(&mut self) -> Option<RootMut<'h, T>> {
-        self.0.next_back().map(|root| RootMut(root))
+        while self.0.idx_front < self.0.idx_back {
+            self.0.idx_back -= 1;
+            let idx = self.0.idx_back;
+
+            let marks = Mark::as_marks(&self.0.snapshot);
+            if marks[idx].is_valid(idx.try_into().unwrap()) {
+                let mut root_snap = self.0.snapshot.clone();
+                root_snap.truncate(idx * mem::size_of::<Mark>());
+
+                return Some(RootMut::new(root_snap))
+            }
+        }
+        None
     }
 }
 
-impl<V: Flavor> HoardMut<'static, V> {
-    pub fn create<F, R>(path: impl AsRef<Path>, f: F) -> io::Result<R>
-        where F: for<'h> FnOnce(HoardMut<'h, V>) -> R
-    {
+impl<V: Flavor> HoardMut<V> {
+    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
+        let fd = OpenOptions::new()
+                    .read(true)
+                    .append(true)
+                    .open(path)?;
+
+        Self::open_fd(fd)
+    }
+
+    pub fn open_fd(fd: File) -> io::Result<Self> {
+        Ok(Self(Hoard::open_fd(fd)?))
+    }
+
+    pub fn create(path: impl AsRef<Path>) -> io::Result<Self> {
         let mut fd = OpenOptions::new()
                         .read(true)
                         .append(true)
@@ -213,250 +316,74 @@ impl<V: Flavor> HoardMut<'static, V> {
 
         fd.write_all(header.as_bytes())?;
 
-        Self::open_fd(fd, f)
+        Self::open_fd(fd)
     }
 
-    pub fn open<F, R>(path: impl AsRef<Path>, f: F) -> io::Result<R>
-        where F: for<'h> FnOnce(HoardMut<'h, V>) -> R
-    {
-        let fd = OpenOptions::new()
-                    .read(true)
-                    .append(true)
-                    .open(path)?;
 
-        Self::open_fd(fd, f)
+    pub fn roots<'h, T>(self: &'h Unique<Self>) -> IterRootsMut<'h, T>
+        where T: Decode<PileMut<'static, 'h>>
+    {
+        IterRootsMut::new(self.as_hoard().snapshot())
     }
 
-    pub fn open_fd<F, R>(mut fd: File, f: F) -> io::Result<R>
-        where F: for<'h> FnOnce(HoardMut<'h, V>) -> R
+    pub fn push_root<'s, 'h, T>(self: &'h mut Unique<Self>, root: T) -> io::Result<u64>
+        where T: Encode<PileMut<'s, 'h>>
     {
-        fd.seek(SeekFrom::Start(0))?;
-        let header = FileHeader::<V>::read(&mut fd)?;
+        // HACK: We need to borrow the fd again later to rebuild the mapping, which the borrow
+        // checker isn't happy with.
+        let fd = unsafe { &mut *(&mut self.0.fd as *mut _) };
+        let mut dumper = BlobDumper::new(fd)?;
 
-        // TODO: where should we validate header version etc?
+        let mut state = root.init_encode_state();
+        root.encode_poll(&mut state, &mut dumper)?;
 
-        fd.seek(SeekFrom::End(0))?;
+        let root_offset = dumper.commit_root_with(
+            T::BLOB_LAYOUT.size(),
+            | dst | {
+                match root.encode_blob(&state, dst) {
+                    Ok(()) => (),
+                    Err(never) => never,
+                }
+            })?;
 
-        let mut anchor = ();
         unsafe {
-            let this = HoardMut(Hoard::new_unchecked(fd, &mut anchor)?);
-            Ok(f(this))
+            self.0.mapping = Arc::new(Mmap::map(&self.0.fd)?);
         }
-    }
-}
 
-impl<'h, V> HoardMut<'h, V> {
-    pub fn roots_mut<T>(&self) -> IterRootsMut<'h, T> {
-        IterRootsMut(self.roots())
+        Ok(root_offset)
     }
 
-    pub fn push_root<T>(&mut self, root: T) {
-        todo!()
-    }
-}
-
-impl<'h, V> ops::Deref for HoardMut<'h, V> {
-    type Target = Hoard<'h,V>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub struct Snapshot<'h> {
-    marker: PhantomData<&'h mut ()>,
-    mapping: Mapping,
-}
-
-impl<'h> Snapshot<'h> {
-    unsafe fn new(mapping: Mapping) -> Self {
-        Self { marker: PhantomData, mapping, }
-    }
-
-    fn truncate(&mut self, len: usize) {
-        self.mapping.truncate(len)
-    }
-
-    fn pile<'s>(&'s self) -> Pile<'s, 'h> {
+    pub fn as_hoard<'h>(self: &'h Unique<Self>) -> &'h Unique<Hoard<V>> {
+        // Safe because we're a #[repr(transparent)] wrapper.
         unsafe {
-            Pile::new_unchecked(&self.mapping.slice())
+            &*(self as *const _ as *const _)
         }
     }
 }
 
-/*
-    pub fn roots(&self) -> impl DoubleEndedIterator<Item=Root<'f>> + '_ {
-        let cloned = self.clone();
-        self.mapping.mark_offsets()
-            .map(move |offset| Root { snapshot: cloned.clone(), offset })
-    }
+impl<'s, 'h> Dumper<PileMut<'s, 'h>> for &'_ mut BlobDumper<'h> {
+    type Pending = io::Error;
 
-    fn try_get_blob<'s, 'p, T: ?Sized + Load<Offset<'s,'f>>>(&'s self, ptr: &'p FatPtr<T, Offset<'s, 'f>>)
-        -> Result<Blob<'p, T, Offset<'s, 'f>>, ValidatePtrError>
-    {
-        let size = T::blob_layout(ptr.metadata).size();
-        let start = ptr.raw.get().try_into().unwrap();
-        match self.mapping.get(start .. start + size) {
-            Some(slice) => Ok(Blob::new(slice, ptr.metadata).unwrap()),
-            None => Err(ValidatePtrError::Ptr {
-                offset: ptr.raw.to_static(),
-                size
-            }),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ValidatePtrError {
-    Ptr {
-        offset: Offset<'static, 'static>,
-        size: usize,
-    },
-    Value(Box<dyn crate::marshal::Error>),
-}
-
-impl<'s,'f> ValidatePtr<Offset<'s,'f>> for &'s Snapshot<'f> {
-    type Error = ValidatePtrError;
-
-    fn validate_ptr<'p, T: ?Sized + Load<Offset<'s,'f>>>(&mut self, ptr: &'p FatPtr<T,Offset<'s,'f>>)
-        -> Result<BlobValidator<'p, T, Offset<'s, 'f>>, Self::Error>
-    {
-        let blob = self.try_get_blob(ptr)?;
-        match T::validate_blob(blob) {
-            Err(e) => Err(ValidatePtrError::Value(Box::new(e))),
-            Ok(validator) => Ok(validator),
-        }
-    }
-}
-
-impl<'s,'f> LoadPtr<Offset<'s,'f>> for &'s Snapshot<'f> {
-    fn load_blob<'a, T: ?Sized + Load<Offset<'s,'f>>>(&self, ptr: &'a FatPtr<T, Offset<'s,'f>>)
-        -> FullyValidBlob<'a, T, Offset<'s,'f>>
-    {
-        let blob = self.try_get_blob(ptr).expect("FIXME");
-
-        // FIXME: maybe we need a ValidFatPtr?
-        unsafe { blob.assume_fully_valid() }
-    }
-}
-
-impl<'s,'f> Zone for &'s Snapshot<'f> {
-    type Ptr = Offset<'s,'f>;
-    type Allocator = NeverAllocator<Self>;
-
-    fn allocator() -> Self::Allocator {
-        unreachable!()
-    }
-}
-
-impl<'s,'f> Get for &'s Snapshot<'f> {
-    fn get<'p, T: ?Sized + Load<Self::Ptr>>(&self, ptr: &'p Own<T, Self::Ptr>) -> Ref<'p, T> {
-        let blob = self.try_get_blob(ptr).expect("FIXME");
-        let blob = unsafe { blob.assume_fully_valid() };
-        T::load_blob(blob, self)
-    }
-
-    fn take<'p, T: ?Sized + Load<Self::Ptr>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned {
-        let blob = self.try_get_blob(&ptr).expect("FIXME");
-        let blob = unsafe { blob.assume_fully_valid() };
-        T::decode_blob(blob, self)
-    }
-}
-*/
-
-#[derive(Debug)]
-pub struct SnapshotMut<'f>(Snapshot<'f>);
-
-impl<'f> From<Snapshot<'f>> for SnapshotMut<'f> {
-    fn from(snapshot: Snapshot<'f>) -> Self {
-        Self(snapshot)
-    }
-}
-
-/*
-
-impl<'s,'f> ValidatePtr<OffsetMut<'s,'f>> for &'s SnapshotMut<'f> {
-    type Error = ValidatePtrError;
-
-    fn validate_ptr<'p, T: ?Sized + Load<OffsetMut<'s,'f>>>(&mut self, ptr: &'p FatPtr<T, OffsetMut<'s,'f>>)
-        -> Result<BlobValidator<'p, T, OffsetMut<'s, 'f>>, Self::Error>
-    {
-        todo!()
-    }
-}
-
-impl<'s,'f> LoadPtr<OffsetMut<'s,'f>> for &'s SnapshotMut<'f> {
-    fn load_blob<'a, T: ?Sized + Load<OffsetMut<'s,'f>>>(&self, ptr: &'a FatPtr<T, OffsetMut<'s,'f>>)
-        -> FullyValidBlob<'a, T, OffsetMut<'s,'f>>
-    {
-        todo!()
-    }
-}
-
-impl<'s,'f> Zone for &'s SnapshotMut<'f> {
-    type Ptr = OffsetMut<'s,'f>;
-    type Allocator = Self;
-
-    fn allocator() -> Self::Allocator {
-        unreachable!()
-    }
-}
-
-impl<'s,'f> Alloc for &'s SnapshotMut<'f> {
-    type Zone = Self;
-    type Ptr = OffsetMut<'s,'f>;
-
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Own<T, Self::Ptr> {
-        src.take_unsized(|src| {
-            unsafe {
-                Own::new_unchecked(
-                    FatPtr {
-                        metadata: T::metadata(src),
-                        raw: OffsetMut::alloc(src),
-                    }
-                )
-            }
-        })
-    }
-
-    fn zone(&self) -> Self {
-        todo!()
-    }
-}
-
-impl<'s,'f> Get for &'s SnapshotMut<'f> {
-    fn get<'p, T: ?Sized + Load<Self::Ptr>>(&self, ptr: &'p Own<T, Self::Ptr>) -> Ref<'p, T> {
+    fn try_save_ptr<'p, T: ?Sized + Pointee>(&self, ptr: &'p ValidPtr<T, OffsetMut<'s, 'h>>) -> Result<Offset<'s, 'h>, &'p T> {
         match ptr.raw.kind() {
-            Kind::Offset(offset) => {
-                todo!()
-            },
+            Kind::Offset(offset) => Ok(offset),
             Kind::Ptr(nonnull) => {
                 let r: &'p T = unsafe {
                     &*T::make_fat_ptr(nonnull.cast().as_ptr(), ptr.metadata)
                 };
-                Ref::Borrowed(r)
+                Err(r)
             },
         }
     }
 
-    fn take<T: ?Sized + Load<Self::Ptr>>(&self, ptr: Own<T, Self::Ptr>) -> T::Owned {
-        let fatptr = ptr.into_inner();
-        match unsafe { fatptr.raw.try_take::<T>(fatptr.metadata) } {
-            Ok(owned) => owned,
-            Err(offset) => {
-                todo!()
-            },
-        }
+    fn try_save_blob(self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, Offset<'s, 'h>), io::Error> {
+        let offset = self.write_blob_with(size, f)?;
+
+        // FIXME: what exactly is the safety story here?
+        let offset = unsafe { Offset::new_unchecked(offset as usize) };
+
+        Ok((self, offset))
     }
-}
-
-
-#[derive(Debug, Clone)]
-pub struct Root<'f> {
-    snapshot: Snapshot<'f>,
-    offset: usize,
 }
 
 #[cfg(test)]
@@ -464,9 +391,93 @@ mod tests {
     use super::*;
 
     use std::io;
+    use tempfile::tempdir;
 
-    use tempfile::tempfile;
+    use crate::OwnedPtr;
 
+    #[test]
+    fn hoardmut_push_root() -> io::Result<()> {
+        let tmpdir = tempdir()?;
+
+        let hoard = HoardMut::<()>::create(
+            tmpdir.path().join("hoardmut")
+        )?;
+
+        Unique::new(hoard, |hoard| {
+            let mut alloc = PileMut::allocator();
+            let owned = alloc.alloc(42u8);
+
+            assert_eq!(hoard.push_root(owned)?, 16);
+
+            assert_eq!(&hoard.0.mapping[..],
+                &[0, 72, 111, 97, 114, 100, 32, 70, 105, 108, 101,  0,  0,  0,  0,  0,
+                 76, 76,  76, 76,  76,  76, 76, 76,  76,  76,  76, 76, 76, 76, 76, 76,
+                 42,
+                      0, 0, 0, 0, 0, 0, 0,
+                  1, 0, 0, 0, 0, 0, 0, 0,
+                  253, 255, 255, 255, 255, 255, 255, 255][..]);
+
+            let root = hoard.roots::<OwnedPtr<u8,OffsetMut>>()
+                            .last().unwrap();
+            let root = root.fully_validate().unwrap();
+
+            if let Kind::Offset(offset) = root.raw.kind() {
+                assert_eq!(offset.get(), 0);
+            } else {
+                panic!()
+            }
+
+            let owned = alloc.alloc((root, 42u8));
+            //assert_eq!(hoard.push_root(owned)?, 16);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn hoardmut_push_root_tuple() -> io::Result<()> {
+        let tmpdir = tempdir()?;
+
+        let hoard = HoardMut::<()>::create(
+            tmpdir.path().join("hoardmut")
+        )?;
+
+        Unique::new(hoard, |hoard| {
+            let v = (8u8, 16u16, 32u32);
+            assert_eq!(hoard.push_root(v)?, 8);
+
+            for root in hoard.as_hoard().roots::<(u8, u16, u32)>() {
+                let root = root.fully_validate().unwrap();
+                assert_eq!(root, (8, 16, 32));
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn hoardmut_push_root_primitive() -> io::Result<()> {
+        let tmpdir = tempdir()?;
+
+        let hoard = HoardMut::<()>::create(
+            tmpdir.path().join("hoardmut")
+        )?;
+
+        Unique::new(hoard, |hoard| {
+            assert_eq!(hoard.push_root(0u8)?, 8);
+            assert_eq!(hoard.push_root(1u8)?, 24);
+            assert_eq!(hoard.push_root(2u8)?, 40);
+
+            for (i, root) in hoard.as_hoard().roots::<u8>().enumerate() {
+                let root = root.fully_validate().unwrap();
+                assert_eq!(i, root as usize);
+            }
+
+            Ok(())
+        })
+    }
+
+    /*
     #[test]
     fn snapshotmut_zone() {
         let snap = unsafe { SnapshotMut::from(Snapshot::new(Mapping::from_buf([]))) };
@@ -534,6 +545,5 @@ mod tests {
             Ok(())
         })
     }
+*/
 }
-*/
-*/

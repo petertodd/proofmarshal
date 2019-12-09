@@ -11,7 +11,7 @@ use super::*;
 
 use crate::marshal::{*, blob::*};
 
-use crate::coerce::TryCastRef;
+use crate::coerce::{TryCastRef, CastRef};
 
 pub mod offset;
 use self::offset::Kind;
@@ -33,6 +33,12 @@ impl<'s, 'm> Pile<'s, 'm> {
             snapshot: NonNull::from(snapshot),
         }
     }
+
+    pub fn get_blob<'p, T>(&self, ptr: &'p FatPtr<T, Offset<'s, 'm>>) -> Result<Blob<'p, T, Self>, offset::OffsetError>
+        where T: ?Sized + Load<Self>
+    {
+        Offset::get_blob_from_pile(ptr, self)
+    }
 }
 
 #[derive(Debug)]
@@ -48,8 +54,23 @@ impl<'s,'m> ValidatePtr<Self> for Pile<'s,'m> {
         -> Result<Option<BlobValidator<'a, T, Self>>, Self::Error>
     where T: ?Sized + Load<Self>
     {
-        let blob = Offset::get_blob_from_pile(ptr, self)
-                          .map_err(ValidatePtrError::Offset)?;
+        let blob = self.get_blob(ptr)
+                       .map_err(ValidatePtrError::Offset)?;
+
+        T::validate_blob(blob).map(Some)
+            .map_err(|e| ValidatePtrError::Value(Box::new(e)))
+    }
+}
+
+impl<'s,'m> ValidatePtr<Self> for PileMut<'s,'m> {
+    type Error = ValidatePtrError;
+
+    fn validate_ptr<'a, T>(&mut self, ptr: &'a FatPtr<T, Offset<'s,'m>>)
+        -> Result<Option<BlobValidator<'a, T, Self>>, Self::Error>
+    where T: ?Sized + Load<Self>
+    {
+        let blob = self.get_blob(ptr)
+                       .map_err(ValidatePtrError::Offset)?;
 
         T::validate_blob(blob).map(Some)
             .map_err(|e| ValidatePtrError::Value(Box::new(e)))
@@ -86,6 +107,14 @@ impl<'s,'m> LoadPtr<Self> for PileMut<'s,'m> {
 
 #[derive(Debug)]
 pub struct PileMut<'s, 'm>(Pile<'s, 'm>);
+
+impl<'s, 'm> PileMut<'s, 'm> {
+    pub fn get_blob<'p, T>(&self, ptr: &'p FatPtr<T, Offset<'s, 'm>>) -> Result<Blob<'p, T, Self>, offset::OffsetError>
+        where T: ?Sized + Load<Self>
+    {
+        OffsetMut::get_blob_from_pile(ptr, self)
+    }
+}
 
 impl<'s,'m> From<Pile<'s,'m>> for PileMut<'s,'m> {
     fn from(pile: Pile<'s,'m>) -> Self {
@@ -194,39 +223,6 @@ impl<'s,'m> Get for PileMut<'s, 'm> {
         }
     }
 }
-
-/*
-unsafe impl<'s,'m> Encode<Self> for PileMut<'s,'m> {
-    type State = ();
-
-    fn blob_layout() -> BlobLayout {
-        BlobLayout::new(0)
-    }
-
-    fn init_encode_state(&self) -> () {}
-
-    fn encode_poll<D: Dumper<Self>>(&self, _: &mut (), dumper: D) -> Result<D, D::Pending> {
-        Ok(dumper)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
-        dst.finish()
-    }
-}
-
-impl<'s,'m> Decode<Self> for PileMut<'s,'m> {
-    type Error = !;
-    type ValidateChildren = ();
-
-    fn validate_blob<'a>(blob: Blob<'a, Self, Self>) -> Result<BlobValidator<'a, Self, Self>, !> {
-        Ok(blob.assume_valid(()))
-    }
-
-    fn decode_blob<'a>(_: FullyValidBlob<'a, Self, Self>, loader: &impl LoadPtr<Self>) -> Self {
-        todo!()
-    }
-}
-*/
 
 #[cfg(test)]
 mod test {

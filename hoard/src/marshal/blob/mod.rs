@@ -19,7 +19,7 @@ pub struct PaddingError(());
 
 /// A blob of bytes that could be a valid value in a blob zone.
 pub struct Blob<'a, T: ?Sized + Pointee, Z> {
-    marker: PhantomData<(fn() -> &'a T, fn() -> Z)>,
+    marker: PhantomData<(fn() -> &'a T, Z)>,
     ptr: *const u8,
     metadata: T::Metadata,
 }
@@ -35,6 +35,24 @@ pub struct FullyValidBlob<'a, T: ?Sized + Pointee, Z>(ValidBlob<'a, T, Z>);
 pub struct BlobValidator<'a, T: ?Sized + Load<Z>, Z: Zone> {
     blob: ValidBlob<'a, T, Z>,
     state: T::ValidateChildren,
+}
+
+impl<'a, T: ?Sized + Pointee, Z> From<ValidBlob<'a, T, Z>> for Blob<'a, T, Z> {
+    fn from(valid_blob: ValidBlob<'a, T, Z>) -> Self {
+        valid_blob.0
+    }
+}
+
+impl<'a, T: ?Sized + Pointee, Z> From<FullyValidBlob<'a, T, Z>> for Blob<'a, T, Z> {
+    fn from(fully_valid_blob: FullyValidBlob<'a, T, Z>) -> Self {
+        (fully_valid_blob.0).0
+    }
+}
+
+impl<'a, T: ?Sized + Pointee, Z> From<FullyValidBlob<'a, T, Z>> for ValidBlob<'a, T, Z> {
+    fn from(fully_valid_blob: FullyValidBlob<'a, T, Z>) -> Self {
+        fully_valid_blob.0
+    }
 }
 
 impl<'a, T: ?Sized + Pointee, Z> Clone for Blob<'a, T, Z> {
@@ -376,6 +394,11 @@ where L: LoadPtr<Z>,
 
         F::decode_blob(blob, &self.loader)
           .take_sized()
+    }
+
+    pub fn assert_done(self) {
+        assert_eq!(self.cursor.offset, self.cursor.blob.len(),
+                   "not fully decoded");
     }
 }
 

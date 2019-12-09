@@ -1,4 +1,4 @@
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::marker::PhantomData;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
@@ -23,7 +23,7 @@ pub trait Flavor : 'static + fmt::Debug + Send + Sync {
 }
 
 impl Flavor for () {
-    const MAGIC: [u8; 16] = [0; 16];
+    const MAGIC: [u8; 16] = [76; 16];
     const MIN_VERSION: u16 = 0;
     const MAX_VERSION: u16 = 0;
 }
@@ -76,12 +76,12 @@ impl<V> FileHeader<V> {
 pub struct Mark(Le<u64>);
 
 impl Mark {
-    pub fn new(mark_offset: usize) -> Self {
-        Self((u64::max_value() - mark_offset as u64).into())
+    pub fn new(offset_words: u64) -> Self {
+        Self((u64::max_value() - offset_words).into())
     }
 
-    pub fn is_valid(&self, mark_offset: usize) -> bool {
-        *self == Self::new(mark_offset)
+    pub fn is_valid(&self, offset: u64) -> bool {
+        *self == Self::new(offset)
     }
 
     pub fn as_marks(bytes: &[u8]) -> &[Mark] {
@@ -91,101 +91,51 @@ impl Mark {
             marks
         }
     }
-}
 
-/*
-#[derive(Debug)]
-pub struct HoardFile {
-    fd: File,
-    pub(super) mapping: Mapping,
-}
-
-impl HoardFile {
-    pub fn create(path: impl AsRef<Path>) -> io::Result<Self> {
-        let fd = OpenOptions::new()
-            .create_new(true)
-            .append(true)
-            .open(path)?;
-        Self::create_from_fd(fd)
-    }
-
-    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
-        let fd = OpenOptions::new()
-            .append(true)
-            .open(path)?;
-        Self::open_fd(fd)
-    }
-
-    pub fn open_fd(mut fd: File) -> io::Result<Self> {
-        // FIXME: validate header
-        fd.seek(SeekFrom::End(0))?;
-        Ok(HoardFile {
-            mapping: Mapping::from_file(&fd)?,
-            fd,
-        })
-    }
-
-    pub fn create_from_fd(mut fd: File) -> io::Result<Self> {
-        let header_offset = fd.seek(SeekFrom::Current(0))?;
-        assert_eq!(header_offset, 0);
-
-        let header = FileHeader::default();
-        fd.write_all(header.as_bytes())?;
-        fd.flush()?;
-        fd.seek(SeekFrom::Start(header_offset))?;
-
-        Ok(HoardFile {
-            mapping: Mapping::from_file(&fd)?,
-            fd,
-        })
-    }
-
-    pub fn enter<R>(&mut self, f: impl FnOnce(&mut Hoard) -> R) -> R {
+    pub fn as_bytes(&self) -> &[u8; size_of::<Self>()] {
         unsafe {
-            let hoard = Hoard::new_unchecked(self);
-            f(hoard)
+            &*(self as *const _ as *const _)
         }
     }
 }
 
 #[derive(Debug)]
-pub struct Tx<'f> {
-    hoard: &'f mut HoardFile,
-    written: Option<usize>,
+pub struct BlobDumper<'f> {
+    fd: &'f mut File,
+    written: Option<u64>,
     pending: Vec<u8>,
 }
 
-const DEFAULT_TX_CAPACITY: usize = 8192;
-
-impl<'f> Tx<'f> {
-    pub fn new(hoard: &'f mut HoardFile) -> io::Result<Self> {
-        Self::with_capacity(DEFAULT_TX_CAPACITY, hoard)
+impl<'f> BlobDumper<'f> {
+    pub fn new(fd: &'f mut File) -> io::Result<Self> {
+        Self::with_capacity(8192, fd)
     }
 
-    pub fn with_capacity(capacity: usize, hoard: &'f mut HoardFile) -> io::Result<Self> {
-        hoard.fd.seek(SeekFrom::End(0))?;
-
-        let pending = Vec::with_capacity(capacity);
-        if hoard.mapping.len() % size_of::<Mark>() != 0 {
-            unimplemented!("partial write")
-        };
+    pub fn with_capacity(capacity: usize, mut fd: &'f mut File) -> io::Result<Self> {
+        let written = fd.seek(SeekFrom::End(0))?
+                        .checked_sub(size_of::<FileHeader>() as u64)
+                        .expect("missing header");
 
         Ok(Self {
-            written: Some(hoard.mapping.len()),
-            pending,
-            hoard,
+            written: Some(written),
+            pending: Vec::with_capacity(capacity),
+            fd,
         })
+    }
+
+    pub fn written(&self) -> io::Result<u64> {
+        self.written.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "previously failed"))
     }
 
     pub fn flush_pending(&mut self) -> io::Result<()> {
         let written = self.written.take().ok_or_else(|| io::Error::new(io::ErrorKind::Other, "previously failed"))?;
 
-        self.hoard.fd.write_all(&self.pending)?;
-        let written = written + self.pending.len();
+        self.fd.write_all(&self.pending)?;
+        let written = written + self.pending.len() as u64;
         self.pending.clear();
 
-        let actual_pos = self.hoard.fd.seek(SeekFrom::Current(0))?;
-        let expected_pos = size_of::<FileHeader>() + written;
+        let actual_pos = self.fd.seek(SeekFrom::Current(0))?;
+        let expected_pos = size_of::<FileHeader>() as u64 + written;
         if actual_pos == expected_pos as u64 {
             self.written = Some(written);
             Ok(())
@@ -195,21 +145,21 @@ impl<'f> Tx<'f> {
         }
     }
 
-    pub fn write_blob_with(&mut self, size: usize, f: impl FnOnce(&mut [u8])) -> io::Result<usize> {
+    pub fn write_blob_with(&mut self, size: usize, f: impl FnOnce(&mut [u8])) -> io::Result<u64> {
         // Note how one big write will increase the capacity forever after!
         if self.pending.len() + size > self.pending.capacity() {
             self.flush_pending()?;
         }
 
-        let written = self.written.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "previously failed"))?;
+        let written = self.written()?;
 
         let start = self.pending.len();
-        let offset = written + start;
+        let offset = written + start as u64;
 
-        let end = offset + size;
-        let padding = round_up(end, size_of::<Mark>()) - end;
+        let end = offset + size as u64;
+        let padding = usize::try_from(round_up(end, size_of::<Mark>()) - end).unwrap();
 
-        self.pending.resize_with(start + size + padding, u8::default);
+        self.pending.resize(start + size + padding, 0);
 
         let dst = &mut self.pending[start .. start + size];
         f(dst);
@@ -223,42 +173,63 @@ impl<'f> Tx<'f> {
                 start + padding_required
             }
         };
-        Ok(written + start)
+        Ok(written + start as u64)
     }
 
-    pub fn write_blob(&mut self, blob: impl AsRef<[u8]>) -> io::Result<usize> {
+    pub fn write_blob(&mut self, blob: impl AsRef<[u8]>) -> io::Result<u64> {
         let blob = blob.as_ref();
         self.write_blob_with(blob.len(), |dst| dst.copy_from_slice(blob))
     }
 
-    pub fn commit(mut self) -> io::Result<()> {
-        self.flush_pending()?;
-        let mark = offset_bytes_to_mark(self.written.unwrap());
-        self.hoard.fd.write_all(&mark.to_le_bytes())?;
-        self.hoard.fd.flush()?;
-        self.hoard.mapping = Mapping::from_file(&self.hoard.fd)?;
+    pub fn write_padding(&mut self, align: usize) -> io::Result<()> {
+        let written = self.written()?;
+        let padding = align_offset(written, align);
+
+        self.pending.resize(self.pending.len() + padding, 0);
+        self.written = Some(written + padding as u64);
         Ok(())
+    }
+
+    pub fn commit_root_with(mut self, size: usize, f: impl FnOnce(&mut [u8])) -> io::Result<u64> {
+        // Start the root blob on a mark boundry..
+        self.write_padding(size_of::<Mark>())?;
+
+        self.write_blob_with(size, f)?;
+
+        // ...and align the end to a mark.
+        self.write_padding(size_of::<Mark>())?;
+
+        self.flush_pending()?;
+
+        let offset_bytes = self.written()?;
+        assert_eq!(offset_bytes % size_of::<Mark>() as u64, 0);
+        let offset_marks = offset_bytes / size_of::<Mark>() as u64;
+        let mark = Mark::new(offset_marks);
+        self.fd.write_all(mark.as_bytes())?;
+        self.fd.flush()?;
+
+        Ok(offset_bytes)
     }
 }
 
-fn round_up(n: usize, align: usize) -> usize {
+fn round_up(n: u64, align: usize) -> u64 {
+    assert!(align.is_power_of_two());
+    let align = u64::try_from(align).unwrap();
     (n + align - 1) / align * align
 }
 
-fn offset_bytes_to_mark(offset: usize) -> u64 {
-    assert_eq!(offset % size_of::<Mark>(), 0);
-    offset_words_to_mark(offset / size_of::<Mark>())
+pub fn align_offset(offset: u64, align: usize) -> usize {
+    assert!(align.is_power_of_two());
+    usize::try_from(round_up(offset, align) - offset).unwrap()
 }
 
-fn offset_words_to_mark(offset: usize) -> u64 {
-    u64::max_value() - offset as u64
-}
-
-fn calc_padding_bytes_required(offset: usize, buf: &[u8]) -> usize {
+fn calc_padding_bytes_required(offset: u64, buf: &[u8]) -> usize {
+    0
+    /*
     assert_eq!(buf.len() % size_of::<Mark>(), 0);
-    assert_eq!(offset % size_of::<Mark>(), 0);
+    assert_eq!(offset % size_of::<Mark>() as u64, 0);
 
-    let offset_words = offset / size_of::<Mark>();
+    let offset_words = offset / size_of::<Mark>() as u64;
     let len_words = buf.len() / size_of::<Mark>();
 
     'outer: for padding_words in 0 ..= len_words {
@@ -273,10 +244,10 @@ fn calc_padding_bytes_required(offset: usize, buf: &[u8]) -> usize {
         return padding_words * size_of::<Mark>();
     }
     unreachable!()
+    */
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 }
-*/
