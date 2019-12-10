@@ -165,7 +165,7 @@ where Z: Zone<Ptr=P>,
     fn validate_blob<'a>(blob: Blob<'a, Self, Z>) -> Result<BlobValidator<'a, Self, Z>, Self::Error> {
         // There's no bound guaranteeing that Z::PersistPtr outlives 'a, so create a new blob with
         // a shorter lifetime to do the decoding.
-        let mut blob2 = Blob::<Self, Z>::new(&blob[..], ()).unwrap();
+        let blob2 = Blob::<Self, Z>::new(&blob[..], ()).unwrap();
         let mut fields = blob2.validate_struct();
 
         // If we hadn't done that, the following line would create a Blob<'a, Z::PersistPtr, Z>,
