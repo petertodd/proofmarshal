@@ -147,6 +147,8 @@ impl<'s, 'p> From<Offset<'s,'p>> for OffsetMut<'s,'p> {
 }
 
 impl Ptr for Offset<'_, '_> {
+    type Persist = Self;
+
     fn dealloc_owned<T: ?Sized + Pointee>(own: OwnedPtr<T, Self>) {
         let _ = own.into_inner();
     }
@@ -207,7 +209,9 @@ impl Primitive for Offset<'_,'_> {
     }
 }
 
-impl Ptr for OffsetMut<'_, '_> {
+impl<'s, 'p> Ptr for OffsetMut<'s, 'p> {
+    type Persist = Offset<'s, 'p>;
+
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
         Self::drop_take_unsized(owned, |value|
             unsafe {

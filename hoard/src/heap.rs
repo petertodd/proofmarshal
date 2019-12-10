@@ -13,7 +13,6 @@ pub struct Heap;
 
 impl Zone for Heap {
     type Ptr = HeapPtr;
-    type PersistPtr = !;
 
     type Allocator = Self;
 
@@ -69,6 +68,8 @@ impl From<!> for HeapPtr {
 }
 
 impl Ptr for HeapPtr {
+    type Persist = !;
+
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
         Self::drop_take_unsized(owned, |value|
             unsafe {

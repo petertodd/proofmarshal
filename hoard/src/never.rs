@@ -24,6 +24,8 @@ impl<Z: Zone> Alloc for NeverAllocator<Z> {
 }
 
 impl Ptr for ! {
+    type Persist = !;
+
     fn dealloc_owned<T: ?Sized + Pointee>(ptr: OwnedPtr<T,Self>) {
         match ptr.raw {}
     }
@@ -35,7 +37,6 @@ impl Ptr for ! {
 
 impl Zone for ! {
     type Ptr = !;
-    type PersistPtr = !;
     type Allocator = NeverAllocator<!>;
 
     fn allocator() -> Self::Allocator {

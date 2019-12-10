@@ -46,7 +46,7 @@ pub unsafe trait Save<Z: Zone> : Pointee + Owned {
     type State;
     fn init_save_state(&self) -> Self::State;
 
-    fn save_poll<D: Dumper<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, Z::PersistPtr), D::Pending>;
+    fn save_poll<D: Dumper<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, <Z::Ptr as Ptr>::Persist), D::Pending>;
 }
 
 pub trait Error : 'static + Any + fmt::Debug + Send {
@@ -180,7 +180,7 @@ unsafe impl<Z: Zone, T: Encode<Z>> Save<Z> for T {
         self.init_encode_state()
     }
 
-    fn save_poll<D: Dumper<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, Z::PersistPtr), D::Pending>
+    fn save_poll<D: Dumper<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<(D, <Z::Ptr as Ptr>::Persist), D::Pending>
         where Z: Zone
     {
         let dumper = self.encode_poll(state, dumper)?;
@@ -224,20 +224,20 @@ pub trait Dumper<Z: Zone> : Sized {
     ///
     /// On success, returns a persistent pointer. Otherwise, returns the dereferenced value so that
     /// the callee can save it.
-    fn try_save_ptr<'p, T: ?Sized + Pointee>(&self, ptr: &'p ValidPtr<T,Z::Ptr>) -> Result<Z::PersistPtr, &'p T>;
+    fn try_save_ptr<'p, T: ?Sized + Pointee>(&self, ptr: &'p ValidPtr<T,Z::Ptr>) -> Result<<Z::Ptr as Ptr>::Persist, &'p T>;
 
     /// Saves a blob.
-    fn try_save_blob(self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, Z::PersistPtr), Self::Pending>;
+    fn try_save_blob(self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, <Z::Ptr as Ptr>::Persist), Self::Pending>;
 }
 
 pub trait LoadPtr<Z: Zone> {
-    fn load_blob<'a, T: ?Sized + Load<Z>>(&self, ptr: &'a ValidPtr<T, Z::PersistPtr>) -> FullyValidBlob<'a, T, Z>;
+    fn load_blob<'a, T: ?Sized + Load<Z>>(&self, ptr: &'a ValidPtr<T, <Z::Ptr as Ptr>::Persist>) -> FullyValidBlob<'a, T, Z>;
 
     fn blob_zone(&self) -> &Z;
 }
 
 impl<Z: Zone, L: LoadPtr<Z>> LoadPtr<Z> for &'_ L {
-    fn load_blob<'a, T: ?Sized + Load<Z>>(&self, ptr: &'a ValidPtr<T, Z::PersistPtr>) -> FullyValidBlob<'a, T, Z> {
+    fn load_blob<'a, T: ?Sized + Load<Z>>(&self, ptr: &'a ValidPtr<T, <Z::Ptr as Ptr>::Persist>) -> FullyValidBlob<'a, T, Z> {
         (*self).load_blob(ptr)
     }
 
@@ -261,7 +261,7 @@ impl LoadPtr<!> for () {
 pub trait ValidatePtr<Z: Zone> {
     type Error;
 
-    fn validate_ptr<'p, T: ?Sized + Load<Z>>(&mut self, ptr: &'p FatPtr<T, Z::PersistPtr>)
+    fn validate_ptr<'p, T: ?Sized + Load<Z>>(&mut self, ptr: &'p FatPtr<T, <Z::Ptr as Ptr>::Persist>)
         -> Result<Option<BlobValidator<'p, T, Z>>, Self::Error>;
 }
 

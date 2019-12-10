@@ -139,7 +139,6 @@ impl Default for PileMut<'static, '_> {
 
 impl<'s,'p> Zone for Pile<'s,'p> {
     type Ptr = Offset<'s,'p>;
-    type PersistPtr = Offset<'s,'p>;
 
     type Allocator = crate::never::NeverAllocator<Self>;
 
@@ -150,7 +149,6 @@ impl<'s,'p> Zone for Pile<'s,'p> {
 
 impl<'s,'p> Zone for PileMut<'s,'p> {
     type Ptr = OffsetMut<'s,'p>;
-    type PersistPtr = Offset<'s,'p>;
 
     type Allocator = Self;
 

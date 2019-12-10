@@ -97,15 +97,15 @@ pub enum EncodeOwnedPtrState<T: ?Sized + Save<Z>, Z: Zone> {
 
     /// We've finished encoding the value (or never needed too) and now have a pointer that needs
     /// encoding.
-    Ptr(Z::PersistPtr),
+    Ptr(<Z::Ptr as Ptr>::Persist),
 }
 
 unsafe impl<T, P, Z> Encode<Z> for OwnedPtr<T,P>
 where Z: Zone<Ptr=P>,
-      P: Ptr + From<Z::PersistPtr>,
+      P: Ptr,
       T: ?Sized + Save<Z>,
 {
-    const BLOB_LAYOUT: BlobLayout = <Z::PersistPtr as Encode<Z>>::BLOB_LAYOUT
+    const BLOB_LAYOUT: BlobLayout = <<Z::Ptr as Ptr>::Persist as Encode<Z>>::BLOB_LAYOUT
                                         .extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
 
     type State = EncodeOwnedPtrState<T, Z>;
@@ -155,10 +155,10 @@ pub enum LoadOwnedPtrError<P,M> {
 
 impl<T, P, Z> Decode<Z> for OwnedPtr<T,P>
 where Z: Zone<Ptr=P>,
-      P: Ptr + From<Z::PersistPtr>,
+      P: Ptr,
       T: ?Sized + Load<Z>,
 {
-    type Error = LoadOwnedPtrError<<Z::PersistPtr as Primitive>::Error, <T::Metadata as Primitive>::Error>;
+    type Error = LoadOwnedPtrError<<<Z::Ptr as Ptr>::Persist as Primitive>::Error, <T::Metadata as Primitive>::Error>;
 
     type ValidateChildren = OwnedPtrValidator<T,Z>;
 
@@ -170,9 +170,9 @@ where Z: Zone<Ptr=P>,
 
         // If we hadn't done that, the following line would create a Blob<'a, Z::PersistPtr, Z>,
         // and fail with a "<Z as Zone>::PersistPtr may not live long enough" error.
-        let raw = fields.field_blob::<Z::PersistPtr>();
-        let raw = <Z::PersistPtr as Primitive>::validate_blob(raw).map_err(LoadOwnedPtrError::Ptr)?;
-        let raw = <Z::PersistPtr as Primitive>::decode_blob(raw);
+        let raw = fields.field_blob::<<Z::Ptr as Ptr>::Persist>();
+        let raw = <<Z::Ptr as Ptr>::Persist as Primitive>::validate_blob(raw).map_err(LoadOwnedPtrError::Ptr)?;
+        let raw = <<Z::Ptr as Ptr>::Persist as Primitive>::decode_blob(raw);
 
         // Metadata doesn't have this issue as it's always valid for the 'static lifetime.
         let metadata = fields.field_blob::<T::Metadata>();
@@ -187,7 +187,7 @@ where Z: Zone<Ptr=P>,
         let mut fields = blob.decode_struct(loader);
 
         let fatptr = FatPtr {
-            raw: P::from(fields.field::<Z::PersistPtr>()),
+            raw: fields.field::<<Z::Ptr as Ptr>::Persist>().into(),
             metadata: fields.field(),
         };
         fields.assert_done();
@@ -199,7 +199,7 @@ where Z: Zone<Ptr=P>,
 }
 
 pub enum OwnedPtrValidator<T: ?Sized + Load<Z>, Z: Zone> {
-    FatPtr(FatPtr<T, Z::PersistPtr>),
+    FatPtr(FatPtr<T, <Z::Ptr as Ptr>::Persist>),
     Value(T::ValidateChildren),
     Done,
 }

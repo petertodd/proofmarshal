@@ -52,6 +52,9 @@ pub mod linkedlist;
 
 /// Generic pointer.
 pub trait Ptr : Sized + fmt::Debug {
+    /// The persistent version of this pointer, if applicable.
+    type Persist : Ptr + Primitive + Into<Self>;
+
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>);
 
     fn fmt_debug_own<T: ?Sized + Pointee>(owned: &OwnedPtr<T, Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result
@@ -79,7 +82,6 @@ pub trait Ptr : Sized + fmt::Debug {
 }
 pub trait Zone : Sized {
     type Ptr : Ptr;
-    type PersistPtr : Ptr + Primitive;
 
     type Allocator : Alloc<Ptr = Self::Ptr, Zone = Self>;
 
