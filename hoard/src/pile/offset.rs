@@ -155,6 +155,10 @@ impl Ptr for Offset<'_, '_> {
 
     fn drop_take_unsized<T: ?Sized + Pointee>(_: OwnedPtr<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
     }
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self> {
+        Err(ptr.raw)
+    }
 }
 
 impl fmt::Pointer for Offset<'_, '_> {
@@ -236,6 +240,17 @@ impl<'s, 'p> Ptr for OffsetMut<'s, 'p> {
                     if layout.size() > 0 {
                         std::alloc::dealloc(r as *mut _ as *mut u8, layout);
                     }
+                }
+            }
+        }
+    }
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist> {
+        match ptr.raw.kind() {
+            Kind::Offset(offset) => Err(offset),
+            Kind::Ptr(nonnull) => {
+                unsafe {
+                    Ok(&*T::make_fat_ptr(nonnull.cast().as_ptr(), ptr.metadata))
                 }
             }
         }

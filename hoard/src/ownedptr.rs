@@ -88,16 +88,17 @@ where P: fmt::Pointer,
     }
 }
 
-pub enum EncodeOwnedPtrState<T: ?Sized + Save<Z>, Z: Zone> {
+#[derive(Debug)]
+pub enum EncodeOwnedPtrState<T, P> {
     /// Initial state; `encode_poll()` has not been called.
     Initial,
 
     /// We have a value that needs encoding.
-    Value(T::State),
+    Value(T),
 
     /// We've finished encoding the value (or never needed too) and now have a pointer that needs
     /// encoding.
-    Ptr(<Z::Ptr as Ptr>::Persist),
+    Ptr(P),
 }
 
 unsafe impl<T, P, Z> Encode<Z> for OwnedPtr<T,P>
@@ -108,7 +109,7 @@ where Z: Zone<Ptr=P>,
     const BLOB_LAYOUT: BlobLayout = <<Z::Ptr as Ptr>::Persist as Encode<Z>>::BLOB_LAYOUT
                                         .extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
 
-    type State = EncodeOwnedPtrState<T, Z>;
+    type State = EncodeOwnedPtrState<T::State, P::Persist>;
 
     fn init_encode_state(&self) -> Self::State {
         EncodeOwnedPtrState::Initial

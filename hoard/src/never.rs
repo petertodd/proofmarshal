@@ -33,6 +33,10 @@ impl Ptr for ! {
     fn drop_take_unsized<T: ?Sized + Pointee>(ptr: OwnedPtr<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
         match ptr.raw {}
     }
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist> {
+        match ptr.raw {}
+    }
 }
 
 impl Zone for ! {

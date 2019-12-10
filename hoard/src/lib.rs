@@ -79,6 +79,8 @@ pub trait Ptr : Sized + fmt::Debug {
     }
 
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>));
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist>;
 }
 pub trait Zone : Sized {
     type Ptr : Ptr;

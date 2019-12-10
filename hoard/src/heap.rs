@@ -93,6 +93,12 @@ impl Ptr for HeapPtr {
             }
         }
     }
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist> {
+        unsafe {
+            Ok(&*T::make_fat_ptr(ptr.raw.0.as_ptr(), ptr.metadata))
+        }
+    }
 }
 
 impl HeapPtr {
