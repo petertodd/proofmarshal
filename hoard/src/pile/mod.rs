@@ -223,6 +223,43 @@ impl<'s,'m> Get for PileMut<'s, 'm> {
     }
 }
 
+pub fn save_to_vec<'s, 'm, T: ?Sized>(value: &T) -> Vec<u8>
+where T: Save<PileMut<'s,'m>>
+{
+    let mut state = value.init_save_state();
+    let (dumper, offset) = value.save_poll(&mut state, VecDumper::default()).unwrap();
+    dumper.0
+}
+
+#[derive(Debug, Default)]
+struct VecDumper(Vec<u8>);
+
+impl<'s, 'm> Dumper<PileMut<'s,'m>> for VecDumper {
+    type Pending = !;
+
+    fn try_save_ptr<'p, T: ?Sized + Pointee>(&self, ptr: &'p ValidPtr<T, OffsetMut<'s, 'm>>) -> Result<Offset<'s,'m>, &'p T> {
+        match ptr.raw.kind() {
+            Kind::Offset(offset) => Ok(offset),
+            Kind::Ptr(nonnull) => {
+                let r: &'p T = unsafe {
+                    &*T::make_fat_ptr(nonnull.cast().as_ptr(), ptr.metadata)
+                };
+                Err(r)
+            }
+        }
+    }
+
+    fn try_save_blob(mut self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, Offset<'s,'m>), !> {
+        let offset = self.0.len();
+
+        self.0.resize(offset + size, 0);
+        f(&mut self.0[offset ..]);
+
+        let offset = unsafe { Offset::new_unchecked(offset) };
+        Ok((self, offset))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -319,90 +356,4 @@ mod test {
         assert_eq!(r, &0xabcd);
         assert_eq!(dumper.dst, &[]);
     }
-
-    /*
-    #[test]
-    fn pile_load() {
-        let snapshot = unsafe { Snapshot::new_unchecked(vec![1,2,3,4]) };
-        let pile = Pile::new(&snapshot);
-
-        let offset = Offset::new(&snapshot, 0, 0).unwrap();
-        let fatptr: FatPtr<(),_> = FatPtr { raw: offset, metadata: () };
-        let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
-
-        let blob = pile.load_blob(&validptr);
-        assert_eq!(blob.len(), 0);
-
-        let offset = Offset::new(&snapshot, 2, 2).unwrap();
-        let fatptr: FatPtr<u16,_> = FatPtr { raw: offset, metadata: () };
-        let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
-
-        let blob = pile.load_blob(&validptr);
-        assert_eq!(&blob[..], &[3,4]);
-    }
-
-    #[test]
-    fn pile_load_owned_ptr() {
-        let mapping = vec![42, 1,0,0,0,0,0,0,0];
-        let snapshot = unsafe { Snapshot::new_unchecked(mapping) };
-        let pile = Pile::new(&snapshot);
-
-        let offset = Offset::new(&snapshot, 1, 8).unwrap();
-        let fatptr: FatPtr<OwnedPtr<u8, Offset>, Offset> = FatPtr { raw: offset, metadata: () };
-        let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
-
-        let blob = pile.load_blob(&validptr);
-
-        let loaded = <OwnedPtr<u8, Offset> as Decode<Pile<'_,'_>>>::load_blob(blob, &pile);
-        assert_eq!(loaded.raw.get(), 0);
-
-        assert_eq!(*pile.get(&loaded), 42);
-    }
-
-    #[test]
-    fn pile_save_owned_ptr() {
-        let mapping = vec![1,0,0,0,0,0,0,0];
-        let snapshot = unsafe { Snapshot::new_unchecked(mapping) };
-        let pile = Pile::new(&snapshot);
-
-        let offset = Offset::new(&snapshot, 0, 8).unwrap();
-        let fatptr: FatPtr<OwnedPtr<(), Offset>, Offset> = FatPtr { raw: offset, metadata: () };
-        let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
-
-        let owned: OwnedPtr<OwnedPtr<(), Offset>, Offset> = unsafe { OwnedPtr::new_unchecked(validptr) };
-
-        let _state = <OwnedPtr<OwnedPtr<(), Offset>, Offset> as Encode<Pile>>::init_encode_state(&owned);
-    }
-
-    #[test]
-    fn pilemut_get_owned() {
-        let mut alloc = PileMut::allocator();
-        let pile = alloc.zone();
-
-        let owned = alloc.alloc(42u8);
-        if let Ref::Borrowed(n) = pile.get(&owned) {
-            assert_eq!(*n, 42);
-        } else {
-            panic!()
-        }
-        assert_eq!(pile.take(owned), 42);
-    }
-
-    #[test]
-    fn pilemut_get_lifetimes() {
-        let mut alloc = PileMut::allocator();
-        let owned: OwnedPtr<u8, OffsetMut<'static,'_>> = alloc.alloc(42u8);
-
-        fn test_get<'a,'s,'m>(pile: &PileMut<'s,'m>, ptr: &'a OwnedPtr<u8, OffsetMut<'static, 'm>>) -> Ref<'a,u8> {
-            pile.get(ptr)
-        }
-
-        assert_eq!(*test_get(&alloc.zone(), &owned), 42);
-
-        let snapshot = unsafe { Snapshot::new_unchecked(vec![]) };
-        let pile = PileMut::from(Pile::new(&snapshot));
-
-        assert_eq!(*test_get(&pile, &owned), 42);
-    }
-    */
 }

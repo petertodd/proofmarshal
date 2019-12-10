@@ -15,7 +15,7 @@ const fn option_blob_layout(inner: BlobLayout) -> BlobLayout {
 unsafe impl<Z: Zone, T: Encode<Z>> Encode<Z> for Option<T> {
     const BLOB_LAYOUT: BlobLayout =
         BlobLayout::new(
-            if T::BLOB_LAYOUT.has_niche() { 1 } else { 0 }
+            if T::BLOB_LAYOUT.has_niche() { 0 } else { 1 }
             + T::BLOB_LAYOUT.size()
         );
 
@@ -38,18 +38,18 @@ unsafe impl<Z: Zone, T: Encode<Z>> Encode<Z> for Option<T> {
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
         match (self, state) {
             (None, None) => {
-                if !T::BLOB_LAYOUT.has_niche() {
-                    dst.write_bytes(&[0])?
-                } else {
+                if T::BLOB_LAYOUT.has_niche() {
                     dst
+                } else {
+                    dst.write_bytes(&[0])?
                 }.write_padding(T::BLOB_LAYOUT.size())?
                  .finish()
             },
             (Some(value), Some(state)) => {
-                if !T::BLOB_LAYOUT.has_niche() {
-                    dst.write_bytes(&[1])?
-                } else {
+                if T::BLOB_LAYOUT.has_niche() {
                     dst
+                } else {
+                    dst.write_bytes(&[1])?
                 }.write(value, state)?
                  .finish()
             },
