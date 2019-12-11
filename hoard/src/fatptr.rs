@@ -4,15 +4,7 @@ use core::fmt;
 use core::cmp;
 use core::hash;
 
-use crate::marshal::{
-    Encode, Decode, Dumper, LoadPtr,
-    Persist, Primitive,
-    blob::{
-        BlobLayout,
-        Blob, BlobValidator, FullyValidBlob,
-        ValidateFields,
-        WriteBlob},
-};
+use crate::marshal::Persist;
 
 use crate::coerce::{
     CastRef,

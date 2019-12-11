@@ -61,7 +61,7 @@ macro_rules! tuple {
                 Ok(fields.done(state))
             }
 
-            fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Self {
+            fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
                 let mut fields = blob.decode_struct(loader);
                 ( $( fields.field::<$name>(), )+ )
             }

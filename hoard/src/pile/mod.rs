@@ -77,7 +77,7 @@ impl<'s,'m> ValidatePtr<Self> for PileMut<'s,'m> {
     }
 }
 
-impl<'s,'m> LoadPtr<Self> for Pile<'s,'m> {
+impl<'s,'m> Loader<Self> for Pile<'s,'m> {
     fn load_blob<'a, T>(&self, ptr: &'a ValidPtr<T, Offset<'s,'m>>)
         -> FullyValidBlob<'a, T, Self>
     where T: ?Sized + Load<Self>
@@ -91,7 +91,7 @@ impl<'s,'m> LoadPtr<Self> for Pile<'s,'m> {
     }
 }
 
-impl<'s,'m> LoadPtr<Self> for PileMut<'s,'m> {
+impl<'s,'m> Loader<Self> for PileMut<'s,'m> {
     fn load_blob<'a, T>(&self, ptr: &'a ValidPtr<T, Offset<'s,'m>>)
         -> FullyValidBlob<'a, T, Self>
     where T: ?Sized + Load<Self>

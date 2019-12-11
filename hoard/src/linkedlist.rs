@@ -180,7 +180,7 @@ where Z: Zone<Ptr=P>,
         todo!()
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Self {
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
         todo!()
     }
 }

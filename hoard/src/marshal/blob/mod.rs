@@ -381,7 +381,7 @@ pub struct FieldDecoder<'a, T: ?Sized + Pointee, Z, L> {
 }
 
 impl<'a, T: ?Sized + Load<Z>, Z: Zone, L> FieldDecoder<'a, T, Z, L>
-where L: LoadPtr<Z>,
+where L: Loader<Z>,
 {
     pub fn field_blob<F: Decode<Z>>(&mut self) -> FullyValidBlob<'a, F, Z> {
         let blob = self.cursor.field_blob::<F>();

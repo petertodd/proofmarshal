@@ -184,7 +184,7 @@ where Z: Zone<Ptr=P>,
         Ok(blob.assume_valid(OwnedPtrValidator::FatPtr(fatptr)))
     }
 
-    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Z>, loader: &impl LoadPtr<Z>) -> Self {
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Z>, loader: &impl Loader<Z>) -> Self {
         let mut fields = blob.decode_struct(loader);
 
         let fatptr = FatPtr {

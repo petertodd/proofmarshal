@@ -104,7 +104,7 @@ impl<Z: Zone, T: Decode<Z>> Decode<Z> for Option<T> {
         }
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Self {
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
         if let Some(niche) = T::BLOB_LAYOUT.niche() {
             let niche = &blob[niche];
 
