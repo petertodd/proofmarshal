@@ -39,7 +39,19 @@ impl<T: ?Sized + Pointee, P: Ptr> ops::Deref for OwnedPtr<T,P> {
     }
 }
 
+impl<T: ?Sized + Pointee, P: Ptr> ops::DerefMut for OwnedPtr<T,P> {
+    fn deref_mut(&mut self) -> &mut ValidPtr<T,P> {
+        &mut self.inner
+    }
+}
+
 impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T,P> {
+    pub fn new(value: impl Take<T>) -> Self
+        where P: Default
+    {
+        P::allocator().alloc(value)
+    }
+
     /// Creates a new `OwnedPtr` from a `ValidPtr`.
     ///
     /// # Safety

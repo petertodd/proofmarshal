@@ -55,6 +55,11 @@ pub trait Ptr : Sized + fmt::Debug {
     /// The persistent version of this pointer, if applicable.
     type Persist : Ptr + Primitive + Into<Self>;
 
+    type Zone : Get<Self>;
+    type Allocator : Alloc<Ptr=Self>;
+
+    fn allocator() -> Self::Allocator where Self: Default;
+
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>);
 
     fn fmt_debug_own<T: ?Sized + Pointee>(owned: &OwnedPtr<T, Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result
@@ -83,40 +88,7 @@ pub trait Ptr : Sized + fmt::Debug {
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist>;
 }
 
-pub trait Zone : Sized {
-    type Ptr : Ptr;
-
-    type Allocator : Alloc<Ptr = Self::Ptr, Zone = Self>;
-
-    fn allocator() -> Self::Allocator
-        where Self: Default;
-}
-
-pub trait Alloc : Sized {
-    type Ptr : Ptr;
-    type Zone : Zone<Ptr = Self::Ptr>;
-
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, <Self::Zone as Zone>::Ptr>;
-    fn zone(&self) -> Self::Zone;
-}
-
-impl<A: Alloc> Alloc for &'_ mut A {
-    type Ptr = A::Ptr;
-    type Zone = A::Zone;
-
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, <Self::Zone as Zone>::Ptr> {
-        (**self).alloc(src)
-    }
-
-    fn zone(&self) -> Self::Zone {
-        (**self).zone()
-    }
-}
-
-pub trait TryGet<P: Ptr> {
-    type Error;
-
-    fn get<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T, P>) -> Result<Ref<'a, T>, Self::Error>;
+pub trait PtrMut : Ptr<Zone : GetMut<Self>> {
 }
 
 pub trait Get<P: Ptr> {
@@ -131,3 +103,27 @@ pub trait Get<P: Ptr> {
         }
     }
 }
+
+pub trait GetMut<P: Ptr> : Get<P> {
+    fn get_mut<'a, T: ?Sized + Load<P>>(&self, ptr: &'a mut ValidPtr<T, P>) -> &'a mut T;
+}
+
+pub trait Alloc : Sized {
+    type Ptr : Ptr;
+
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, Self::Ptr>;
+    fn zone(&self) -> <Self::Ptr as Ptr>::Zone;
+}
+
+impl<A: Alloc> Alloc for &'_ mut A {
+    type Ptr = A::Ptr;
+
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, A::Ptr> {
+        (**self).alloc(src)
+    }
+
+    fn zone(&self) -> <A::Ptr as Ptr>::Zone {
+        (**self).zone()
+    }
+}
+

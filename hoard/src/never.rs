@@ -5,26 +5,31 @@ use core::mem::ManuallyDrop;
 
 #[allow(unreachable_code)]
 #[derive(Debug)]
-pub struct NeverAllocator<Z> {
-    marker: PhantomData<fn(Z) -> Z>,
+pub struct NeverAllocator<P> {
+    marker: PhantomData<fn(P) -> P>,
     never: !,
 }
 
-impl<Z: Zone> Alloc for NeverAllocator<Z> {
-    type Ptr = Z::Ptr;
-    type Zone = Z;
+impl<P: Ptr> Alloc for NeverAllocator<P> {
+    type Ptr = P;
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, _src: impl Take<T>) -> OwnedPtr<T, Z::Ptr> {
+    fn alloc<T: ?Sized + Pointee>(&mut self, _src: impl Take<T>) -> OwnedPtr<T, Self::Ptr> {
         match self.never {}
     }
 
-    fn zone(&self) -> Self::Zone {
+    fn zone(&self) -> P::Zone {
         match self.never {}
     }
 }
 
 impl Ptr for ! {
     type Persist = !;
+    type Zone = !;
+    type Allocator = NeverAllocator<!>;
+
+    fn allocator() -> Self::Allocator {
+        unreachable!()
+    }
 
     fn dealloc_owned<T: ?Sized + Pointee>(ptr: OwnedPtr<T,Self>) {
         match ptr.raw {}
@@ -39,24 +44,20 @@ impl Ptr for ! {
     }
 }
 
-impl Zone for ! {
-    type Ptr = !;
-    type Allocator = NeverAllocator<!>;
+impl PtrMut for ! {}
 
-    fn allocator() -> Self::Allocator {
-        panic!()
-    }
-
-}
-
-/*
-impl Get for ! {
-    fn get<'p, T: ?Sized + Owned + Pointee>(&self, _ptr: &'p OwnedPtr<T, !>) -> Ref<'p, T> {
+impl<P: Ptr> Get<P> for ! {
+    fn get<'a, T: ?Sized + Pointee + Owned>(&self, _: &'a ValidPtr<T, P>) -> Ref<'a, T> {
         match *self {}
     }
 
-    fn take<T: ?Sized + Owned + Pointee>(&self, _ptr: OwnedPtr<T, !>) -> T::Owned {
+    fn take<T: ?Sized + Pointee + Owned>(&self, _: OwnedPtr<T, P>) -> T::Owned {
         match *self {}
     }
 }
-*/
+
+impl<P: Ptr> GetMut<P> for ! {
+    fn get_mut<'a, T: ?Sized + Pointee>(&self, _: &'a mut ValidPtr<T, P>) -> &'a mut T {
+        match *self {}
+    }
+}

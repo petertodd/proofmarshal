@@ -12,7 +12,8 @@ use crate::coerce::{TryCast, TryCastRef, TryCastMut};
 
 /// Wrapper around a `FatPtr` guaranteeing that the target of the pointer is valid.
 ///
-/// Implements `Deref<Target=FatPtr>` so the fields of the wrapped pointer are available.
+/// Implements `Deref<Target=FatPtr>` so the fields of the wrapped pointer are available;
+/// `DerefMut` is *not* implemented because mutating the wrapper pointer could invalidate it.
 #[repr(transparent)]
 pub struct ValidPtr<T: ?Sized + Pointee, P>(FatPtr<T,P>);
 
@@ -66,6 +67,15 @@ impl<T: ?Sized + Pointee, P> ValidPtr<T,P> {
     /// Unwraps the pointer.
     pub fn into_inner(self) -> FatPtr<T,P> {
         self.0
+    }
+
+    /// Gets mutable access to the raw pointer.
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe because changes to the raw pointer could make it invalid.
+    pub unsafe fn raw_mut(&mut self) -> &mut P {
+        &mut self.0.raw
     }
 }
 

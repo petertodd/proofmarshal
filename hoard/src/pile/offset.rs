@@ -146,8 +146,14 @@ impl<'s, 'p> From<Offset<'s,'p>> for OffsetMut<'s,'p> {
     }
 }
 
-impl Ptr for Offset<'_, '_> {
+impl<'s,'p> Ptr for Offset<'s, 'p> {
     type Persist = Self;
+    type Zone = Pile<'s, 'p>;
+    type Allocator = crate::never::NeverAllocator<Self>;
+
+    fn allocator() -> Self::Allocator {
+        panic!()
+    }
 
     fn dealloc_owned<T: ?Sized + Pointee>(own: OwnedPtr<T, Self>) {
         let _ = own.into_inner();
@@ -213,8 +219,28 @@ impl Primitive for Offset<'_,'_> {
     }
 }
 
+impl Default for OffsetMut<'static, '_> {
+    fn default() -> Self {
+        unsafe {
+            Offset::new_unchecked(0).into()
+        }
+    }
+}
+
 impl<'s, 'p> Ptr for OffsetMut<'s, 'p> {
     type Persist = Offset<'s, 'p>;
+    type Zone = PileMut<'s, 'p>;
+    type Allocator = PileMut<'s, 'p>;
+
+    fn allocator() -> Self::Allocator
+        where Self: Default
+    {
+        let pile = PileMut::default();
+
+        // Safe because OffsetMut::default() is implemented for the exact same lifetimes as
+        // PileMut::default()
+        unsafe { mem::transmute(pile) }
+    }
 
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
         Self::drop_take_unsized(owned, |value|

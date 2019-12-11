@@ -129,31 +129,8 @@ impl Default for PileMut<'static, '_> {
     }
 }
 
-impl<'s,'p> Zone for Pile<'s,'p> {
-    type Ptr = Offset<'s,'p>;
-
-    type Allocator = crate::never::NeverAllocator<Self>;
-
-    fn allocator() -> Self::Allocator where Self: Default {
-        unreachable!()
-    }
-}
-
-impl<'s,'p> Zone for PileMut<'s,'p> {
-    type Ptr = OffsetMut<'s,'p>;
-
-    type Allocator = Self;
-
-    fn allocator() -> Self::Allocator
-        where Self: Default
-    {
-        Self::default()
-    }
-}
-
 impl<'s,'p> Alloc for PileMut<'s,'p> {
     type Ptr = OffsetMut<'s,'p>;
-    type Zone = Self;
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, OffsetMut<'s,'p>> {
         src.take_unsized(|src| unsafe {
@@ -162,7 +139,7 @@ impl<'s,'p> Alloc for PileMut<'s,'p> {
         })
     }
 
-    fn zone(&self) -> Self::Zone {
+    fn zone(&self) -> PileMut<'s,'p> {
         Self(self.0.clone())
     }
 }
@@ -215,6 +192,25 @@ impl<'s,'m> Get<OffsetMut<'s,'m>> for PileMut<'s, 'm> {
                 Ok(owned) => owned,
                 Err(_offset) => unreachable!(),
             }
+        }
+    }
+}
+
+impl<'s,'m> GetMut<OffsetMut<'s,'m>> for PileMut<'s, 'm> {
+    fn get_mut<'a, T>(&self, ptr: &'a mut ValidPtr<T, OffsetMut<'s,'m>>) -> &'a mut T
+        where T: ?Sized + Load<OffsetMut<'s,'m>>
+    {
+        let metadata = ptr.metadata;
+
+        match ptr.raw.kind() {
+            Kind::Offset(_) => {
+                todo!()
+            },
+            Kind::Ptr(ptr) => {
+                unsafe {
+                    &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata)
+                }
+            },
         }
     }
 }
@@ -351,5 +347,20 @@ mod test {
         let r = dumper.try_save_ptr(&owned_ptr).unwrap_err();
         assert_eq!(r, &0xabcd);
         assert_eq!(dumper.dst, &[]);
+    }
+
+    #[test]
+    fn pilemut_getmut() {
+        let mut zone = PileMut::default();
+        let mut owned = zone.alloc((1,2,3));
+
+        let r = zone.get_mut(&mut owned);
+
+        assert_eq!(*r, (1,2,3));
+        r.0 = 10;
+        assert_eq!(*r, (10,2,3));
+
+        let r = zone.get_mut(&mut owned);
+        assert_eq!(*r, (10,2,3));
     }
 }

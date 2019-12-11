@@ -11,33 +11,31 @@ use super::*;
 #[derive(Default,Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Heap;
 
-impl Zone for Heap {
-    type Ptr = HeapPtr;
-
-    type Allocator = Self;
-
-    fn allocator() -> Self { Self }
-
-}
-
-/*
-impl Get for Heap {
-    fn get<'p, T: ?Sized + Pointee + Owned>(&self, ptr: &'p Own<T, Self::Ptr>) -> Ref<'p, T> {
-        let r: &'p T = unsafe { ptr.ptr().get(ptr.metadata()) };
+impl Get<HeapPtr> for Heap {
+    fn get<'a, T: ?Sized + Pointee + Owned>(&self, ptr: &'a ValidPtr<T, HeapPtr>) -> Ref<'a, T> {
+        let r: &'a T = HeapPtr::try_get_dirty(ptr).unwrap();
         Ref::Borrowed(r)
     }
 
-    fn take<T: ?Sized + Pointee + Owned>(&self, own: Own<T, Self::Ptr>) -> T::Owned {
-        let (ptr, metadata) = own.into_raw_parts();
-
-        unsafe { ptr.take::<T>(metadata) }
+    fn take<T: ?Sized + Pointee + Owned>(&self, owned: OwnedPtr<T, HeapPtr>) -> T::Owned {
+        HeapPtr::take_impl(owned, |value|
+            unsafe {
+                T::to_owned(value)
+            }
+        )
     }
 }
-*/
+
+impl GetMut<HeapPtr> for Heap {
+    fn get_mut<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut ValidPtr<T, HeapPtr>) -> &'a mut T {
+        unsafe {
+            &mut *T::make_fat_ptr_mut(ptr.raw.0.as_ptr(), ptr.metadata)
+        }
+    }
+}
 
 impl Alloc for Heap {
     type Ptr = HeapPtr;
-    type Zone = Heap;
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, HeapPtr> {
         src.take_unsized(|src| unsafe {
@@ -53,9 +51,8 @@ impl Alloc for Heap {
         })
     }
 
-    fn zone(&self) -> Heap {
-        Heap
-    }
+    #[inline]
+    fn zone(&self) -> Heap { Heap }
 }
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
@@ -69,6 +66,11 @@ impl From<!> for HeapPtr {
 
 impl Ptr for HeapPtr {
     type Persist = !;
+    type Zone = Heap;
+    type Allocator = Heap;
+
+    #[inline]
+    fn allocator() -> Heap { Heap }
 
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
         Self::drop_take_unsized(owned, |value|
@@ -79,19 +81,7 @@ impl Ptr for HeapPtr {
     }
 
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
-        let FatPtr { raw: Self(non_null), metadata } = owned.into_inner().into();
-
-        unsafe {
-            let r: &mut T = &mut *T::make_fat_ptr_mut(non_null.as_ptr(), metadata);
-            let r: &mut ManuallyDrop<T> = &mut *(r as *mut _ as *mut _);
-
-            f(r);
-
-            let layout = Layout::for_value(r);
-            if layout.size() > 0 {
-                std::alloc::dealloc(r as *mut _ as *mut u8, layout);
-            }
-        }
+        HeapPtr::take_impl(owned, f);
     }
 
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist> {
@@ -100,6 +90,8 @@ impl Ptr for HeapPtr {
         }
     }
 }
+
+impl PtrMut for HeapPtr {}
 
 impl HeapPtr {
     #[inline]
@@ -119,36 +111,24 @@ impl HeapPtr {
         }
     }
 
-    #[inline]
-    unsafe fn get<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> &T {
-        let thin = self.0.as_ptr();
-        let fat = T::make_fat_ptr(thin, metadata);
+    fn take_impl<T, R>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>) -> R) -> R
+        where T: ?Sized + Pointee
+    {
+        let FatPtr { raw: Self(non_null), metadata } = owned.into_inner().into();
 
-        &*fat
-    }
+        unsafe {
+            let value: &mut T = &mut *T::make_fat_ptr_mut(non_null.as_ptr(), metadata);
+            let value: &mut ManuallyDrop<T> = &mut *(value as *mut _ as *mut _);
 
-    #[inline]
-    unsafe fn take<T: ?Sized + Pointee + Owned>(self, metadata: T::Metadata) -> T::Owned {
-        let this = ManuallyDrop::new(self);
+            let r = f(value);
 
-        let r: &mut T = &mut *T::make_fat_ptr_mut(this.0.as_ptr(), metadata);
-        let layout = Layout::for_value(r);
+            let layout = Layout::for_value(value);
+            if layout.size() > 0 {
+                std::alloc::dealloc(value as *mut _ as *mut u8, layout);
+            };
 
-        let owned = T::to_owned(&mut *(r as *mut T as *mut ManuallyDrop<T>));
-
-        if layout.size() > 0 {
-            std::alloc::dealloc(r as *mut _ as *mut u8, layout);
-        };
-
-        owned
-    }
-
-    #[inline]
-    unsafe fn get_mut<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) -> &mut T {
-        let thin = self.0.as_ptr();
-        let fat = T::make_fat_ptr_mut(thin, metadata);
-
-        &mut *fat
+            r
+        }
     }
 }
 
