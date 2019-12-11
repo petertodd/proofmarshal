@@ -20,7 +20,7 @@ pub use self::offset::{Offset, OffsetMut};
 mod snapshot;
 pub use self::snapshot::{Snapshot, Mapping};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pile<'s, 'm> {
     marker: PhantomData<fn(&'s ())>,
     snapshot: NonNull<Snapshot<'m>>,
@@ -97,7 +97,7 @@ impl<'s,'m> Loader<OffsetMut<'s,'m>> for PileMut<'s,'m> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PileMut<'s, 'm>(Pile<'s, 'm>);
 
 impl<'s, 'm> PileMut<'s, 'm> {
@@ -362,5 +362,13 @@ mod test {
 
         let r = zone.get_mut(&mut owned);
         assert_eq!(*r, (10,2,3));
+    }
+
+    #[test]
+    fn offsetmut_clone() {
+        let mut zone = PileMut::default();
+        let v1 = zone.alloc((1,2,3));
+        let v2 = v1.clone();
+        assert_ne!(v1.raw, v2.raw);
     }
 }

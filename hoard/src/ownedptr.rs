@@ -83,6 +83,15 @@ impl<T: ?Sized + Pointee, P: Ptr> Drop for OwnedPtr<T,P> {
     }
 }
 
+impl<T: ?Sized + Pointee, P: Ptr> Clone for OwnedPtr<T,P>
+where T: Clone,
+      P: Clone
+{
+    fn clone(&self) -> Self {
+        P::clone_ptr(self)
+    }
+}
+
 impl<T: ?Sized + Pointee, P: Ptr> fmt::Debug for OwnedPtr<T,P>
 where T: fmt::Debug
 {
@@ -98,6 +107,8 @@ where P: fmt::Pointer,
         fmt::Pointer::fmt(&*self.inner, f)
     }
 }
+
+
 
 #[derive(Debug)]
 pub enum EncodeOwnedPtrState<T, P> {

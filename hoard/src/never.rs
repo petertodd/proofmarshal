@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
 #[allow(unreachable_code)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NeverAllocator<P> {
     marker: PhantomData<fn(P) -> P>,
     never: !,
@@ -29,6 +29,10 @@ impl Ptr for ! {
 
     fn allocator() -> Self::Allocator {
         unreachable!()
+    }
+
+    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
+        match ptr.raw {}
     }
 
     fn dealloc_owned<T: ?Sized + Pointee>(ptr: OwnedPtr<T,Self>) {

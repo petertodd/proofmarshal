@@ -111,7 +111,7 @@ impl<'s,'m> Offset<'s,'m> {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct OffsetMut<'s,'p>(Offset<'s,'p>);
 unsafe impl Persist for OffsetMut<'_,'_> {}
@@ -153,6 +153,19 @@ impl<'s,'p> Ptr for Offset<'s, 'p> {
 
     fn allocator() -> Self::Allocator {
         panic!()
+    }
+
+    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
+        unsafe {
+            OwnedPtr::new_unchecked(
+                ValidPtr::new_unchecked(
+                    FatPtr {
+                        raw: ptr.raw,
+                        metadata: ptr.metadata,
+                    }
+                )
+            )
+        }
     }
 
     fn dealloc_owned<T: ?Sized + Pointee>(own: OwnedPtr<T, Self>) {
@@ -240,6 +253,23 @@ impl<'s, 'p> Ptr for OffsetMut<'s, 'p> {
         // Safe because OffsetMut::default() is implemented for the exact same lifetimes as
         // PileMut::default()
         unsafe { mem::transmute(pile) }
+    }
+
+    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
+        let raw = match Self::try_get_dirty(ptr) {
+            Ok(r) => {
+                let cloned = ManuallyDrop::new(r.clone());
+
+                unsafe { Self::alloc(&cloned) }
+            },
+            Err(offset) => offset.into(),
+        };
+
+        unsafe {
+            OwnedPtr::new_unchecked(ValidPtr::new_unchecked(
+                    FatPtr { raw, metadata: ptr.metadata }
+            ))
+        }
     }
 
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {

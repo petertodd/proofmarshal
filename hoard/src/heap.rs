@@ -72,6 +72,12 @@ impl Ptr for HeapPtr {
     #[inline]
     fn allocator() -> Heap { Heap }
 
+    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
+        let cloned = Self::try_get_dirty(ptr).unwrap().clone();
+
+        Heap.alloc(cloned)
+    }
+
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
         Self::drop_take_unsized(owned, |value|
             unsafe {

@@ -51,14 +51,18 @@ pub mod pile;
 //pub mod linkedlist;
 
 /// Generic pointer.
-pub trait Ptr : Sized + fmt::Debug {
+pub trait Ptr : Sized + fmt::Debug
+{
     /// The persistent version of this pointer, if applicable.
-    type Persist : Ptr + Primitive + Into<Self>;
+    type Persist : Ptr + Primitive + Into<Self> + Copy;
 
-    type Zone : Get<Self>;
-    type Allocator : Alloc<Ptr=Self>;
+    type Zone : Get<Self> + Copy + Eq + Ord + core::hash::Hash + fmt::Debug;
+    type Allocator : Alloc<Ptr=Self> + Eq + Ord + core::hash::Hash + fmt::Debug;
 
     fn allocator() -> Self::Allocator where Self: Default;
+
+    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self>
+        where Self: Clone;
 
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>);
 
@@ -70,6 +74,7 @@ pub trait Ptr : Sized + fmt::Debug {
             .field("metadata", &owned.metadata)
             .finish()
     }
+
 
     fn drop_take<T>(owned: OwnedPtr<T, Self>) -> Option<T> {
         let mut r = None;
