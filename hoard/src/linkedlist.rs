@@ -33,8 +33,10 @@ impl<T, P: Ptr> Cell<T, P> {
         }
     }
 
-    /*
-    pub fn get<'a>(self: Ref<'a, Self>, mut n: usize, zone: &(impl Get<Ptr=P> + 'a)) -> Option<Ref<'a, T>> {
+    pub fn get<'a, Z>(self: Ref<'a, Self>, mut n: usize, zone: &Z) -> Option<Ref<'a, T>>
+        where Z: Get<Ptr=P> + 'a,
+              T: Decode<Z>,
+    {
         let mut this = self;
         loop {
             if n == 0 {
@@ -47,7 +49,6 @@ impl<T, P: Ptr> Cell<T, P> {
             }
         }
     }
-    */
 
     pub fn push_front(&mut self, value: T, mut alloc: impl Alloc<Ptr=P>) {
         let old_value = mem::replace(&mut self.value, value);
@@ -166,6 +167,22 @@ pub fn test_save_to_vec<'s,'m>(cell: &Cell<OwnedPtr<(u8, u16, u32), pile::Offset
 
 pub fn test_save_to_vec2<'s,'m>(cell: &Cell<OwnedPtr<u16, pile::OffsetMut<'s,'m>>, pile::OffsetMut<'s,'m>>) -> Vec<u8> {
     pile::save_to_vec(cell)
+}
+
+impl<T, P: Ptr, Z> Decode<Z> for Cell<T, P>
+where Z: Zone<Ptr=P>,
+      T: Decode<Z>
+{
+    type Error = !;
+    type ValidateChildren = ();
+
+    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<BlobValidator<'p, Self, Z>, Self::Error> {
+        todo!()
+    }
+
+    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl LoadPtr<Z>) -> Self {
+        todo!()
+    }
 }
 
 #[cfg(test)]
