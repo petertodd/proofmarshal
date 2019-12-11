@@ -34,8 +34,8 @@ impl<'s, 'm> Pile<'s, 'm> {
         }
     }
 
-    pub fn get_blob<'p, T>(&self, ptr: &'p FatPtr<T, Offset<'s, 'm>>) -> Result<Blob<'p, T, Self>, offset::OffsetError>
-        where T: ?Sized + Load<Self>
+    pub fn get_blob<'p, T>(&self, ptr: &'p FatPtr<T, Offset<'s, 'm>>) -> Result<Blob<'p, T, Offset<'s,'m>>, offset::OffsetError>
+        where T: ?Sized + Load<Offset<'s,'m>>
     {
         Offset::get_blob_from_pile(ptr, self)
     }
@@ -47,12 +47,12 @@ pub enum ValidatePtrError {
     Value(Box<dyn crate::marshal::Error>),
 }
 
-impl<'s,'m> ValidatePtr<Self> for Pile<'s,'m> {
+impl<'s,'m> ValidatePtr<Offset<'s,'m>> for Pile<'s,'m> {
     type Error = ValidatePtrError;
 
     fn validate_ptr<'a, T>(&mut self, ptr: &'a FatPtr<T, Offset<'s,'m>>)
-        -> Result<Option<BlobValidator<'a, T, Self>>, Self::Error>
-    where T: ?Sized + Load<Self>
+        -> Result<Option<BlobValidator<'a, T, Offset<'s,'m>>>, Self::Error>
+    where T: ?Sized + Load<Offset<'s,'m>>
     {
         let blob = self.get_blob(ptr)
                        .map_err(ValidatePtrError::Offset)?;
@@ -62,12 +62,12 @@ impl<'s,'m> ValidatePtr<Self> for Pile<'s,'m> {
     }
 }
 
-impl<'s,'m> ValidatePtr<Self> for PileMut<'s,'m> {
+impl<'s,'m> ValidatePtr<OffsetMut<'s,'m>> for PileMut<'s,'m> {
     type Error = ValidatePtrError;
 
     fn validate_ptr<'a, T>(&mut self, ptr: &'a FatPtr<T, Offset<'s,'m>>)
-        -> Result<Option<BlobValidator<'a, T, Self>>, Self::Error>
-    where T: ?Sized + Load<Self>
+        -> Result<Option<BlobValidator<'a, T, OffsetMut<'s,'m>>>, Self::Error>
+    where T: ?Sized + Load<OffsetMut<'s,'m>>
     {
         let blob = self.get_blob(ptr)
                        .map_err(ValidatePtrError::Offset)?;
@@ -77,31 +77,23 @@ impl<'s,'m> ValidatePtr<Self> for PileMut<'s,'m> {
     }
 }
 
-impl<'s,'m> Loader<Self> for Pile<'s,'m> {
+impl<'s,'m> Loader<Offset<'s,'m>> for Pile<'s,'m> {
     fn load_blob<'a, T>(&self, ptr: &'a ValidPtr<T, Offset<'s,'m>>)
-        -> FullyValidBlob<'a, T, Self>
-    where T: ?Sized + Load<Self>
+        -> FullyValidBlob<'a, T, Offset<'s,'m>>
+    where T: ?Sized + Load<Offset<'s,'m>>
     {
         Offset::load_valid_blob_from_pile(ptr, self)
             .expect("ValidPtr to be valid")
     }
-
-    fn blob_zone(&self) -> &Self {
-        self
-    }
 }
 
-impl<'s,'m> Loader<Self> for PileMut<'s,'m> {
+impl<'s,'m> Loader<OffsetMut<'s,'m>> for PileMut<'s,'m> {
     fn load_blob<'a, T>(&self, ptr: &'a ValidPtr<T, Offset<'s,'m>>)
-        -> FullyValidBlob<'a, T, Self>
-    where T: ?Sized + Load<Self>
+        -> FullyValidBlob<'a, T, OffsetMut<'s,'m>>
+    where T: ?Sized + Load<OffsetMut<'s,'m>>
     {
         OffsetMut::load_valid_blob_from_pile(ptr, self)
             .expect("ValidPtr to be valid")
-    }
-
-    fn blob_zone(&self) -> &Self {
-        self
     }
 }
 
@@ -109,8 +101,8 @@ impl<'s,'m> Loader<Self> for PileMut<'s,'m> {
 pub struct PileMut<'s, 'm>(Pile<'s, 'm>);
 
 impl<'s, 'm> PileMut<'s, 'm> {
-    pub fn get_blob<'p, T>(&self, ptr: &'p FatPtr<T, Offset<'s, 'm>>) -> Result<Blob<'p, T, Self>, offset::OffsetError>
-        where T: ?Sized + Load<Self>
+    pub fn get_blob<'p, T>(&self, ptr: &'p FatPtr<T, Offset<'s, 'm>>) -> Result<Blob<'p, T, OffsetMut<'s,'m>>, offset::OffsetError>
+        where T: ?Sized + Load<OffsetMut<'s,'m>>
     {
         OffsetMut::get_blob_from_pile(ptr, self)
     }
@@ -175,23 +167,25 @@ impl<'s,'p> Alloc for PileMut<'s,'p> {
     }
 }
 
-impl<'s,'m> Get for Pile<'s, 'm> {
-    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self::Ptr>) -> Ref<'a, T>
-        where Self: 'a
+impl<'s,'m> Get<Offset<'s, 'm>> for Pile<'s, 'm> {
+    fn get<'a, T>(&self, ptr: &'a ValidPtr<T, Offset<'s,'m>>) -> Ref<'a, T>
+        where T: ?Sized + Load<Offset<'s,'m>>
     {
         let blob = self.load_blob(ptr);
         T::load_blob(blob, self)
     }
 
-    fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self::Ptr>) -> T::Owned {
+    fn take<T>(&self, ptr: OwnedPtr<T, Offset<'s,'m>>) -> T::Owned
+        where T: ?Sized + Load<Offset<'s,'m>>
+    {
         let blob = self.load_blob(&ptr);
         T::decode_blob(blob, self)
     }
 }
 
-impl<'s,'m> Get for PileMut<'s, 'm> {
-    fn get<'a, T: ?Sized + Load<Self>>(&self, own: &'a ValidPtr<T, Self::Ptr>) -> Ref<'a, T>
-        where Self: 'a
+impl<'s,'m> Get<OffsetMut<'s,'m>> for PileMut<'s, 'm> {
+    fn get<'a, T>(&self, own: &'a ValidPtr<T, OffsetMut<'s,'m>>) -> Ref<'a, T>
+        where T: ?Sized + Load<OffsetMut<'s,'m>>
     {
         match own.raw.kind() {
             Kind::Offset(_) => {
@@ -208,7 +202,9 @@ impl<'s,'m> Get for PileMut<'s, 'm> {
         }
     }
 
-    fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self::Ptr>) -> T::Owned {
+    fn take<T>(&self, ptr: OwnedPtr<T, OffsetMut<'s,'m>>) -> T::Owned
+        where T: ?Sized + Load<OffsetMut<'s,'m>>
+    {
         let ptr = ptr.into_inner();
         if let Ok(valid_offset_ptr) = ptr.try_cast_ref() {
                 let blob = self.load_blob(valid_offset_ptr);
@@ -224,7 +220,7 @@ impl<'s,'m> Get for PileMut<'s, 'm> {
 }
 
 pub fn save_to_vec<'s, 'm, T: ?Sized>(value: &T) -> Vec<u8>
-where T: Save<PileMut<'s,'m>>
+where T: Save<OffsetMut<'s,'m>>
 {
     let mut state = value.init_save_state();
     let (dumper, offset) = value.save_poll(&mut state, VecDumper::default()).unwrap();
@@ -234,7 +230,7 @@ where T: Save<PileMut<'s,'m>>
 #[derive(Debug, Default)]
 struct VecDumper(Vec<u8>);
 
-impl<'s, 'm> Dumper<PileMut<'s,'m>> for VecDumper {
+impl<'s, 'm> Dumper<OffsetMut<'s,'m>> for VecDumper {
     type Pending = !;
 
     fn try_save_ptr<'p, T: ?Sized + Pointee>(&self, ptr: &'p ValidPtr<T, OffsetMut<'s, 'm>>) -> Result<Offset<'s,'m>, &'p T> {
@@ -269,7 +265,7 @@ mod test {
         dst: Vec<u8>,
     }
 
-    impl<'s,'m> Dumper<Pile<'s,'m>> for DeepDump {
+    impl<'s,'m> Dumper<Offset<'s,'m>> for DeepDump {
         type Pending = !;
 
         fn try_save_ptr<'p, T: ?Sized + Pointee>(&self, ptr: &'p ValidPtr<T, Offset<'s,'m>>)
@@ -294,7 +290,7 @@ mod test {
         dst: Vec<u8>,
     }
 
-    impl<'s,'m> Dumper<PileMut<'s,'m>> for DeepDumpMut {
+    impl<'s,'m> Dumper<OffsetMut<'s,'m>> for DeepDumpMut {
         type Pending = !;
 
         fn try_save_ptr<'p, T: ?Sized + Pointee>(&self, ptr: &'p ValidPtr<T, OffsetMut<'s,'m>>)

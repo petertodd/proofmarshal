@@ -81,8 +81,8 @@ impl<'s,'m> Offset<'s,'m> {
     }
 
     pub(super) fn get_blob_from_pile<'a, T>(ptr: &'a FatPtr<T, Self>, pile: &Pile<'s,'m>)
-        -> Result<Blob<'a, T, Pile<'s,'m>>, OffsetError>
-    where T: ?Sized + Load<Pile<'s,'m>>
+        -> Result<Blob<'a, T, Offset<'s,'m>>, OffsetError>
+    where T: ?Sized + Load<Offset<'s,'m>>
     {
         let size = T::dyn_blob_layout(ptr.metadata).size();
         let slice = ptr.raw.get_slice_from_pile(size, pile).unwrap();
@@ -91,8 +91,8 @@ impl<'s,'m> Offset<'s,'m> {
     }
 
     pub(super) fn load_valid_blob_from_pile<'a, T>(ptr: &'a ValidPtr<T, Self>, pile: &Pile<'s,'m>)
-        -> Result<FullyValidBlob<'a, T, Pile<'s,'m>>, OffsetError>
-    where T: ?Sized + Load<Pile<'s,'m>>
+        -> Result<FullyValidBlob<'a, T, Offset<'s,'m>>, OffsetError>
+    where T: ?Sized + Load<Offset<'s,'m>>
     {
         Self::get_blob_from_pile(ptr, pile)
             .map(|blob| unsafe { blob.assume_fully_valid() })
@@ -182,7 +182,7 @@ impl Primitive for Offset<'_,'_> {
            .finish()
     }
 
-    fn validate_blob<'a, Z: Zone>(blob: Blob<'a, Self, Z>) -> Result<FullyValidBlob<'a, Self, Z>, Self::Error> {
+    fn validate_blob<'a, P: Ptr>(blob: Blob<'a, Self, P>) -> Result<FullyValidBlob<'a, Self, P>, Self::Error> {
         let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
 
         if raw & 1 == 0 {
@@ -197,15 +197,15 @@ impl Primitive for Offset<'_,'_> {
         }
     }
 
-    fn decode_blob<'a, Z: Zone>(blob: FullyValidBlob<'a, Self, Z>) -> Self {
+    fn decode_blob<'a, P: Ptr>(blob: FullyValidBlob<'a, Self, P>) -> Self {
         <Self as Primitive>::deref_blob(blob).clone()
     }
 
-    fn load_blob<'a, Z: Zone>(blob: FullyValidBlob<'a, Self, Z>) -> Ref<'a, Self> {
+    fn load_blob<'a, P: Ptr>(blob: FullyValidBlob<'a, Self, P>) -> Ref<'a, Self> {
         Ref::Borrowed(<Self as Primitive>::deref_blob(blob))
     }
 
-    fn deref_blob<'a, Z: Zone>(blob: FullyValidBlob<'a, Self, Z>) -> &'a Self {
+    fn deref_blob<'a, P: Ptr>(blob: FullyValidBlob<'a, Self, P>) -> &'a Self {
         match <Self as Primitive>::validate_blob(Blob::from(blob)) {
             Ok(_) => unsafe { blob.assume_valid() },
             Err(e) => panic!("fully valid offset not valid: {:?}", e),
@@ -334,8 +334,8 @@ impl<'s,'m> OffsetMut<'s,'m> {
     }
 
     pub(super) fn get_blob_from_pile<'a, T>(ptr: &'a FatPtr<T, Offset<'s,'m>>, pile: &PileMut<'s,'m>)
-        -> Result<Blob<'a, T, PileMut<'s,'m>>, OffsetError>
-    where T: ?Sized + Load<PileMut<'s,'m>>
+        -> Result<Blob<'a, T, OffsetMut<'s,'m>>, OffsetError>
+    where T: ?Sized + Load<OffsetMut<'s,'m>>
     {
         let size = T::dyn_blob_layout(ptr.metadata).size();
         let slice = ptr.raw.get_slice_from_pile(size, pile).unwrap();
@@ -344,8 +344,8 @@ impl<'s,'m> OffsetMut<'s,'m> {
     }
 
     pub(super) fn load_valid_blob_from_pile<'a, T>(ptr: &'a ValidPtr<T, Offset<'s,'m>>, pile: &PileMut<'s,'m>)
-        -> Result<FullyValidBlob<'a, T, PileMut<'s,'m>>, OffsetError>
-    where T: ?Sized + Load<PileMut<'s,'m>>
+        -> Result<FullyValidBlob<'a, T, OffsetMut<'s,'m>>, OffsetError>
+    where T: ?Sized + Load<OffsetMut<'s,'m>>
     {
         Self::get_blob_from_pile(ptr, pile)
             .map(|blob| unsafe { blob.assume_fully_valid() })

@@ -44,11 +44,11 @@ pub mod never;
 pub mod heap;
 pub mod pile;
 
-pub mod hoard;
+//pub mod hoard;
 
 //pub mod bag;
 
-pub mod linkedlist;
+//pub mod linkedlist;
 
 /// Generic pointer.
 pub trait Ptr : Sized + fmt::Debug {
@@ -82,6 +82,7 @@ pub trait Ptr : Sized + fmt::Debug {
 
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist>;
 }
+
 pub trait Zone : Sized {
     type Ptr : Ptr;
 
@@ -112,21 +113,18 @@ impl<A: Alloc> Alloc for &'_ mut A {
     }
 }
 
-pub trait TryGet : Zone {
+pub trait TryGet<P: Ptr> {
     type Error;
 
-    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self::Ptr>) -> Result<Ref<'a, T>, Self::Error>;
+    fn get<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T, P>) -> Result<Ref<'a, T>, Self::Error>;
 }
 
-pub trait Get : Zone {
-    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self::Ptr>) -> Ref<'a, T>
-        where Self: 'a;
+pub trait Get<P: Ptr> {
+    fn get<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T, P>) -> Ref<'a, T>;
 
-    fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self::Ptr>) -> T::Owned;
+    fn take<T: ?Sized + Load<P>>(&self, ptr: OwnedPtr<T, P>) -> T::Owned;
 
-    fn get_ref<'a, T: ?Sized + Load<Self>>(&self, ptr: Ref<'a, OwnedPtr<T, Self::Ptr>>) -> Ref<'a, T>
-        where Self: 'a
-    {
+    fn get_ref<'a, T: ?Sized + Load<P>>(&self, ptr: Ref<'a, OwnedPtr<T, P>>) -> Ref<'a, T> {
         match ptr {
             Ref::Borrowed(ptr) => self.get(ptr),
             Ref::Owned(ptr) => Ref::Owned(self.take(ptr)),

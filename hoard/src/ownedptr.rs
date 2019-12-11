@@ -40,7 +40,6 @@ impl<T: ?Sized + Pointee, P: Ptr> ops::Deref for OwnedPtr<T,P> {
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T,P> {
-
     /// Creates a new `OwnedPtr` from a `ValidPtr`.
     ///
     /// # Safety
@@ -101,12 +100,11 @@ pub enum EncodeOwnedPtrState<T, P> {
     Ptr(P),
 }
 
-unsafe impl<T, P, Z> Encode<Z> for OwnedPtr<T,P>
-where Z: Zone<Ptr=P>,
-      P: Ptr,
-      T: ?Sized + Save<Z>,
+unsafe impl<T, P> Encode<P> for OwnedPtr<T,P>
+where P: Ptr,
+      T: ?Sized + Save<P>,
 {
-    const BLOB_LAYOUT: BlobLayout = <<Z::Ptr as Ptr>::Persist as Encode<Z>>::BLOB_LAYOUT
+    const BLOB_LAYOUT: BlobLayout = <P::Persist as Encode<P>>::BLOB_LAYOUT
                                         .extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
 
     type State = EncodeOwnedPtrState<T::State, P::Persist>;
@@ -115,7 +113,7 @@ where Z: Zone<Ptr=P>,
         EncodeOwnedPtrState::Initial
     }
 
-    fn encode_poll<D: Dumper<Z>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Pending> {
+    fn encode_poll<D: Dumper<P>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Pending> {
         loop {
             match state {
                 EncodeOwnedPtrState::Initial => {
@@ -154,28 +152,21 @@ pub enum LoadOwnedPtrError<P,M> {
     Metadata(M),
 }
 
-impl<T, P, Z> Decode<Z> for OwnedPtr<T,P>
-where Z: Zone<Ptr=P>,
-      P: Ptr,
-      T: ?Sized + Load<Z>,
+impl<T, P> Decode<P> for OwnedPtr<T, P>
+where P: Ptr,
+      T: ?Sized + Load<P>,
 {
-    type Error = LoadOwnedPtrError<<<Z::Ptr as Ptr>::Persist as Primitive>::Error, <T::Metadata as Primitive>::Error>;
+    type Error = LoadOwnedPtrError<<P::Persist as Primitive>::Error, <T::Metadata as Primitive>::Error>;
 
-    type ValidateChildren = OwnedPtrValidator<T,Z>;
+    type ValidateChildren = OwnedPtrValidator<T, P>;
 
-    fn validate_blob<'a>(blob: Blob<'a, Self, Z>) -> Result<BlobValidator<'a, Self, Z>, Self::Error> {
-        // There's no bound guaranteeing that Z::PersistPtr outlives 'a, so create a new blob with
-        // a shorter lifetime to do the decoding.
-        let blob2 = Blob::<Self, Z>::new(&blob[..], ()).unwrap();
-        let mut fields = blob2.validate_struct();
+    fn validate_blob<'a>(blob: Blob<'a, Self, P>) -> Result<BlobValidator<'a, Self, P>, Self::Error> {
+        let mut fields = blob.validate_struct();
 
-        // If we hadn't done that, the following line would create a Blob<'a, Z::PersistPtr, Z>,
-        // and fail with a "<Z as Zone>::PersistPtr may not live long enough" error.
-        let raw = fields.field_blob::<<Z::Ptr as Ptr>::Persist>();
-        let raw = <<Z::Ptr as Ptr>::Persist as Primitive>::validate_blob(raw).map_err(LoadOwnedPtrError::Ptr)?;
-        let raw = <<Z::Ptr as Ptr>::Persist as Primitive>::decode_blob(raw);
+        let raw = fields.field_blob::<P::Persist>();
+        let raw = <P::Persist as Primitive>::validate_blob(raw).map_err(LoadOwnedPtrError::Ptr)?;
+        let raw = <P::Persist as Primitive>::decode_blob(raw);
 
-        // Metadata doesn't have this issue as it's always valid for the 'static lifetime.
         let metadata = fields.field_blob::<T::Metadata>();
         let metadata = <T::Metadata as Primitive>::validate_blob(metadata).map_err(LoadOwnedPtrError::Metadata)?;
         let metadata = <T::Metadata as Primitive>::decode_blob(metadata);
@@ -184,11 +175,11 @@ where Z: Zone<Ptr=P>,
         Ok(blob.assume_valid(OwnedPtrValidator::FatPtr(fatptr)))
     }
 
-    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, Z>, loader: &impl Loader<Z>) -> Self {
+    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, P>, loader: &impl Loader<P>) -> Self {
         let mut fields = blob.decode_struct(loader);
 
         let fatptr = FatPtr {
-            raw: fields.field::<<Z::Ptr as Ptr>::Persist>().into(),
+            raw: fields.field::<P::Persist>().into(),
             metadata: fields.field(),
         };
         fields.assert_done();
@@ -199,15 +190,15 @@ where Z: Zone<Ptr=P>,
     }
 }
 
-pub enum OwnedPtrValidator<T: ?Sized + Load<Z>, Z: Zone> {
-    FatPtr(FatPtr<T, <Z::Ptr as Ptr>::Persist>),
+pub enum OwnedPtrValidator<T: ?Sized + Load<P>, P: Ptr> {
+    FatPtr(FatPtr<T, P::Persist>),
     Value(T::ValidateChildren),
     Done,
 }
 
-impl<T: ?Sized + Load<Z>, Z: Zone> ValidateChildren<Z> for OwnedPtrValidator<T,Z> {
+impl<T: ?Sized + Load<P>, P: Ptr> ValidateChildren<P> for OwnedPtrValidator<T, P> {
     fn validate_children<V>(&mut self, ptr_validator: &mut V) -> Result<(), V::Error>
-        where V: ValidatePtr<Z>
+        where V: ValidatePtr<P>
     {
         loop {
             match self {

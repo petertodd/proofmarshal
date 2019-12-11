@@ -11,25 +11,25 @@ macro_rules! tuple {
     () => ();
     ( $(($name:ident, $state:ident),)+ ) => {
         #[allow(non_snake_case)]
-        unsafe impl<Z: Zone, $($name: Encode<Z>),+ > Encode<Z> for ($($name,)+) {
+        unsafe impl<P: Ptr, $($name: Encode<P>),+ > Encode<P> for ($($name,)+) {
             const BLOB_LAYOUT: BlobLayout = {
                 let layout = BlobLayout::new(0);
 
                 $(
-                    let layout = layout.extend(<$name as Encode<Z>>::BLOB_LAYOUT);
+                    let layout = layout.extend(<$name as Encode<P>>::BLOB_LAYOUT);
                 )+
 
                 layout
             };
 
-            type State = ( $(<$name as Encode<Z>>::State,)+ );
+            type State = ( $(<$name as Encode<P>>::State,)+ );
             fn init_encode_state(&self) -> Self::State {
                 let ($(ref $name,)+) = self;
                 ( $($name.init_encode_state(),)+ )
             }
 
-            fn encode_poll<D: Dumper<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>
-                where Z: Zone
+            fn encode_poll<D: Dumper<P>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>
+                where P: Ptr
             {
                 let ($(ref $name,)+) = self;
                 let ($(ref mut $state,)+) = state;
@@ -49,11 +49,11 @@ macro_rules! tuple {
             }
         }
 
-        impl<Z: Zone, $($name: Decode<Z>),+ > Decode<Z> for ($($name,)+) {
+        impl<P: Ptr, $($name: Decode<P>),+ > Decode<P> for ($($name,)+) {
             type Error = TupleError;
 
             type ValidateChildren = ( $( <$name>::ValidateChildren, )+ );
-            fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<BlobValidator<'p, Self, Z>, Self::Error> {
+            fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
                 let mut fields = blob.validate_struct();
                 let state = (
                     $( fields.field::<$name>().map_err(|_| TupleError)?, )+
@@ -61,16 +61,16 @@ macro_rules! tuple {
                 Ok(fields.done(state))
             }
 
-            fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
+            fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Self {
                 let mut fields = blob.decode_struct(loader);
                 ( $( fields.field::<$name>(), )+ )
             }
         }
 
         #[allow(non_snake_case)]
-        impl<Z: Zone, $($name: ValidateChildren<Z>),+ > ValidateChildren<Z> for ($($name,)+) {
+        impl<P: Ptr, $($name: ValidateChildren<P>),+ > ValidateChildren<P> for ($($name,)+) {
             fn validate_children<V>(&mut self, validator: &mut V) -> Result<(), V::Error>
-                where V: ValidatePtr<Z>
+                where V: ValidatePtr<P>
             {
                 let ($(ref mut $name,)+) = self;
                 $(

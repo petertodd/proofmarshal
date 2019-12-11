@@ -1,5 +1,5 @@
 use super::{
-    Persist, Ref, Zone,
+    Persist, Ref, Ptr,
     blob::*,
 };
 
@@ -23,14 +23,14 @@ pub trait Primitive : Sized {
     const BLOB_LAYOUT: BlobLayout;
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error>;
 
-    fn validate_blob<'p, Z: Zone>(blob: Blob<'p, Self, Z>) -> Result<FullyValidBlob<'p, Self, Z>, Self::Error>;
-    fn decode_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Self;
+    fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error>;
+    fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self;
 
-    fn load_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Ref<'p, Self> {
+    fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
         Ref::Owned(Self::decode_blob(blob))
     }
 
-    fn deref_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self
+    fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
         where Self: Persist
     {
         todo!()
@@ -45,15 +45,15 @@ impl Primitive for ! {
         match *self {}
     }
 
-    fn validate_blob<'p, Z: Zone>(blob: Blob<'p, Self, Z>) -> Result<FullyValidBlob<'p, Self, Z>, Self::Error> {
+    fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
         panic!()
     }
 
-    fn load_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Ref<'p, Self> {
+    fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
         panic!()
     }
 
-    fn decode_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Self {
+    fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
         panic!()
     }
 }
@@ -66,19 +66,19 @@ impl Primitive for () {
         dst.finish()
     }
 
-    fn validate_blob<'p, Z: Zone>(blob: Blob<'p, Self, Z>) -> Result<FullyValidBlob<'p, Self, Z>, Self::Error> {
+    fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
         unsafe { Ok(blob.assume_fully_valid()) }
     }
 
-    fn load_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Ref<'p, Self> {
+    fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
         unsafe { blob.assume_valid_ref() }
     }
 
-    fn decode_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Self {
+    fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
         Self::deref_blob(blob).clone()
     }
 
-    fn deref_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self {
+    fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self {
         unsafe { blob.assume_valid() }
     }
 }
@@ -97,22 +97,22 @@ impl Primitive for bool {
            .finish()
     }
 
-    fn validate_blob<'p, Z: Zone>(blob: Blob<'p, Self, Z>) -> Result<FullyValidBlob<'p, Self, Z>, Self::Error> {
+    fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
         match blob[0] {
             1 | 0 => unsafe { Ok(blob.assume_fully_valid()) },
             x => Err(BoolError(x)),
         }
     }
 
-    fn load_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Ref<'p, Self> {
+    fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
         unsafe { blob.assume_valid_ref() }
     }
 
-    fn decode_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Self {
+    fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
         Self::deref_blob(blob).clone()
     }
 
-    fn deref_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self {
+    fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self {
         unsafe { blob.assume_valid() }
     }
 }
@@ -131,11 +131,11 @@ macro_rules! impl_aligned_ints {
                        .finish()
                 }
 
-                fn validate_blob<'p, Z: Zone>(blob: Blob<'p, Self, Z>) -> Result<FullyValidBlob<'p, Self, Z>, Self::Error> {
+                fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
                     unsafe { Ok(blob.assume_fully_valid()) }
                 }
 
-                fn decode_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Self {
+                fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
                     let mut r = [0; mem::size_of::<Self>()];
                     r.copy_from_slice(&blob[..]);
                     <$t>::from_le_bytes(r)
@@ -163,15 +163,15 @@ macro_rules! unsafe_impl_persist_ints {
                        .finish()
                 }
 
-                fn validate_blob<'p, Z: Zone>(blob: Blob<'p, Self, Z>) -> Result<FullyValidBlob<'p, Self, Z>, Self::Error> {
+                fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
                     unsafe { Ok(blob.assume_fully_valid()) }
                 }
 
-                fn decode_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Self {
+                fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
                     <Self as Primitive>::deref_blob(blob).clone()
                 }
 
-                fn deref_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self {
+                fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self {
                     unsafe {
                         &*(blob.as_ptr() as *const Self)
                     }
@@ -204,7 +204,7 @@ macro_rules! unsafe_impl_nonzero_persist_ints {
                        .finish()
                 }
 
-                fn validate_blob<'p, Z: Zone>(blob: Blob<'p, Self, Z>) -> Result<FullyValidBlob<'p, Self, Z>, Self::Error> {
+                fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
                     if blob.iter().all(|b| *b == 0) {
                         Err(NonZeroIntError)
                     } else {
@@ -212,11 +212,11 @@ macro_rules! unsafe_impl_nonzero_persist_ints {
                     }
                 }
 
-                fn decode_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> Self {
+                fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
                     <Self as Primitive>::deref_blob(blob).clone()
                 }
 
-                fn deref_blob<'p, Z: Zone>(blob: FullyValidBlob<'p, Self, Z>) -> &'p Self {
+                fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self {
                     unsafe {
                         &*(blob.as_ptr() as *const Self)
                     }
