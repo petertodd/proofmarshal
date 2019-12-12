@@ -233,6 +233,7 @@ unsafe_impl_nonzero_persist_ints! {
     NonZeroI8, Le<NonZeroI16>, Le<NonZeroI32>, Le<NonZeroI64>, Le<NonZeroI128>,
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,3 +259,4 @@ mod tests {
         }
     }
 }
+*/

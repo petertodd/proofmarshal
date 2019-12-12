@@ -145,6 +145,7 @@ impl<P: Ptr, T: ValidateChildren<P>> ValidateChildren<P> for Option<T> {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,3 +178,4 @@ mod tests {
         }
     }
 }
+*/
