@@ -1,3 +1,16 @@
+//! Append-only, copy-on-write, persistence via byte slices and offsets.
+//!
+//! A `Pile` is a memory zone that (conceptually) consists of a linear byte slice. Pointers to data
+//! within a pile are simply 64-bit, little-endian, integer `Offset`'s from the beginning of the
+//! slice. The byte slice can come from either volatile memory (eg a `Vec<u8>`) or be a
+//! memory-mapped file. `Offset` implements `Persist`, allowing types containing `Offset` pointers
+//! to be memory-mapped.
+//!
+//! Mutation is provided by `PileMut` and `OffsetMut`, which extend `Offset` with copy-on-write
+//! semantics: an `OffsetMut` is either a simple `Offset`, or a pointer to heap-allocated memory.
+//! `OffsetMut` pointers also implement `Persist`, using the least-significant-bit to distinguish
+//! between persistant offsets and heap memory pointers.
+
 use core::convert::TryFrom;
 use core::marker::PhantomData;
 use core::mem;
@@ -6,6 +19,7 @@ use core::ptr::NonNull;
 use core::pin::Pin;
 
 use leint::Le;
+use singlelife::Unique;
 
 use super::*;
 
@@ -17,27 +31,51 @@ pub mod offset;
 use self::offset::Kind;
 pub use self::offset::{Offset, OffsetMut};
 
-mod snapshot;
-pub use self::snapshot::{Snapshot, Mapping};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Pile<'s, 'm> {
-    marker: PhantomData<fn(&'s ())>,
-    snapshot: NonNull<Snapshot<'m>>,
+pub struct Pile<'s, 'p> {
+    marker: PhantomData<
+        for<'a> fn(&'a Offset<'s, 'p>) -> &'a [u8]
+    >,
+    slice: &'p &'p [u8],
 }
 
-impl<'s, 'm> Pile<'s, 'm> {
-    pub fn new(snapshot: &'s Snapshot<'m>) -> Self {
+impl<'s, 'p> Pile<'s, 'p> {
+    pub fn new(slice: Unique<'p, &&[u8]>) -> Self
+        where 's: 'p
+    {
         Self {
             marker: PhantomData,
-            snapshot: NonNull::from(snapshot),
+            slice: Unique::into_inner(slice),
         }
     }
 
-    pub fn get_blob<'p, T>(&self, ptr: &'p FatPtr<T, Offset<'s, 'm>>) -> Result<Blob<'p, T, Offset<'s,'m>>, offset::OffsetError>
-        where T: ?Sized + Load<Offset<'s,'m>>
+    /*
+    pub unsafe fn update<'s2>(&self, slice: &'s2 &[u8]) -> Pile<'s2, 'p>
+        where 's: 's2
     {
-        Offset::get_blob_from_pile(ptr, self)
+        Pile::new_unchecked(slice)
+    }
+    */
+
+    fn get_slice<'a>(&self, offset: &'a Offset<'s, 'p>, size: usize) -> Result<&'a [u8], offset::OffsetError> {
+        let start = offset.get();
+
+        // It's impossible for this to overflow as the maximum offset is just a quarter of
+        // usize::MAX
+        let end = start + size;
+        self.slice.get(start .. end)
+             .ok_or(offset::OffsetError { offset: start, size })
+    }
+
+    pub fn get_blob<'a, T>(&self, ptr: &'a FatPtr<T, Offset<'s, 'p>>) -> Result<Blob<'a, T, Offset<'s,'p>>, offset::OffsetError>
+        where T: ?Sized + Load<Offset<'s, 'p>>
+    {
+        self.get_slice(&ptr.raw, T::dyn_blob_layout(ptr.metadata).size())
+                  .map(|slice| Blob::new(slice, ptr.metadata).unwrap())
+    }
+
+    pub fn new_offset(&self, offset: usize) -> Option<Offset<'s, 'p>> {
+        Offset::new(offset)
     }
 }
 
@@ -82,7 +120,8 @@ impl<'s,'m> Loader<Offset<'s,'m>> for Pile<'s,'m> {
         -> FullyValidBlob<'a, T, Offset<'s,'m>>
     where T: ?Sized + Load<Offset<'s,'m>>
     {
-        Offset::load_valid_blob_from_pile(ptr, self)
+        self.get_blob(ptr)
+            .map(|blob| unsafe { blob.assume_fully_valid() })
             .expect("ValidPtr to be valid")
     }
 }
@@ -92,7 +131,8 @@ impl<'s,'m> Loader<OffsetMut<'s,'m>> for PileMut<'s,'m> {
         -> FullyValidBlob<'a, T, OffsetMut<'s,'m>>
     where T: ?Sized + Load<OffsetMut<'s,'m>>
     {
-        OffsetMut::load_valid_blob_from_pile(ptr, self)
+        self.get_blob(ptr)
+            .map(|blob| unsafe { blob.assume_fully_valid() })
             .expect("ValidPtr to be valid")
     }
 }
@@ -104,7 +144,8 @@ impl<'s, 'm> PileMut<'s, 'm> {
     pub fn get_blob<'p, T>(&self, ptr: &'p FatPtr<T, Offset<'s, 'm>>) -> Result<Blob<'p, T, OffsetMut<'s,'m>>, offset::OffsetError>
         where T: ?Sized + Load<OffsetMut<'s,'m>>
     {
-        OffsetMut::get_blob_from_pile(ptr, self)
+        self.get_slice(&ptr.raw, T::dyn_blob_layout(ptr.metadata).size())
+                  .map(|slice| Blob::new(slice, ptr.metadata).unwrap())
     }
 }
 
@@ -124,7 +165,10 @@ impl<'s,'m> ops::Deref for PileMut<'s,'m> {
 
 impl Default for PileMut<'static, '_> {
     fn default() -> Self {
-        let pile = Pile::new(&snapshot::EMPTY_SNAPSHOT);
+        static EMPTY_SLICE: &[u8] = &[];
+
+        let slice = unsafe { Unique::new_unchecked(&EMPTY_SLICE) };
+        let pile = Pile::new(slice);
         Self(pile)
     }
 }
@@ -247,8 +291,7 @@ impl<'s, 'm> Dumper<OffsetMut<'s,'m>> for VecDumper {
         self.0.resize(offset + size, 0);
         f(&mut self.0[offset ..]);
 
-        let offset = unsafe { Offset::new_unchecked(offset) };
-        Ok((self, offset))
+        Ok((self, Offset::new(offset).unwrap()))
     }
 }
 
@@ -256,6 +299,9 @@ impl<'s, 'm> Dumper<OffsetMut<'s,'m>> for VecDumper {
 mod test {
     use super::*;
 
+    use singlelife::unique;
+
+/*
     #[derive(Debug, Default)]
     struct DeepDump {
         dst: Vec<u8>,
@@ -276,7 +322,7 @@ mod test {
 
             f(&mut self.dst[offset..]);
 
-            let offset = unsafe { Offset::new_unchecked(offset) };
+            let offset = Offset::new(offset).unwrap();
             Ok((self, offset))
         }
     }
@@ -309,44 +355,88 @@ mod test {
 
             f(&mut self.dst[offset..]);
 
-            let offset = unsafe { Offset::new_unchecked(offset) };
+            let offset = Offset::new(offset).unwrap();
             Ok((self, offset))
         }
     }
 
     #[test]
     fn deepdump_pile() {
-        let snapshot = unsafe { Snapshot::new_unchecked(vec![0x78,0x56,0x34,0x12]) };
-        let pile = Pile::new(&snapshot);
+        let slice = &vec![0x78,0x56,0x34,0x12][..];
+        unique!(|&slice| {
+            let pile = Pile::new(slice);
 
-        let offset = Offset::new(&snapshot, 0, 0).unwrap();
-        let fatptr: FatPtr<u32,_> = FatPtr { raw: offset, metadata: () };
-        let owned_ptr = unsafe { OwnedPtr::new_unchecked(ValidPtr::new_unchecked(fatptr)) };
+            let offset = Offset::new(0).unwrap();
+            let fatptr: FatPtr<u32,_> = FatPtr { raw: offset, metadata: () };
+            let owned_ptr = unsafe { OwnedPtr::new_unchecked(ValidPtr::new_unchecked(fatptr)) };
 
-        let dumper = DeepDump::default();
+            let dumper = DeepDump::default();
 
-        let offset = dumper.try_save_ptr(&owned_ptr).unwrap();
-        assert_eq!(dumper.dst, &[]);
+            let offset = dumper.try_save_ptr(&owned_ptr).unwrap();
+            assert_eq!(dumper.dst, &[]);
+        })
     }
 
     #[test]
     fn deepdump_pilemut() {
-        let snapshot = unsafe { Snapshot::new_unchecked(vec![0x78,0x56,0x34,0x12]) };
-        let mut pile = PileMut::from(Pile::new(&snapshot));
+        Unique::new(&[0x78,0x56,0x34,0x12][..], |pile| {
+            let mut pile = PileMut::from(Pile::new(&pile));
 
-        let offset = OffsetMut::from(Offset::new(&snapshot, 0, 0).unwrap());
-        let fatptr: FatPtr<u32,_> = FatPtr { raw: offset, metadata: () };
-        let owned_ptr = unsafe { OwnedPtr::new_unchecked(ValidPtr::new_unchecked(fatptr)) };
+            let offset = OffsetMut::from(Offset::new(0).unwrap());
+            let fatptr: FatPtr<u32,_> = FatPtr { raw: offset, metadata: () };
+            let owned_ptr = unsafe { OwnedPtr::new_unchecked(ValidPtr::new_unchecked(fatptr)) };
 
-        let dumper = DeepDumpMut::default();
+            let dumper = DeepDumpMut::default();
 
-        let offset = dumper.try_save_ptr(&owned_ptr).unwrap();
-        assert_eq!(dumper.dst, &[]);
+            let offset = dumper.try_save_ptr(&owned_ptr).unwrap();
+            assert_eq!(dumper.dst, &[]);
 
-        let owned_ptr = pile.alloc(0xabcd_u16);
-        let r = dumper.try_save_ptr(&owned_ptr).unwrap_err();
-        assert_eq!(r, &0xabcd);
-        assert_eq!(dumper.dst, &[]);
+            let owned_ptr = pile.alloc(0xabcd_u16);
+            let r = dumper.try_save_ptr(&owned_ptr).unwrap_err();
+            assert_eq!(r, &0xabcd);
+            assert_eq!(dumper.dst, &[]);
+        })
+    }
+*/
+
+    #[test]
+    fn pilemut_get() {
+        Unique::new(&&[0x78,0x56,0x34,0x12][..], |pile| {
+            let mut static_pile = PileMut::default();
+            let static_owned = static_pile.alloc(12u8);
+
+            let pile = PileMut::from(Pile::new(pile));
+
+            let offset = pile.new_offset(0).unwrap();
+            let offset = OffsetMut::from(offset);
+            let fatptr: FatPtr<u32,_> = FatPtr { raw: offset, metadata: () };
+            let owned = unsafe { OwnedPtr::new_unchecked(ValidPtr::new_unchecked(fatptr)) };
+
+            assert_eq!(*pile.get(&owned), 0x12345678);
+
+            assert_eq!(*pile.get(&static_owned), 12);
+            assert_eq!(*static_pile.get(&static_owned), 12);
+
+            /*
+            let buf = &[0x78,0x56,0x34,0x12,0x42][..];
+            (||{
+                let pile2 = unsafe { pile.update(&buf) };
+                let pile2 = PileMut::from(pile2);
+
+                assert_eq!(*pile2.get(&static_owned), 12);
+                assert_eq!(*pile2.get(&owned), 0x12345678);
+
+                let offset = pile2.new_offset(4).unwrap();
+                let offset = OffsetMut::from(offset);
+                let fatptr: FatPtr<u8,_> = FatPtr { raw: offset, metadata: () };
+                let owned2 = unsafe { OwnedPtr::new_unchecked(ValidPtr::new_unchecked(fatptr)) };
+                assert_eq!(*pile2.get(&owned2), 0x42);
+
+                // doesn't compile as pile is out of date
+                //assert_eq!(*pile.get(&owned2), 0x42);
+            })()
+            */
+        })
     }
 
     #[test]

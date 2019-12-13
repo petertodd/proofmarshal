@@ -22,8 +22,8 @@ use core::ops;
 /// ```
 #[derive(PartialEq,Eq,PartialOrd,Ord,Hash)]
 #[repr(transparent)]
-pub struct Unique<'u, T: ?Sized> {
-    marker: PhantomData<fn(&'u ()) -> &'u ()>,
+pub struct Unique<'u, T: 'u + ?Sized> {
+    marker: PhantomData<fn(&'u T) -> &'u T>,
     value: T,
 }
 
@@ -252,6 +252,20 @@ macro_rules! unique {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_lifetime() {
+        fn foo<'a, 'b: 'a>(slice: Unique<'a, &'b [u8]>) -> &'b [u8] {
+            *slice
+        }
+
+        let v = vec![];
+        let slice = &v[..];
+
+        Unique::new(slice, |slice| {
+            foo(slice)
+        });
+    }
 
     struct Foo {
         n: u8,

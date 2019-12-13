@@ -1,3 +1,62 @@
+//! Pile pointers.
+//!
+//! # Lifetimes
+//!
+//! Both piles and offsets have *two* lifetime parameters: `'s` and `'p`. For reasons we'll see
+//! later, these two parameters are independent of each other, with no outlives relationship.
+//!
+//! Let's look at how they work:
+//!
+//! ## `'p`
+//!
+//! An `Offset` needs the assistance of a `Pile` to actually get the data it points too. But since
+//! it's just a 64-bit integer, there's no way to check at run-time if we're using the correct
+//! pile. Instead, we use the `'p` lifetime to ensure this *at compile time*.
+//!
+//! This is achieved by:
+//!
+//! 1) Making `Pile<'s, 'p>` and `Offset<'s, 'p>` *invariant* over `'p`.
+//! 2) Ensuring via the `Unique` API that exactly one pile can exist for a given `'p` lifetime.
+//!
+//! This means that the following won't even compile because `Pile<'s, 'static>` and `Pile<'s, 'p>`
+//! are incompatible types:
+//!
+//! ```compile_fail
+//! # use hoard::pile::{Pile, Offset};
+//! fn foo<'s, 'p>(pile: Pile<'s, 'p>, offset: Offset<'s, 'p>) {}
+//!
+//! fn bar<'s, 'p>(pile: Pile<'s, 'static>, offset: Offset<'s, 'p>) {
+//!     foo(pile, offset)
+//! }
+//! ```
+//! similarly `Offset<'s, 'static>` and `Offset<'s, 'p>` are incompatible:
+//!
+//! ```compile_fail
+//! # use hoard::pile::{Pile, Offset};
+//! # fn foo<'s, 'p>(pile: Pile<'s, 'p>, offset: Offset<'s, 'p>) {}
+//! fn bar<'s, 'p>(pile: Pile<'s, 'p>, offset: Offset<'s, 'static>) {
+//!     foo(pile, offset)
+//! }
+//! ```
+//!
+//! ## `'s`
+//!
+//! We haven't talked about the actual underlying byte slice. That's because `'p` is solely a
+//! compile-time check, with no other role. It's the `'s` parameter that ensures that the byte
+//! slice lives longer than the data we we load from it.
+//!
+//! Recall that `Get` works along the the lines of the following simplified API:
+//!
+//! ```
+//! # trait Load<P> {}
+//! trait Get<P> {
+//!     fn get<'a, T: Load<P>>(&self, ptr: &'a P) -> &'a T;
+//! }
+//! ```
+//!
+//! Note the lifetimes! It's the pointer's job to "own" that data, so `Offset<'s, 'p>` owns a
+//! phantom `&'s [u8]`.
+
 use core::any::Any;
 use core::cmp;
 use core::convert::{TryFrom, TryInto};
@@ -24,8 +83,11 @@ use crate::coerce::{TryCast, TryCastRef, TryCastMut};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Offset<'s, 'm> {
-    marker: PhantomData<(&'s (), Snapshot<'m>)>,
+pub struct Offset<'s, 'p> {
+    marker: PhantomData<(
+        fn(Pile<'s, 'p>) -> &'s (),
+        &'p [u8],
+    )>,
     raw: Le<NonZeroU64>,
 }
 
@@ -48,56 +110,22 @@ impl From<Offset<'_, '_>> for usize {
 
 #[derive(Debug)]
 pub struct OffsetError {
-    offset: usize,
-    size: usize,
+    pub(super) offset: usize,
+    pub(super) size: usize,
 }
 
-impl<'s,'m> Offset<'s,'m> {
+impl<'s,'p> Offset<'s,'p> {
     pub const MAX: usize = (1 << 62) - 1;
 
-    pub fn new(snap: &'s Snapshot<'m>, offset: usize, size: usize) -> Option<Self> {
-        snap.get(offset .. offset + size)
-            .map(|slice| unsafe { Self::new_unchecked(offset) })
-    }
-
-    pub unsafe fn new_unchecked(offset: usize) -> Self {
+    pub fn new(offset: usize) -> Option<Self> {
         let offset = offset as u64;
-        Self {
-            marker: PhantomData,
-            raw: NonZeroU64::new((offset << 1) | 1).unwrap().into(),
-        }
+        offset.checked_shl(1).map(|offset|
+            Self {
+                marker: PhantomData,
+                raw: NonZeroU64::new(offset | 1).unwrap().into(),
+            }
+        )
     }
-
-    fn get_slice_from_pile<'a>(&'a self, size: usize, pile: &Pile<'s,'m>) -> Result<&'a [u8], OffsetError> {
-        let snapshot: &Snapshot<'m> = unsafe { &*pile.snapshot.as_ptr() };
-
-        let start = self.get();
-        snapshot.get(start .. start + size).ok_or(OffsetError { offset: start, size })
-                .map(|slice| {
-                    // SAFETY: we can do this because we can only be created from a &'s [u8] slice.
-                    let slice: &'s [u8] = unsafe { mem::transmute(slice) };
-                    slice
-                })
-    }
-
-    pub(super) fn get_blob_from_pile<'a, T>(ptr: &'a FatPtr<T, Self>, pile: &Pile<'s,'m>)
-        -> Result<Blob<'a, T, Offset<'s,'m>>, OffsetError>
-    where T: ?Sized + Load<Offset<'s,'m>>
-    {
-        let size = T::dyn_blob_layout(ptr.metadata).size();
-        let slice = ptr.raw.get_slice_from_pile(size, pile).unwrap();
-
-        Ok(Blob::new(slice, ptr.metadata).unwrap())
-    }
-
-    pub(super) fn load_valid_blob_from_pile<'a, T>(ptr: &'a ValidPtr<T, Self>, pile: &Pile<'s,'m>)
-        -> Result<FullyValidBlob<'a, T, Offset<'s,'m>>, OffsetError>
-    where T: ?Sized + Load<Offset<'s,'m>>
-    {
-        Self::get_blob_from_pile(ptr, pile)
-            .map(|blob| unsafe { blob.assume_fully_valid() })
-    }
-
 
     pub fn to_static(&self) -> Offset<'static, 'static> {
         Offset {
@@ -234,9 +262,7 @@ impl Primitive for Offset<'_,'_> {
 
 impl Default for OffsetMut<'static, '_> {
     fn default() -> Self {
-        unsafe {
-            Offset::new_unchecked(0).into()
-        }
+        Offset::new(0).unwrap().into()
     }
 }
 
@@ -387,24 +413,6 @@ impl<'s,'m> OffsetMut<'s,'m> {
                 Ok(owned)
             }
         }
-    }
-
-    pub(super) fn get_blob_from_pile<'a, T>(ptr: &'a FatPtr<T, Offset<'s,'m>>, pile: &PileMut<'s,'m>)
-        -> Result<Blob<'a, T, OffsetMut<'s,'m>>, OffsetError>
-    where T: ?Sized + Load<OffsetMut<'s,'m>>
-    {
-        let size = T::dyn_blob_layout(ptr.metadata).size();
-        let slice = ptr.raw.get_slice_from_pile(size, pile).unwrap();
-
-        Ok(Blob::new(slice, ptr.metadata).unwrap())
-    }
-
-    pub(super) fn load_valid_blob_from_pile<'a, T>(ptr: &'a ValidPtr<T, Offset<'s,'m>>, pile: &PileMut<'s,'m>)
-        -> Result<FullyValidBlob<'a, T, OffsetMut<'s,'m>>, OffsetError>
-    where T: ?Sized + Load<OffsetMut<'s,'m>>
-    {
-        Self::get_blob_from_pile(ptr, pile)
-            .map(|blob| unsafe { blob.assume_fully_valid() })
     }
 }
 
