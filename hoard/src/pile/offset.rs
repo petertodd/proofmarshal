@@ -15,26 +15,26 @@
 //!
 //! This is achieved by:
 //!
-//! 1) Making `Pile<'s, 'p>` and `Offset<'s, 'p>` *invariant* over `'p`.
+//! 1) Making `Pile<'p, 'v>` and `Offset<'p, 'v>` *invariant* over `'p`.
 //! 2) Ensuring via the `Unique` API that exactly one pile can exist for a given `'p` lifetime.
 //!
-//! This means that the following won't even compile because `Pile<'s, 'static>` and `Pile<'s, 'p>`
+//! This means that the following won't even compile because `Pile<'s, 'static>` and `Pile<'p, 'v>`
 //! are incompatible types:
 //!
 //! ```compile_fail
 //! # use hoard::pile::{Pile, Offset};
-//! fn foo<'s, 'p>(pile: Pile<'s, 'p>, offset: Offset<'s, 'p>) {}
+//! fn foo<'p, 'v>(pile: Pile<'p, 'v>, offset: Offset<'p, 'v>) {}
 //!
-//! fn bar<'s, 'p>(pile: Pile<'s, 'static>, offset: Offset<'s, 'p>) {
+//! fn bar<'p, 'v>(pile: Pile<'s, 'static>, offset: Offset<'p, 'v>) {
 //!     foo(pile, offset)
 //! }
 //! ```
-//! similarly `Offset<'s, 'static>` and `Offset<'s, 'p>` are incompatible:
+//! similarly `Offset<'s, 'static>` and `Offset<'p, 'v>` are incompatible:
 //!
 //! ```compile_fail
 //! # use hoard::pile::{Pile, Offset};
-//! # fn foo<'s, 'p>(pile: Pile<'s, 'p>, offset: Offset<'s, 'p>) {}
-//! fn bar<'s, 'p>(pile: Pile<'s, 'p>, offset: Offset<'s, 'static>) {
+//! # fn foo<'p, 'v>(pile: Pile<'p, 'v>, offset: Offset<'p, 'v>) {}
+//! fn bar<'p, 'v>(pile: Pile<'p, 'v>, offset: Offset<'s, 'static>) {
 //!     foo(pile, offset)
 //! }
 //! ```
@@ -54,7 +54,7 @@
 //! }
 //! ```
 //!
-//! Note the lifetimes! It's the pointer's job to "own" that data, so `Offset<'s, 'p>` owns a
+//! Note the lifetimes! It's the pointer's job to "own" that data, so `Offset<'p, 'v>` owns a
 //! phantom `&'s [u8]`.
 
 use core::any::Any;
@@ -83,10 +83,10 @@ use crate::coerce::{TryCast, TryCastRef, TryCastMut};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Offset<'s, 'p> {
+pub struct Offset<'pile, 'version> {
     marker: PhantomData<(
-        fn(Pile<'s, 'p>) -> &'s (),
-        &'p [u8],
+        for<'a> fn(&'a Pile<'pile, 'version>) -> &'a (),
+        &'version (),
     )>,
     raw: Le<NonZeroU64>,
 }
@@ -114,7 +114,7 @@ pub struct OffsetError {
     pub(super) size: usize,
 }
 
-impl<'s,'p> Offset<'s,'p> {
+impl<'p,'v> Offset<'p,'v> {
     pub const MAX: usize = (1 << 62) - 1;
 
     pub fn new(offset: usize) -> Option<Self> {
@@ -141,14 +141,14 @@ impl<'s,'p> Offset<'s,'p> {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct OffsetMut<'s,'p>(Offset<'s,'p>);
+pub struct OffsetMut<'p,'v>(Offset<'p,'v>);
 unsafe impl Persist for OffsetMut<'_,'_> {}
 
-unsafe impl<'s,'p> TryCastRef<OffsetMut<'s,'p>> for Offset<'s,'p> {
+unsafe impl<'p,'v> TryCastRef<OffsetMut<'p,'v>> for Offset<'p,'v> {
     type Error = !;
 
     #[inline(always)]
-    fn try_cast_ref(&self) -> Result<&OffsetMut<'s,'p>, Self::Error> {
+    fn try_cast_ref(&self) -> Result<&OffsetMut<'p,'v>, Self::Error> {
         Ok(unsafe { mem::transmute(self) })
     }
 }
@@ -156,11 +156,11 @@ unsafe impl<'s,'p> TryCastRef<OffsetMut<'s,'p>> for Offset<'s,'p> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct TryCastOffsetMutError(());
 
-unsafe impl<'s,'p> TryCastRef<Offset<'s,'p>> for OffsetMut<'s,'p> {
+unsafe impl<'p,'v> TryCastRef<Offset<'p,'v>> for OffsetMut<'p,'v> {
     type Error = TryCastOffsetMutError;
 
     #[inline]
-    fn try_cast_ref(&self) -> Result<&Offset<'s,'p>, Self::Error> {
+    fn try_cast_ref(&self) -> Result<&Offset<'p,'v>, Self::Error> {
         match self.kind() {
             Kind::Offset(_) => Ok(&self.0),
             Kind::Ptr(_) => Err(TryCastOffsetMutError(())),
@@ -168,15 +168,15 @@ unsafe impl<'s,'p> TryCastRef<Offset<'s,'p>> for OffsetMut<'s,'p> {
     }
 }
 
-impl<'s, 'p> From<Offset<'s,'p>> for OffsetMut<'s,'p> {
-    fn from(offset: Offset<'s,'p>) -> Self {
+impl<'p, 'v> From<Offset<'p,'v>> for OffsetMut<'p,'v> {
+    fn from(offset: Offset<'p,'v>) -> Self {
         Self(offset)
     }
 }
 
-impl<'s,'p> Ptr for Offset<'s, 'p> {
+impl<'p,'v> Ptr for Offset<'p, 'v> {
     type Persist = Self;
-    type Zone = Pile<'s, 'p>;
+    type Zone = Pile<'p, 'v>;
     type Allocator = crate::never::NeverAllocator<Self>;
 
     fn allocator() -> Self::Allocator {
@@ -266,10 +266,10 @@ impl Default for OffsetMut<'static, '_> {
     }
 }
 
-impl<'s, 'p> Ptr for OffsetMut<'s, 'p> {
-    type Persist = Offset<'s, 'p>;
-    type Zone = PileMut<'s, 'p>;
-    type Allocator = PileMut<'s, 'p>;
+impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
+    type Persist = Offset<'p, 'v>;
+    type Zone = PileMut<'p, 'v>;
+    type Allocator = PileMut<'p, 'v>;
 
     fn allocator() -> Self::Allocator
         where Self: Default
@@ -340,8 +340,8 @@ impl<'s, 'p> Ptr for OffsetMut<'s, 'p> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Kind<'s,'p> {
-    Offset(Offset<'s,'p>),
+pub enum Kind<'p,'v> {
+    Offset(Offset<'p,'v>),
     Ptr(NonNull<u16>),
 }
 

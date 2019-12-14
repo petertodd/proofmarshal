@@ -145,22 +145,26 @@ impl<P: Ptr, T: ValidateChildren<P>> ValidateChildren<P> for Option<T> {
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::convert::TryFrom;
+    use crate::pile::{PileMut, Pile};
 
     #[test]
     fn encodings() {
+        let pile = PileMut::default();
+
         macro_rules! t {
             ($( $value:expr => $expected:expr; )+) => {{
                 $(
                     let expected = &$expected;
-                    assert_eq!(encode(&$value), expected);
-                    let round_trip = decode(expected).unwrap();
-                    assert_eq!($value, round_trip);
+                    assert_eq!(pile.save_to_vec(&$value), expected);
+
+                    Pile::new(expected, |pile| {
+                        let round_trip = pile.load_tip().unwrap();
+                        assert_eq!($value, *round_trip);
+                    });
                 )+
             }}
         }
@@ -178,4 +182,3 @@ mod tests {
         }
     }
 }
-*/

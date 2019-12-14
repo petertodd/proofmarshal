@@ -233,21 +233,22 @@ unsafe_impl_nonzero_persist_ints! {
     NonZeroI8, Le<NonZeroI16>, Le<NonZeroI32>, Le<NonZeroI64>, Le<NonZeroI128>,
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::marshal::encode;
+    use crate::pile::PileMut;
 
     #[test]
     fn encodings() {
+        let pile = PileMut::default();
+
         macro_rules! t {
             ($( $value:expr => $expected:expr, )+) => {
                 $({
                     let value = $value;
                     let expected = $expected;
-                    assert_eq!(encode(&value), &expected);
+                    assert_eq!(pile.save_to_vec(&value), &expected);
                 })+
             }
         }
@@ -259,4 +260,3 @@ mod tests {
         }
     }
 }
-*/
