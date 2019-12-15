@@ -91,6 +91,7 @@ pub struct Offset<'pile, 'version> {
     raw: Le<NonZeroU64>,
 }
 
+unsafe impl NonZero for Offset<'_,'_> {}
 unsafe impl Persist for Offset<'_,'_> {}
 
 impl fmt::Debug for Offset<'_,'_> {
@@ -145,6 +146,8 @@ impl<'p,'v> Offset<'p,'v> {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct OffsetMut<'p,'v>(Offset<'p,'v>);
+
+unsafe impl NonZero for OffsetMut<'_,'_> {}
 unsafe impl Persist for OffsetMut<'_,'_> {}
 
 unsafe impl<'p,'v> TryCastRef<OffsetMut<'p,'v>> for Offset<'p,'v> {

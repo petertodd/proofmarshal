@@ -20,6 +20,13 @@ pub struct OwnedPtr<T: ?Sized + Pointee, P: Ptr> {
     inner: ManuallyDrop<ValidPtr<T,P>>,
 }
 
+unsafe impl<T: ?Sized + Pointee, P: Ptr> NonZero for OwnedPtr<T,P>
+where P: NonZero {}
+
+/// Always implemented because pointers and metadata are always `Persist`.
+unsafe impl<T: ?Sized + Pointee, P: Ptr> Persist for OwnedPtr<T,P>
+{}
+
 unsafe impl<T: ?Sized + Pointee, P: Ptr, Q: Ptr> TryCastRef<OwnedPtr<T,Q>> for OwnedPtr<T,P>
 where P: TryCastRef<Q>
 {
@@ -210,6 +217,10 @@ where P: Ptr,
         unsafe {
             Self::new_unchecked(ValidPtr::new_unchecked(fatptr))
         }
+    }
+
+    fn load_blob<'a>(blob: FullyValidBlob<'a, Self, P>, _: &impl Loader<P>) -> Ref<'a, Self> {
+        <Self as Decode<P>>::deref_blob(blob).into()
     }
 }
 

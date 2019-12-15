@@ -13,30 +13,10 @@ use self::blob::*;
 mod primitive;
 pub use self::primitive::*;
 
+/// Marker for types that can be mem-mapped.
 pub unsafe trait Persist {}
 
 unsafe impl Persist for ! {}
-
-pub fn encode<T: ?Sized + Save<!>>(value: &T) -> Vec<u8> {
-    /*
-    match value.save_poll(&mut value.init_save_state(), vec![]) {
-        Ok((r, ())) => r,
-        Err(never) => never,
-    }
-    */
-    todo!()
-}
-
-pub fn decode<T: Decode<!>>(blob: &[u8]) -> Result<T, T::Error> {
-    /*
-    let blob = Blob::new(blob, T::make_sized_metadata()).expect("wrong size");
-
-    let mut validator = T::validate_blob(blob)?;
-    let fully_valid_blob = validator.poll(&mut ()).unwrap();
-    Ok(T::decode_blob(fully_valid_blob, &()))
-    */
-    todo!()
-}
 
 /// A type whose values can be saved behind pointers in a zone.
 pub unsafe trait Save<P: Ptr> : Pointee + Owned {
@@ -75,7 +55,10 @@ pub trait Load<P: Ptr> : Save<P> {
     fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
         where Self: Persist,
     {
-        todo!()
+        let actual_size = blob.len();
+        let r = unsafe { blob.assume_valid() };
+        assert_eq!(mem::size_of_val(&r), actual_size);
+        r
     }
 }
 

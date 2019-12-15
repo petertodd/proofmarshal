@@ -35,6 +35,8 @@ unsafe impl<T: ?Sized> NonZero for &'_ T {}
 unsafe impl<T: ?Sized> NonZero for &'_ mut T {}
 unsafe impl<T: ?Sized> NonZero for NonNull<T> {}
 
+assert_eq_size!(Option<!>, !);
+unsafe impl NonZero for ! {}
 
 macro_rules! array_impls {
     ($($N:literal)+) => {

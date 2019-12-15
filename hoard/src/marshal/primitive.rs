@@ -33,7 +33,7 @@ pub trait Primitive : Sized {
     fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
         where Self: Persist
     {
-        todo!()
+        unsafe { blob.assume_valid() }
     }
 }
 
@@ -71,7 +71,7 @@ impl Primitive for () {
     }
 
     fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
-        unsafe { blob.assume_valid_ref() }
+        Self::deref_blob(blob).into()
     }
 
     fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
@@ -105,7 +105,7 @@ impl Primitive for bool {
     }
 
     fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
-        unsafe { blob.assume_valid_ref() }
+        Self::deref_blob(blob).into()
     }
 
     fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
@@ -171,10 +171,12 @@ macro_rules! unsafe_impl_persist_ints {
                     <Self as Primitive>::deref_blob(blob).clone()
                 }
 
+                fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
+                    Self::deref_blob(blob).into()
+                }
+
                 fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self {
-                    unsafe {
-                        &*(blob.as_ptr() as *const Self)
-                    }
+                    unsafe { blob.assume_valid() }
                 }
             }
 
@@ -216,10 +218,12 @@ macro_rules! unsafe_impl_nonzero_persist_ints {
                     <Self as Primitive>::deref_blob(blob).clone()
                 }
 
+                fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
+                    Self::deref_blob(blob).into()
+                }
+
                 fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self {
-                    unsafe {
-                        &*(blob.as_ptr() as *const Self)
-                    }
+                    unsafe { blob.assume_valid() }
                 }
             }
 

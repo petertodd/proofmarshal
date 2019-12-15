@@ -18,9 +18,12 @@ pub struct FatPtr<T: ?Sized + Pointee, P> {
     pub metadata: T::Metadata,
 }
 
+unsafe impl<T: ?Sized + Pointee, P> NonZero for FatPtr<T,P>
+where P: NonZero {}
+
+/// Implemented for all `P: Persist` because metadata is always `Persist`.
 unsafe impl<T: ?Sized + Pointee, P> Persist for FatPtr<T,P>
 where P: Persist,
-      T::Metadata: Persist,
 {}
 
 impl<T, P> From<P> for FatPtr<T,P> {

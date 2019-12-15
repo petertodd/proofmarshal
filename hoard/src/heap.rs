@@ -58,6 +58,11 @@ impl Alloc for Heap {
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct HeapPtr(NonNull<()>);
 
+unsafe impl NonZero for HeapPtr {}
+
+/// Safe because `HeapPtr` doesn't implement marshalling.
+unsafe impl Persist for HeapPtr {}
+
 impl From<!> for HeapPtr {
     fn from(never: !) -> Self {
         match never {}

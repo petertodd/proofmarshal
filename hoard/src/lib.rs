@@ -39,6 +39,7 @@ use core::fmt;
 use core::mem::ManuallyDrop;
 use core::task::Poll;
 
+use nonzero::NonZero;
 use pointee::Pointee;
 use owned::{Owned, Take};
 pub use owned::Ref;
@@ -49,7 +50,7 @@ pub mod pointee;
 use self::pointee::*;
 
 pub mod marshal;
-use self::marshal::{Encode, Decode, Load, Primitive};
+use self::marshal::{Encode, Decode, Load, Primitive, Persist};
 
 mod fatptr;
 pub use self::fatptr::FatPtr;
@@ -71,7 +72,7 @@ pub mod pile;
 pub mod linkedlist;
 
 /// Generic pointer.
-pub trait Ptr : Sized + fmt::Debug
+pub trait Ptr : Sized + NonZero + Persist + fmt::Debug
 {
     /// The persistent version of this pointer, if applicable.
     type Persist : Ptr + Primitive + Into<Self> + Copy;

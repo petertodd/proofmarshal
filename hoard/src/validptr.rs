@@ -17,9 +17,12 @@ use crate::coerce::{TryCast, TryCastRef, TryCastMut};
 #[repr(transparent)]
 pub struct ValidPtr<T: ?Sized + Pointee, P>(FatPtr<T,P>);
 
+unsafe impl<T: ?Sized + Pointee, P> NonZero for ValidPtr<T,P>
+where P: NonZero {}
+
+/// Implemented for all `P: Persist` because metadata is always `Persist`.
 unsafe impl<T: ?Sized + Pointee, P> Persist for ValidPtr<T,P>
 where P: Persist,
-      T::Metadata: Persist,
 {}
 
 unsafe impl<T: ?Sized + Pointee, P, Q> TryCastRef<ValidPtr<T,Q>> for ValidPtr<T,P>

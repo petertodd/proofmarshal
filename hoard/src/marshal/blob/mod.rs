@@ -337,6 +337,7 @@ impl<'a, T: ?Sized + Pointee, P> FullyValidBlob<'a,T,P> {
 
 impl<'a, T: ?Sized + Pointee + Owned, P> FullyValidBlob<'a,T,P> {
     pub unsafe fn assume_valid(self) -> &'a T {
+        assert_eq!(T::align(self.metadata()), 1);
         &*T::make_fat_ptr((self.0).0.ptr as *const (), self.metadata())
     }
 
