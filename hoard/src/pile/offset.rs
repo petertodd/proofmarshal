@@ -333,9 +333,8 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
     #[inline]
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
         Self::drop_take_unsized(owned, |value|
-            unsafe {
-                core::ptr::drop_in_place(value)
-            }
+            // Safe because drop_take_unsized() takes a FnOnce, so this closure can only run once.
+            unsafe { ManuallyDrop::drop(value) }
         )
     }
 
