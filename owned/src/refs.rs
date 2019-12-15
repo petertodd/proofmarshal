@@ -14,6 +14,18 @@ pub enum Ref<'a, B: ?Sized + Owned> {
     Owned(<B as Owned>::Owned),
 }
 
+impl<'a, B: ?Sized + Owned> From<&'a B> for Ref<'a, B> {
+    fn from(r: &'a B) -> Self {
+        Ref::Borrowed(r)
+    }
+}
+
+impl<'a, B: ?Sized + Owned> From<&'a mut B> for Ref<'a, B> {
+    fn from(r: &'a mut B) -> Self {
+        Ref::Borrowed(r)
+    }
+}
+
 impl<B: ?Sized + Owned> fmt::Debug for Ref<'_, B>
 where B: fmt::Debug
 {
