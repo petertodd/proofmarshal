@@ -25,7 +25,7 @@ use super::*;
 
 use crate::marshal::{*, blob::*};
 
-use crate::coerce::{TryCastRef, CastRef};
+use crate::coerce::{TryCast, TryCastRef, CastRef};
 
 pub mod offset;
 use self::offset::Kind;
@@ -374,19 +374,57 @@ impl<'p,'v> Get<OffsetMut<'p,'v>> for PileMut<'p,'v> {
 }
 
 impl<'p,'v> GetMut<OffsetMut<'p,'v>> for PileMut<'p,'v> {
+    #[inline]
     fn get_mut<'a, T>(&self, ptr: &'a mut ValidPtr<T, OffsetMut<'p,'v>>) -> &'a mut T
         where T: ?Sized + Load<OffsetMut<'p,'v>>
     {
-        let metadata = ptr.metadata;
-
         match ptr.raw.kind() {
-            Kind::Offset(_) => {
-                todo!()
-            },
-            Kind::Ptr(ptr) => {
+            Kind::Ptr(nonnull) => {
                 unsafe {
-                    &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata)
+                    &mut *T::make_fat_ptr_mut(nonnull.cast().as_ptr(), ptr.metadata)
                 }
+            },
+            Kind::Offset(_) => {
+                // Slow path, so put the actual implementation in its own function.
+                #[inline(never)]
+                fn make_mut<'a, 'p, 'v, T>(
+                    pile: &PileMut<'p,'v>,
+                    ptr: &'a mut ValidPtr<T, OffsetMut<'p,'v>>
+                ) -> &'a mut T
+                where T: ?Sized + Load<OffsetMut<'p,'v>>
+                {
+                    // We create a copy of ptr instead of casting the reference because we need to
+                    // modify it later, which the borrow checker wouldn't allow.
+                    let offset: Offset = ptr.raw.try_cast().unwrap();
+                    let ptr2 = FatPtr { raw: offset, metadata: ptr.metadata };
+                    let ptr2 = unsafe { ValidPtr::new_unchecked(ptr2) };
+
+                    // Get an owned copy of the value.
+                    let blob = pile.load_blob(&ptr2);
+                    let owned: T::Owned = T::decode_blob(blob, pile);
+
+                    let new_ptr = pile.clone().alloc(owned).into_inner();
+
+                    unsafe {
+                        // Note how our ptr argument is a ValidPtr rather than OwnedPtr: if someone
+                        // created a ValidPtr from scratch, the following would create a memory
+                        // leak when the ValidPtr was dropped.
+                        //
+                        // TODO: maybe change the API of get_mut()?
+                        *ptr.raw_mut() = new_ptr.raw;
+                    }
+
+                    match ptr.raw.kind() {
+                        Kind::Ptr(nonnull) => {
+                            unsafe {
+                                &mut *T::make_fat_ptr_mut(nonnull.cast().as_ptr(), ptr.metadata)
+                            }
+                        },
+                        Kind::Offset(_) => unreachable!("alloc should have returned a newly allocated ptr"),
+                    }
+                }
+
+                make_mut(self, ptr)
             },
         }
     }

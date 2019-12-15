@@ -152,6 +152,15 @@ unsafe impl<'p,'v> TryCastRef<OffsetMut<'p,'v>> for Offset<'p,'v> {
 
     #[inline(always)]
     fn try_cast_ref(&self) -> Result<&OffsetMut<'p,'v>, Self::Error> {
+        // Safe because OffsetMut is a #[repr(transparent)] Offset
+        Ok(unsafe { mem::transmute(self) })
+    }
+}
+
+unsafe impl<'p,'v> TryCast<OffsetMut<'p,'v>> for Offset<'p,'v> {
+    #[inline(always)]
+    fn try_cast(self) -> Result<OffsetMut<'p,'v>, Self::Error> {
+        // Safe because OffsetMut is a #[repr(transparent)] Offset
         Ok(unsafe { mem::transmute(self) })
     }
 }
@@ -168,6 +177,13 @@ unsafe impl<'p,'v> TryCastRef<Offset<'p,'v>> for OffsetMut<'p,'v> {
             Kind::Offset(_) => Ok(&self.0),
             Kind::Ptr(_) => Err(TryCastOffsetMutError(())),
         }
+    }
+}
+
+unsafe impl<'p,'v> TryCast<Offset<'p,'v>> for OffsetMut<'p,'v> {
+    #[inline]
+    fn try_cast(self) -> Result<Offset<'p,'v>, Self::Error> {
+        self.try_cast_ref().map(|r| *r)
     }
 }
 

@@ -16,7 +16,18 @@ pub fn test_mut_get<'a,'p,'v>(pile: &PileMut<'p,'v>, ptr: &'a OwnedPtr<(Option<u
 pub fn test_get_mut<'a,'p,'v>(pile: &PileMut<'p,'v>, ptr: &'a mut OwnedPtr<(Option<u8>, bool, bool), OffsetMut<'p,'v>>)
 -> &'a (Option<u8>, bool, bool)
 {
-    pile.get_mut(ptr)
+    let mut r = pile.get_mut(ptr);
+    r.1 = !r.1;
+    r
+}
+
+pub fn test_take<'a,'p,'v>(pile: &PileMut<'p,'v>, ptr: OwnedPtr<(Option<u8>, bool, bool), OffsetMut<'p,'v>>)
+-> (Option<u8>, bool, bool)
+{
+    pile.take(ptr)
+}
+
+pub fn test_drop<'p,'v>(_ptr: OwnedPtr<(OwnedPtr<Option<u8>, OffsetMut<'p, 'v>>, bool, bool), OffsetMut<'p,'v>>) {
 }
 
 pub fn test_alloc<'p,'v>(mut alloc: &mut PileMut<'p,'v>) -> OwnedPtr<Option<u8>, OffsetMut<'p, 'v>> {
