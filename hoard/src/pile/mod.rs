@@ -49,6 +49,7 @@ impl Pile<'_, '_> {
     /// Pile::new([1,2,3,4], |pile| {
     /// })
     /// ```
+    #[inline]
     pub fn new<R>(slice: impl AsRef<[u8]>, f: impl FnOnce(Pile) -> R) -> R {
         let slice = slice.as_ref();
         Unique::new(&slice, |slice| {
@@ -58,6 +59,7 @@ impl Pile<'_, '_> {
 }
 
 impl<'p> From<Unique<'p, &&[u8]>> for Pile<'p, 'p> {
+    #[inline]
     fn from(slice: Unique<'p, &&[u8]>) -> Pile<'p, 'p> {
         Self {
             marker: PhantomData,
@@ -85,6 +87,7 @@ impl<'p> Pile<'p, 'static> {
     /// // ...with the exception of zero-sized types!
     /// empty.load_tip::<()>().unwrap();
     /// ```
+    #[inline]
     pub fn empty() -> Self {
         static EMPTY_SLICE: &[u8] = &[];
 
@@ -147,6 +150,7 @@ impl<'p, 'v> Pile<'p, 'v> {
         }
     }
 
+    #[inline]
     fn get_slice<'a>(&self, offset: &'a Offset<'p, 'v>, size: usize) -> Result<&'a [u8], offset::OffsetError> {
         let start = offset.get();
 
@@ -224,12 +228,14 @@ impl<'p,'v> Loader<OffsetMut<'p,'v>> for PileMut<'p,'v> {
 }
 
 impl AsRef<[u8]> for Pile<'_, '_> {
+    #[inline]
     fn as_ref(&self) -> &[u8] {
         &self.slice[..]
     }
 }
 
 impl AsRef<[u8]> for PileMut<'_, '_> {
+    #[inline]
     fn as_ref(&self) -> &[u8] {
         &self.0.slice[..]
     }
@@ -276,6 +282,7 @@ impl<'p, 'v> PileMut<'p, 'v> {
 }
 
 impl<'p,'v> From<Pile<'p,'v>> for PileMut<'p,'v> {
+    #[inline]
     fn from(pile: Pile<'p,'v>) -> Self {
         Self(pile)
     }
@@ -284,6 +291,7 @@ impl<'p,'v> From<Pile<'p,'v>> for PileMut<'p,'v> {
 impl<'p,'v> ops::Deref for PileMut<'p,'v> {
     type Target = Pile<'p,'v>;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -291,6 +299,7 @@ impl<'p,'v> ops::Deref for PileMut<'p,'v> {
 
 impl Default for PileMut<'_, 'static> {
     /// Returns an empty pile.
+    #[inline]
     fn default() -> Self {
         PileMut::from(Pile::empty())
     }
@@ -306,6 +315,7 @@ impl<'p,'v> Alloc for PileMut<'p,'v> {
         })
     }
 
+    #[inline]
     fn zone(&self) -> PileMut<'p,'v> {
         Self(self.0.clone())
     }

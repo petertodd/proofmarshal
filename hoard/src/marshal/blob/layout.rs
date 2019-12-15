@@ -19,6 +19,7 @@ pub struct BlobLayout {
 
 impl BlobLayout {
     /// Creates a new `Encoding` with a given length.
+    #[inline(always)]
     pub const fn new(size: usize) -> Self {
         Self {
             size,
@@ -31,6 +32,7 @@ impl BlobLayout {
     /// Creates a non-zero layout.
     ///
     /// The entire length will be considered a non-zero niche.
+    #[inline(always)]
     pub const fn new_nonzero(size: usize) -> Self {
         Self {
             size,
@@ -40,6 +42,7 @@ impl BlobLayout {
         }
     }
 
+    #[inline(always)]
     pub(crate) const fn never() -> Self {
         Self {
             size: 0,
@@ -50,6 +53,7 @@ impl BlobLayout {
     }
 
     /// Creates a layout with a non-zero niche.
+    #[inline(always)]
     pub const fn with_niche(size: usize, niche: Range<usize>) -> Self {
         // HACK: since we don't have const panic yet...
         let _ = niche.end - niche.start - 1;
@@ -63,10 +67,12 @@ impl BlobLayout {
     }
 
     /// Gets the size in bytes.
+    #[inline(always)]
     pub const fn size(self) -> usize {
         self.size
     }
 
+    #[inline(always)]
     pub const fn inhabited(self) -> bool {
         self.inhabited
     }
@@ -75,6 +81,7 @@ impl BlobLayout {
     ///
     /// If either `self` or `next` have a non-zero niche, the niche with the shortest length will
     /// be used; if the lengths are the same the first niche is used.
+    #[inline(always)]
     pub const fn extend(self, next: BlobLayout) -> Self {
         let size = self.size + next.size;
 
@@ -94,11 +101,13 @@ impl BlobLayout {
         }
     }
 
+    #[inline(always)]
     pub const fn has_niche(self) -> bool {
         self.inhabited & (self.niche_start != self.niche_end)
     }
 
     /// Gets the non-zero niche, if present.
+    #[inline(always)]
     pub fn niche(self) -> Option<Range<usize>> {
         if self.has_niche() {
             Some(self.niche_start .. self.niche_end)

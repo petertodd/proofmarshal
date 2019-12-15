@@ -117,6 +117,7 @@ pub struct OffsetError {
 impl<'p,'v> Offset<'p,'v> {
     pub const MAX: usize = (1 << 62) - 1;
 
+    #[inline]
     pub fn new(offset: usize) -> Option<Self> {
         let offset = offset as u64;
         offset.checked_shl(1).map(|offset|
@@ -127,6 +128,7 @@ impl<'p,'v> Offset<'p,'v> {
         )
     }
 
+    #[inline]
     pub fn to_static(&self) -> Offset<'static, 'static> {
         Offset {
             marker: PhantomData,
@@ -134,6 +136,7 @@ impl<'p,'v> Offset<'p,'v> {
         }
     }
 
+    #[inline]
     pub fn get(&self) -> usize {
         (self.raw.get().get() >> 1) as usize
     }
@@ -169,6 +172,7 @@ unsafe impl<'p,'v> TryCastRef<Offset<'p,'v>> for OffsetMut<'p,'v> {
 }
 
 impl<'p, 'v> From<Offset<'p,'v>> for OffsetMut<'p,'v> {
+    #[inline]
     fn from(offset: Offset<'p,'v>) -> Self {
         Self(offset)
     }
@@ -179,10 +183,12 @@ impl<'p,'v> Ptr for Offset<'p, 'v> {
     type Zone = Pile<'p, 'v>;
     type Allocator = crate::never::NeverAllocator<Self>;
 
+    #[inline]
     fn allocator() -> Self::Allocator {
         panic!()
     }
 
+    #[inline]
     fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
         unsafe {
             OwnedPtr::new_unchecked(
@@ -196,13 +202,16 @@ impl<'p,'v> Ptr for Offset<'p, 'v> {
         }
     }
 
+    #[inline]
     fn dealloc_owned<T: ?Sized + Pointee>(own: OwnedPtr<T, Self>) {
         let _ = own.into_inner();
     }
 
+    #[inline]
     fn drop_take_unsized<T: ?Sized + Pointee>(_: OwnedPtr<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
     }
 
+    #[inline]
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self> {
         Err(ptr.raw)
     }
@@ -224,11 +233,13 @@ impl Primitive for Offset<'_,'_> {
     type Error = DecodeOffsetError;
     const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
 
+    #[inline]
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
         dst.write_bytes(&self.raw.get().get().to_le_bytes())?
            .finish()
     }
 
+    #[inline]
     fn validate_blob<'a, P: Ptr>(blob: Blob<'a, Self, P>) -> Result<FullyValidBlob<'a, Self, P>, Self::Error> {
         let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
 
@@ -244,14 +255,17 @@ impl Primitive for Offset<'_,'_> {
         }
     }
 
+    #[inline]
     fn decode_blob<'a, P: Ptr>(blob: FullyValidBlob<'a, Self, P>) -> Self {
         <Self as Primitive>::deref_blob(blob).clone()
     }
 
+    #[inline]
     fn load_blob<'a, P: Ptr>(blob: FullyValidBlob<'a, Self, P>) -> Ref<'a, Self> {
         Ref::Borrowed(<Self as Primitive>::deref_blob(blob))
     }
 
+    #[inline]
     fn deref_blob<'a, P: Ptr>(blob: FullyValidBlob<'a, Self, P>) -> &'a Self {
         match <Self as Primitive>::validate_blob(Blob::from(blob)) {
             Ok(_) => unsafe { blob.assume_valid() },
@@ -271,6 +285,7 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
     type Zone = PileMut<'p, 'v>;
     type Allocator = PileMut<'p, 'v>;
 
+    #[inline]
     fn allocator() -> Self::Allocator
         where Self: Default
     {
@@ -281,6 +296,7 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
         unsafe { mem::transmute(pile) }
     }
 
+    #[inline]
     fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
         let raw = match Self::try_get_dirty(ptr) {
             Ok(r) => {
@@ -298,6 +314,7 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
         }
     }
 
+    #[inline]
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
         Self::drop_take_unsized(owned, |value|
             unsafe {
@@ -306,6 +323,7 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
         )
     }
 
+    #[inline]
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
         let FatPtr { raw, metadata } = owned.into_inner().into_inner();
 
@@ -327,6 +345,7 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
         }
     }
 
+    #[inline]
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist> {
         match ptr.raw.kind() {
             Kind::Offset(offset) => Err(offset),
@@ -345,6 +364,7 @@ pub enum Kind<'p,'v> {
     Ptr(NonNull<u16>),
 }
 
+#[inline]
 fn fix_layout(layout: Layout) -> Layout {
     unsafe {
         Layout::from_size_align_unchecked(
@@ -355,15 +375,17 @@ fn fix_layout(layout: Layout) -> Layout {
 }
 
 impl<'s,'m> OffsetMut<'s,'m> {
+    #[inline]
     pub unsafe fn from_ptr(ptr: NonNull<u16>) -> Self {
         let raw = ptr.as_ptr() as usize as u64;
 
-        assert_eq!(raw & 1, 0,
+        debug_assert_eq!(raw & 1, 0,
                    "{:p} unaligned", ptr);
 
         mem::transmute(ptr.as_ptr() as usize as u64)
     }
 
+    #[inline]
     pub fn kind(&self) -> Kind<'s,'m> {
         if self.0.raw.get().get() & 1 == 1 {
             Kind::Offset(self.0)
@@ -375,6 +397,7 @@ impl<'s,'m> OffsetMut<'s,'m> {
         }
     }
 
+    #[inline]
     pub(super) unsafe fn alloc<T: ?Sized + Pointee>(src: &ManuallyDrop<T>) -> Self {
         let layout = fix_layout(Layout::for_value(src));
 
@@ -393,7 +416,7 @@ impl<'s,'m> OffsetMut<'s,'m> {
         Self::from_ptr(ptr)
     }
 
-
+    #[inline]
     pub(super) unsafe fn try_take<T: ?Sized + Pointee + Owned>(self, metadata: T::Metadata) -> Result<T::Owned, Offset<'s,'m>> {
         let this = ManuallyDrop::new(self);
 

@@ -40,7 +40,8 @@ use core::mem::ManuallyDrop;
 use core::task::Poll;
 
 use pointee::Pointee;
-use owned::{Owned, Ref, Take};
+use owned::{Owned, Take};
+pub use owned::Ref;
 
 pub mod coerce;
 
