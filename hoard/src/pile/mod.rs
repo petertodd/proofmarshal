@@ -133,23 +133,8 @@ impl<'p, 'v> Pile<'p, 'v> {
 
     /// Creates a new version of an existing pile.
     ///
-    /// The prefix of the new slice must match the existing pile. In debug builds a mismatch will
-    /// panic:
-    ///
-    /// ```should_panic
-    /// # use singlelife::unique;
-    /// # use hoard::pile::Pile;
-    /// let slice1 = &&[1,2,3][..];
-    /// let slice2 = &&[4,5,6][..];
-    ///
-    /// unique!(|slice1| {
-    ///     let pile1 = Pile::from(slice1);
-    ///
-    ///     unique!(|slice2| {
-    ///         pile1.update(slice2); // panics
-    ///     })
-    /// })
-    /// ```
+    /// The prefix of the new slice must match the existing pile; in debug builds a mismatch will
+    /// panic.
     pub fn update<'v2>(&self, new_slice: Unique<'v2, &'p &[u8]>) -> Pile<'p, 'v2>
         where 'v: 'v2
     {
@@ -438,6 +423,29 @@ mod test {
     use super::*;
 
     use singlelife::unique;
+
+    #[test]
+    #[should_panic(expected = "new_slice.starts_with(self.slice)")]
+    fn pile_update_panics_on_mismatch() {
+        Pile::new([1,2,3], |pile|
+            Unique::new(&&[2,2,3][..], |slice2| {
+                pile.update(slice2);
+
+                // make the tests pass in release builds
+                assert!(cfg!(debug_assertions), "new_slice.starts_with(self.slice)");
+            })
+        )
+    }
+
+    #[test]
+    #[should_panic(expected = "self.slice.len() <= new_slice.len()")]
+    fn pile_update_panics_on_shorter() {
+        Pile::new([1], |pile|
+            Unique::new(&&[][..], |slice2| {
+                pile.update(slice2);
+            })
+        )
+    }
 
 /*
     #[derive(Debug, Default)]
