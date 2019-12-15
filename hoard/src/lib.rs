@@ -121,8 +121,10 @@ pub trait Get<P: Ptr> {
 
     fn take<T: ?Sized + Load<P>>(&self, ptr: OwnedPtr<T, P>) -> T::Owned;
 
-    fn get_ref<'a, T: ?Sized + Load<P>>(&self, ptr: Ref<'a, OwnedPtr<T, P>>) -> Ref<'a, T> {
-        match ptr {
+    fn get_ref<'a, T: ?Sized + Load<P>>(&self, ptr: impl Into<Ref<'a, OwnedPtr<T, P>>>) -> Ref<'a, T>
+        where P: 'a
+    {
+        match ptr.into() {
             Ref::Borrowed(ptr) => self.get(ptr),
             Ref::Owned(ptr) => Ref::Owned(self.take(ptr)),
         }
