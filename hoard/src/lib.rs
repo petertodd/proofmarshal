@@ -68,7 +68,7 @@ pub mod pile;
 
 //pub mod bag;
 
-//pub mod linkedlist;
+pub mod linkedlist;
 
 /// Generic pointer.
 pub trait Ptr : Sized + fmt::Debug

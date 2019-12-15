@@ -24,18 +24,13 @@ impl<T, P: Ptr> Cell<T, P> {
 
     pub fn next<'a>(self: Ref<'a, Self>) -> Option<Ref<'a, OwnedPtr<Self, P>>> {
         match self {
-            Ref::Borrowed(this) => {
-                todo!()
-            },
-            Ref::Owned(this) => {
-                todo!()
-            },
+            Ref::Borrowed(this) => this.next.as_ref().map(Ref::Borrowed),
+            Ref::Owned(this) => this.next.map(Ref::Owned),
         }
     }
 
-    pub fn get<'a, Z>(self: Ref<'a, Self>, mut n: usize, zone: &Z) -> Option<Ref<'a, T>>
-        where Z: Get<Ptr=P> + 'a,
-              T: Decode<Z>,
+    pub fn get<'a>(self: Ref<'a, Self>, mut n: usize, zone: &impl Get<P>) -> Option<Ref<'a, T>>
+        where T: Decode<P>,
     {
         let mut this = self;
         loop {
@@ -61,6 +56,25 @@ impl<T, P: Ptr> Cell<T, P> {
     }
 }
 
+impl<T, P: Ptr> Primitive for Cell<T,P> {
+    type Error = !;
+
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(0);
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        todo!()
+    }
+
+    fn validate_blob<'a, Q: Ptr>(blob: Blob<'a, Self, Q>) -> Result<FullyValidBlob<'a, Self, Q>, Self::Error> {
+        todo!()
+    }
+
+    fn decode_blob<'a, Q: Ptr>(blob: FullyValidBlob<'a, Self, Q>) -> Self {
+        todo!()
+    }
+}
+
+/*
 #[derive(Debug)]
 pub struct CellEncodeState<T, P> {
     idx: usize,
@@ -160,30 +174,7 @@ where Z: Zone<Ptr=P>,
         encode_cell_blob(&self.value, &state.value_state, &state.next, dst)
     }
 }
-
-pub fn test_save_to_vec<'s,'m>(cell: &Cell<OwnedPtr<(u8, u16, u32), pile::OffsetMut<'s,'m>>, pile::OffsetMut<'s,'m>>) -> Vec<u8> {
-    pile::save_to_vec(cell)
-}
-
-pub fn test_save_to_vec2<'s,'m>(cell: &Cell<OwnedPtr<u16, pile::OffsetMut<'s,'m>>, pile::OffsetMut<'s,'m>>) -> Vec<u8> {
-    pile::save_to_vec(cell)
-}
-
-impl<T, P: Ptr, Z> Decode<Z> for Cell<T, P>
-where Z: Zone<Ptr=P>,
-      T: Decode<Z>
-{
-    type Error = !;
-    type ValidateChildren = ();
-
-    fn validate_blob<'p>(blob: Blob<'p, Self, Z>) -> Result<BlobValidator<'p, Self, Z>, Self::Error> {
-        todo!()
-    }
-
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, Z>, loader: &impl Loader<Z>) -> Self {
-        todo!()
-    }
-}
+*/
 
 #[cfg(test)]
 mod test {
@@ -191,40 +182,19 @@ mod test {
 
     use crate::pile::*;
 
+    use crate::heap::{Heap, HeapPtr};
+
     #[test]
-    fn test_encode() {
-        assert_eq!(<Cell<u8, OffsetMut> as Encode<PileMut>>::BLOB_LAYOUT.size(), 9);
-        let mut alloc = PileMut::allocator();
+    fn test() {
+        let mut cell: Cell<u8, HeapPtr> = Cell::new(0u8, None);
 
-        let mut cell = Cell::<_, OffsetMut>::new(alloc.alloc(11u8), None);
-
-        assert_eq!(save_to_vec(&cell),
-            &[11, // value
-              1,0,0,0,0,0,0,0, // cell pointer
-              0,0,0,0,0,0,0,0, // next
-            ]);
-
-        cell.push_front(alloc.alloc(12), &mut alloc);
-
-        assert_eq!(save_to_vec(&cell),
-            &[11, // 0th value
-              1,0,0,0,0,0,0,0, // cell pointer
-              0,0,0,0,0,0,0,0, // next
-
-              12, // 1st value
-              35,0,0,0,0,0,0,0, // cell pointer
-              3,0,0,0,0,0,0,0   // next
-            ][..]);
-
-        let n = 1000;
-        let mut cell = Cell::<_, OffsetMut>::new(alloc.alloc(42u8), None);
-        for _ in 1 .. n {
-            cell.push_front(alloc.alloc(42), &mut alloc);
+        for i in 1 .. 100 {
+            cell.push_front(i, Heap);
         }
 
-        assert_eq!(
-            save_to_vec(&cell).len(),
-            (n * 1) + (n * 16)
-        );
+        for i in 0 .. 100 {
+            let cell = Ref::Borrowed(&cell);
+            assert_eq!(*cell.get(i, &Heap).unwrap(), 99 - (i as u8));
+        }
     }
 }
