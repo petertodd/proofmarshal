@@ -280,11 +280,6 @@ impl Primitive for Offset<'_,'_> {
     }
 
     #[inline]
-    fn load_blob<'a, P: Ptr>(blob: FullyValidBlob<'a, Self, P>) -> Ref<'a, Self> {
-        Ref::Borrowed(<Self as Primitive>::deref_blob(blob))
-    }
-
-    #[inline]
     fn deref_blob<'a, P: Ptr>(blob: FullyValidBlob<'a, Self, P>) -> &'a Self {
         match <Self as Primitive>::validate_blob(Blob::from(blob)) {
             Ok(_) => unsafe { blob.assume_valid() },

@@ -191,6 +191,7 @@ where P: Ptr,
     type ValidateChildren = OwnedPtrValidator<T, P>;
 
     fn validate_blob<'a>(blob: Blob<'a, Self, P>) -> Result<BlobValidator<'a, Self, P>, Self::Error> {
+        /*
         let mut fields = blob.validate_struct();
 
         let raw = fields.field_blob::<P::Persist>();
@@ -203,24 +204,7 @@ where P: Ptr,
 
         let fatptr = FatPtr::<T,_> { raw, metadata };
         Ok(blob.assume_valid(OwnedPtrValidator::FatPtr(fatptr)))
-    }
-
-    fn decode_blob<'a>(blob: FullyValidBlob<'a, Self, P>, loader: &impl Loader<P>) -> Self {
-        let mut fields = blob.decode_struct(loader);
-
-        let fatptr = FatPtr {
-            raw: fields.field::<P::Persist>().into(),
-            metadata: fields.field(),
-        };
-        fields.assert_done();
-
-        unsafe {
-            Self::new_unchecked(ValidPtr::new_unchecked(fatptr))
-        }
-    }
-
-    fn load_blob<'a>(blob: FullyValidBlob<'a, Self, P>, _: &impl Loader<P>) -> Ref<'a, Self> {
-        <Self as Decode<P>>::deref_blob(blob).into()
+        */ todo!()
     }
 }
 

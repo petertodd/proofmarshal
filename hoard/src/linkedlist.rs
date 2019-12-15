@@ -5,16 +5,20 @@ use core::ptr;
 use crate::{*, marshal::{*, blob::*}};
 
 #[derive(Debug)]
+#[repr(C)]
 pub struct Cell<T, P: Ptr> {
     value: T,
     next: Option<OwnedPtr<Self, P>>,
 }
+
+unsafe impl<T: Persist, P: Ptr> Persist for Cell<T,P> {}
 
 impl<T, P: Ptr> Cell<T, P> {
     pub fn new(value: T, next: Option<OwnedPtr<Self, P>>) -> Self {
         Self { value, next }
     }
 
+    /*
     pub fn value<'a>(self: Ref<'a, Self>) -> Ref<'a, T> {
         match self {
             Ref::Borrowed(this) => Ref::Borrowed(&this.value),
@@ -44,15 +48,18 @@ impl<T, P: Ptr> Cell<T, P> {
             }
         }
     }
+    */
 
-    pub fn push_front(&mut self, value: T, mut alloc: impl Alloc<Ptr=P>) {
-        let old_value = mem::replace(&mut self.value, value);
+    pub fn push_front(self: RefMut<Self, P>, value: T)
+        where P: Default
+    {
+        let old_value = mem::replace(&mut self.this.value, value);
         let next = Self {
             value: old_value,
-            next: self.next.take(),
+            next: self.this.next.take(),
         };
 
-        self.next = Some(alloc.alloc(next));
+        self.this.next = Some(P::allocator().alloc(next));
     }
 }
 
@@ -183,18 +190,19 @@ mod test {
     use crate::pile::*;
 
     use crate::heap::{Heap, HeapPtr};
+    use crate::refs::Own;
 
     #[test]
     fn test() {
         let mut cell: Cell<u8, HeapPtr> = Cell::new(0u8, None);
+        let mut cell = Own::<_, HeapPtr>::from(cell);
 
         for i in 1 .. 100 {
-            cell.push_front(i, Heap);
+            cell.as_mut().push_front(i);
         }
 
         for i in 0 .. 100 {
-            let cell = Ref::Borrowed(&cell);
-            assert_eq!(*cell.get(i, &Heap).unwrap(), 99 - (i as u8));
+            //assert_eq!(*cell.get(i, &Heap).unwrap(), 99 - (i as u8));
         }
     }
 }

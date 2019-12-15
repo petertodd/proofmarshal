@@ -114,12 +114,12 @@ impl<'p, 'v> Pile<'p, 'v> {
     ///
     /// ```
     /// # use hoard::pile::Pile;
-    /// Pile::new([0x12,0x34,0x45,0x78], |pile| {
-    ///     let tip = pile.load_tip::<u32>().unwrap();
-    ///     assert_eq!(*tip, 0x78453412);
+    /// Pile::new([12], |pile| {
+    ///     let tip = pile.load_tip::<u8>().unwrap();
+    ///     assert_eq!(**tip, 12);
     /// })
     /// ```
-    pub fn load_tip<'a, T>(&'a self) -> Result<Ref<'a, T>, LoadTipError<T::Error>>
+    pub fn load_tip<'a, T>(&'a self) -> Result<Ref<'a, T, Offset<'p,'v>>, LoadTipError<T::Error>>
         where T: Decode<Offset<'p,'v>>
     {
         let start = self.slice.len().saturating_sub(T::BLOB_LAYOUT.size());
@@ -129,7 +129,7 @@ impl<'p, 'v> Pile<'p, 'v> {
         let mut validator = T::validate_blob(blob).map_err(LoadTipError::Tip)?;
 
         match validator.poll(&mut self.clone()) {
-            Ok(blob) => Ok(T::load_blob(blob, self)),
+            Ok(blob) => todo!(), //Ok(T::load_blob(blob, self)),
             Err(e) => todo!(),
         }
     }
@@ -322,45 +322,55 @@ impl<'p,'v> Alloc for PileMut<'p,'v> {
 }
 
 impl<'p,'v> Get<Offset<'p, 'v>> for Pile<'p, 'v> {
-    fn get<'a, T>(&self, ptr: &'a ValidPtr<T, Offset<'p,'v>>) -> Ref<'a, T>
+    fn get<'a, T>(&self, ptr: &'a ValidPtr<T, Offset<'p,'v>>) -> Ref<'a, T, Offset<'p,'v>>
         where T: ?Sized + Load<Offset<'p,'v>>
     {
+        /*
         let blob = self.load_blob(ptr);
         T::load_blob(blob, self)
+        */
+        todo!()
     }
 
-    fn take<T>(&self, ptr: OwnedPtr<T, Offset<'p,'v>>) -> T::Owned
+    fn take<T>(&self, ptr: OwnedPtr<T, Offset<'p,'v>>) -> Own<T::Owned, Offset<'p,'v>>
         where T: ?Sized + Load<Offset<'p,'v>>
     {
         let blob = self.load_blob(&ptr);
-        T::decode_blob(blob, self)
+        Own {
+            this: T::decode_blob(blob, self),
+            zone: *self,
+        }
     }
 }
 
 impl<'p,'v> Get<OffsetMut<'p,'v>> for PileMut<'p,'v> {
-    fn get<'a, T>(&self, own: &'a ValidPtr<T, OffsetMut<'p,'v>>) -> Ref<'a, T>
+    fn get<'a, T>(&self, own: &'a ValidPtr<T, OffsetMut<'p,'v>>) -> Ref<'a, T, OffsetMut<'p,'v>>
         where T: ?Sized + Load<OffsetMut<'p,'v>>
     {
         match own.raw.kind() {
             Kind::Offset(_) => {
+                /*
                 let ptr: &'a ValidPtr<T, Offset<'p,'v>> = own.try_cast_ref().unwrap();
                 let blob = self.load_blob(ptr);
                 T::load_blob(blob, self)
+                */
+                todo!()
             },
             Kind::Ptr(ptr) => {
-                let r: &'a T = unsafe {
+                let this: &'a T = unsafe {
                     &*T::make_fat_ptr(ptr.cast().as_ptr(), own.metadata)
                 };
-                Ref::Borrowed(r)
+                Ref { this, zone: *self }
             },
         }
     }
 
-    fn take<T>(&self, ptr: OwnedPtr<T, OffsetMut<'p,'v>>) -> T::Owned
+    fn take<T>(&self, ptr: OwnedPtr<T, OffsetMut<'p,'v>>) -> Own<T::Owned, OffsetMut<'p,'v>>
         where T: ?Sized + Load<OffsetMut<'p,'v>>
     {
         let ptr = ptr.into_inner();
-        if let Ok(valid_offset_ptr) = ptr.try_cast_ref() {
+
+        let r = if let Ok(valid_offset_ptr) = ptr.try_cast_ref() {
                 let blob = self.load_blob(valid_offset_ptr);
                 T::decode_blob(blob, self)
         } else {
@@ -369,19 +379,22 @@ impl<'p,'v> Get<OffsetMut<'p,'v>> for PileMut<'p,'v> {
                 Ok(owned) => owned,
                 Err(_offset) => unreachable!(),
             }
-        }
+        };
+
+        Own { this: r, zone: *self }
     }
 }
 
 impl<'p,'v> GetMut<OffsetMut<'p,'v>> for PileMut<'p,'v> {
     #[inline]
-    fn get_mut<'a, T>(&self, ptr: &'a mut ValidPtr<T, OffsetMut<'p,'v>>) -> &'a mut T
+    fn get_mut<'a, T>(&self, ptr: &'a mut ValidPtr<T, OffsetMut<'p,'v>>) -> RefMut<'a, T, OffsetMut<'p,'v>>
         where T: ?Sized + Load<OffsetMut<'p,'v>>
     {
         match ptr.raw.kind() {
             Kind::Ptr(nonnull) => {
-                unsafe {
-                    &mut *T::make_fat_ptr_mut(nonnull.cast().as_ptr(), ptr.metadata)
+                RefMut {
+                    this: unsafe { &mut *T::make_fat_ptr_mut(nonnull.cast().as_ptr(), ptr.metadata) },
+                    zone: *self,
                 }
             },
             Kind::Offset(_) => {
@@ -424,7 +437,10 @@ impl<'p,'v> GetMut<OffsetMut<'p,'v>> for PileMut<'p,'v> {
                     }
                 }
 
-                make_mut(self, ptr)
+                RefMut {
+                    zone: *self,
+                    this: make_mut(self, ptr),
+                }
             },
         }
     }
@@ -635,6 +651,7 @@ mod test {
     */
     }
 
+/*
     #[test]
     fn pilemut_getmut() {
         let mut zone = PileMut::default();
@@ -642,12 +659,12 @@ mod test {
 
         let r = zone.get_mut(&mut owned);
 
-        assert_eq!(*r, (1,2,3));
-        r.0 = 10;
-        assert_eq!(*r, (10,2,3));
+        assert_eq!(***r, (1,2,3));
+        r.this.0 = 10;
+        assert_eq!(***r, (10,2,3));
 
         let r = zone.get_mut(&mut owned);
-        assert_eq!(*r, (10,2,3));
+        assert_eq!(***r, (10,2,3));
     }
 
     #[test]
@@ -657,4 +674,5 @@ mod test {
         let v2 = v1.clone();
         assert_ne!(v1.raw, v2.raw);
     }
+*/
 }

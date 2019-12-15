@@ -46,12 +46,6 @@ pub trait Load<P: Ptr> : Save<P> {
     type ValidateChildren : ValidateChildren<P>;
     fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error>;
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Self::Owned;
-
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Ref<'p, Self> {
-        Ref::Owned(Self::decode_blob(blob, loader))
-    }
-
     fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
         where Self: Persist,
     {
@@ -94,12 +88,6 @@ pub trait Decode<P: Ptr> : Encode<P> {
     type ValidateChildren : ValidateChildren<P>;
     fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error>;
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Self;
-
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Ref<'p, Self> {
-        Ref::Owned(Self::decode_blob(blob, loader))
-    }
-
     fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
         where Self: Persist
     {
@@ -137,14 +125,6 @@ impl<P: Ptr, T: Primitive> Decode<P> for T {
         Ok(blob.assume_valid(()))
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl Loader<P>) -> Self {
-        T::decode_blob(blob)
-    }
-
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, _: &impl Loader<P>) -> Ref<'p, Self> {
-        Self::load_blob(blob)
-    }
-
     fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
         where Self: Persist,
     {
@@ -180,14 +160,6 @@ impl<P: Ptr, T: Decode<P>> Load<P> for T {
     type ValidateChildren = T::ValidateChildren;
     fn validate_blob<'p>(blob: Blob<'p, Self, P>) -> Result<BlobValidator<'p, Self, P>, Self::Error> {
         T::validate_blob(blob)
-    }
-
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Self::Owned {
-        T::decode_blob(blob, loader)
-    }
-
-    fn load_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Ref<'p, Self> {
-        T::load_blob(blob, loader)
     }
 
     fn deref_blob<'p>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self

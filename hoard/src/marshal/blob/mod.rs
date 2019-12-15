@@ -340,10 +340,6 @@ impl<'a, T: ?Sized + Pointee + Owned, P> FullyValidBlob<'a,T,P> {
         assert_eq!(T::align(self.metadata()), 1);
         &*T::make_fat_ptr((self.0).0.ptr as *const (), self.metadata())
     }
-
-    pub unsafe fn assume_valid_ref(self) -> Ref<'a, T> {
-        Ref::Borrowed(self.assume_valid())
-    }
 }
 
 impl<'a, T: ?Sized + Pointee, P> Clone for FullyValidBlob<'a, T, P> {
@@ -352,56 +348,6 @@ impl<'a, T: ?Sized + Pointee, P> Clone for FullyValidBlob<'a, T, P> {
     }
 }
 impl<'a, T: ?Sized + Pointee, P> Copy for FullyValidBlob<'a, T, P> {}
-
-impl<'a, T: ?Sized + Load<P>, P: Ptr> FullyValidBlob<'a, T, P> {
-    pub fn decode_struct<L>(self, loader: L) -> FieldDecoder<'a,T,P,L> {
-        FieldDecoder {
-             cursor: BlobCursor {
-                 blob: (self.0).0,
-                 offset: 0,
-             },
-            loader,
-        }
-    }
-
-    pub fn decode_enum<L>(self, loader: L) -> (u8, FieldDecoder<'a,T,P,L>) {
-        (self[0],
-         FieldDecoder {
-             cursor: BlobCursor {
-                 blob: (self.0).0,
-                 offset: 1,
-             },
-            loader,
-         })
-    }
-}
-
-pub struct FieldDecoder<'a, T: ?Sized + Pointee, P, L> {
-    cursor: BlobCursor<'a, T, P>,
-    loader: L,
-}
-
-impl<'a, T: ?Sized + Load<P>, P: Ptr, L> FieldDecoder<'a, T, P, L>
-where L: Loader<P>,
-{
-    pub fn field_blob<F: Decode<P>>(&mut self) -> FullyValidBlob<'a, F, P> {
-        let blob = self.cursor.field_blob::<F>();
-
-        unsafe { blob.assume_fully_valid() }
-    }
-
-    pub fn field<F: 'a + Decode<P>>(&mut self) -> F {
-        let blob = self.field_blob::<F>();
-
-        F::decode_blob(blob, &self.loader)
-          .take_sized()
-    }
-
-    pub fn assert_done(self) {
-        assert_eq!(self.cursor.offset, self.cursor.blob.len(),
-                   "not fully decoded");
-    }
-}
 
 #[cfg(test)]
 mod test {

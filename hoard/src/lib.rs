@@ -42,7 +42,6 @@ use core::task::Poll;
 use nonzero::NonZero;
 use pointee::Pointee;
 use owned::{Owned, Take};
-pub use owned::Ref;
 
 pub mod coerce;
 
@@ -51,6 +50,9 @@ use self::pointee::*;
 
 pub mod marshal;
 use self::marshal::{Encode, Decode, Load, Primitive, Persist};
+
+pub mod refs;
+use self::refs::{Ref, RefMut, Own};
 
 mod fatptr;
 pub use self::fatptr::FatPtr;
@@ -63,13 +65,13 @@ pub use self::ownedptr::OwnedPtr;
 
 pub mod never;
 pub mod heap;
-pub mod pile;
+//pub mod pile;
 
 //pub mod hoard;
 
 //pub mod bag;
 
-pub mod linkedlist;
+//pub mod linkedlist;
 
 /// Generic pointer.
 pub trait Ptr : Sized + NonZero + Persist + fmt::Debug
@@ -77,7 +79,7 @@ pub trait Ptr : Sized + NonZero + Persist + fmt::Debug
     /// The persistent version of this pointer, if applicable.
     type Persist : Ptr + Primitive + Into<Self> + Copy;
 
-    type Zone : Get<Self> + Copy + Eq + Ord + core::hash::Hash + fmt::Debug;
+    type Zone : Zone<Self> + Copy + Eq + Ord + core::hash::Hash + fmt::Debug;
     type Allocator : Alloc<Ptr=Self> + Eq + Ord + core::hash::Hash + fmt::Debug;
 
     fn allocator() -> Self::Allocator where Self: Default;
@@ -114,14 +116,15 @@ pub trait Ptr : Sized + NonZero + Persist + fmt::Debug
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist>;
 }
 
-pub trait PtrMut : Ptr<Zone : GetMut<Self>> {
+pub trait PtrMut : Ptr<Zone : ZoneMut<Self>> {
 }
 
-pub trait Get<P: Ptr> {
-    fn get<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T, P>) -> Ref<'a, T>;
+pub trait Zone<P: Ptr> {
+    fn get<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T, P>) -> Ref<'a, T, P>;
 
-    fn take<T: ?Sized + Load<P>>(&self, ptr: OwnedPtr<T, P>) -> T::Owned;
+    fn take<T: ?Sized + Load<P>>(&self, ptr: OwnedPtr<T, P>) -> Own<T::Owned, P>;
 
+    /*
     fn get_ref<'a, T: ?Sized + Load<P>>(&self, ptr: impl Into<Ref<'a, OwnedPtr<T, P>>>) -> Ref<'a, T>
         where P: 'a
     {
@@ -130,10 +133,11 @@ pub trait Get<P: Ptr> {
             Ref::Owned(ptr) => Ref::Owned(self.take(ptr)),
         }
     }
+    */
 }
 
-pub trait GetMut<P: Ptr> : Get<P> {
-    fn get_mut<'a, T: ?Sized + Load<P>>(&self, ptr: &'a mut ValidPtr<T, P>) -> &'a mut T;
+pub trait ZoneMut<P: Ptr> : Zone<P> {
+    fn get_mut<'a, T: ?Sized + Load<P>>(&self, ptr: &'a mut ValidPtr<T, P>) -> RefMut<'a, T, P>;
 }
 
 pub trait Alloc : Sized {

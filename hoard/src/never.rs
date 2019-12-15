@@ -50,18 +50,18 @@ impl Ptr for ! {
 
 impl PtrMut for ! {}
 
-impl<P: Ptr> Get<P> for ! {
-    fn get<'a, T: ?Sized + Pointee + Owned>(&self, _: &'a ValidPtr<T, P>) -> Ref<'a, T> {
+impl<P: Ptr> Zone<P> for ! {
+    fn get<'a, T: ?Sized + Pointee>(&self, _: &'a ValidPtr<T, P>) -> Ref<'a, T, P> {
         match *self {}
     }
 
-    fn take<T: ?Sized + Pointee + Owned>(&self, _: OwnedPtr<T, P>) -> T::Owned {
+    fn take<T: ?Sized + Pointee + Owned>(&self, _: OwnedPtr<T, P>) -> Own<T::Owned, P> {
         match *self {}
     }
 }
 
-impl<P: Ptr> GetMut<P> for ! {
-    fn get_mut<'a, T: ?Sized + Pointee>(&self, _: &'a mut ValidPtr<T, P>) -> &'a mut T {
+impl<P: Ptr> ZoneMut<P> for ! {
+    fn get_mut<'a, T: ?Sized + Pointee>(&self, _: &'a mut ValidPtr<T, P>) -> RefMut<'a, T, P> {
         match *self {}
     }
 }

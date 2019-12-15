@@ -11,25 +11,26 @@ use super::*;
 #[derive(Default,Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Heap;
 
-impl Get<HeapPtr> for Heap {
-    fn get<'a, T: ?Sized + Pointee + Owned>(&self, ptr: &'a ValidPtr<T, HeapPtr>) -> Ref<'a, T> {
+impl Zone<HeapPtr> for Heap {
+    fn get<'a, T: ?Sized + Pointee>(&self, ptr: &'a ValidPtr<T, HeapPtr>) -> Ref<'a, T, HeapPtr> {
         let r: &'a T = HeapPtr::try_get_dirty(ptr).unwrap();
-        Ref::Borrowed(r)
+        r.into()
     }
 
-    fn take<T: ?Sized + Pointee + Owned>(&self, owned: OwnedPtr<T, HeapPtr>) -> T::Owned {
+    fn take<T: ?Sized + Pointee + Owned>(&self, owned: OwnedPtr<T, HeapPtr>) -> Own<T::Owned, HeapPtr> {
         HeapPtr::take_impl(owned, |value|
             unsafe {
                 T::to_owned(value)
             }
-        )
+        ).into()
     }
 }
 
-impl GetMut<HeapPtr> for Heap {
-    fn get_mut<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut ValidPtr<T, HeapPtr>) -> &'a mut T {
-        unsafe {
-            &mut *T::make_fat_ptr_mut(ptr.raw.0.as_ptr(), ptr.metadata)
+impl ZoneMut<HeapPtr> for Heap {
+    fn get_mut<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut ValidPtr<T, HeapPtr>) -> RefMut<'a, T, HeapPtr> {
+        RefMut {
+            this: unsafe { &mut *T::make_fat_ptr_mut(ptr.raw.0.as_ptr(), ptr.metadata) },
+            zone: Heap,
         }
     }
 }
@@ -62,6 +63,12 @@ unsafe impl NonZero for HeapPtr {}
 
 /// Safe because `HeapPtr` doesn't implement marshalling.
 unsafe impl Persist for HeapPtr {}
+
+impl Default for HeapPtr {
+    fn default() -> Self {
+        Self(NonNull::dangling())
+    }
+}
 
 impl From<!> for HeapPtr {
     fn from(never: !) -> Self {

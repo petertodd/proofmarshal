@@ -24,11 +24,6 @@ pub trait Primitive : Sized {
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error>;
 
     fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error>;
-    fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self;
-
-    fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
-        Ref::Owned(Self::decode_blob(blob))
-    }
 
     fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self
         where Self: Persist
@@ -48,14 +43,6 @@ impl Primitive for ! {
     fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
         panic!()
     }
-
-    fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
-        panic!()
-    }
-
-    fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
-        panic!()
-    }
 }
 
 impl Primitive for () {
@@ -68,18 +55,6 @@ impl Primitive for () {
 
     fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
         unsafe { Ok(blob.assume_fully_valid()) }
-    }
-
-    fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
-        Self::deref_blob(blob).into()
-    }
-
-    fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
-        Self::deref_blob(blob).clone()
-    }
-
-    fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self {
-        unsafe { blob.assume_valid() }
     }
 }
 
@@ -103,22 +78,11 @@ impl Primitive for bool {
             x => Err(BoolError(x)),
         }
     }
-
-    fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
-        Self::deref_blob(blob).into()
-    }
-
-    fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
-        Self::deref_blob(blob).clone()
-    }
-
-    fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self {
-        unsafe { blob.assume_valid() }
-    }
 }
 
 unsafe impl Persist for bool {}
 
+/*
 macro_rules! impl_aligned_ints {
     ($( $t:ty, )+) => {
         $(
@@ -149,6 +113,7 @@ impl_aligned_ints! {
     u16, u32, u64, u128,
     i16, i32, i64, i128,
 }
+*/
 
 macro_rules! unsafe_impl_persist_ints {
     ($( $t:ty, )+) => {
@@ -165,18 +130,6 @@ macro_rules! unsafe_impl_persist_ints {
 
                 fn validate_blob<'p, P: Ptr>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
                     unsafe { Ok(blob.assume_fully_valid()) }
-                }
-
-                fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
-                    <Self as Primitive>::deref_blob(blob).clone()
-                }
-
-                fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
-                    Self::deref_blob(blob).into()
-                }
-
-                fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self {
-                    unsafe { blob.assume_valid() }
                 }
             }
 
@@ -213,18 +166,6 @@ macro_rules! unsafe_impl_nonzero_persist_ints {
                         unsafe { Ok(blob.assume_fully_valid()) }
                     }
                 }
-
-                fn decode_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Self {
-                    <Self as Primitive>::deref_blob(blob).clone()
-                }
-
-                fn load_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
-                    Self::deref_blob(blob).into()
-                }
-
-                fn deref_blob<'p, P: Ptr>(blob: FullyValidBlob<'p, Self, P>) -> &'p Self {
-                    unsafe { blob.assume_valid() }
-                }
             }
 
             unsafe impl Persist for $t {}
@@ -237,6 +178,7 @@ unsafe_impl_nonzero_persist_ints! {
     NonZeroI8, Le<NonZeroI16>, Le<NonZeroI32>, Le<NonZeroI64>, Le<NonZeroI128>,
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,3 +206,4 @@ mod tests {
         }
     }
 }
+*/

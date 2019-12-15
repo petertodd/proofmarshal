@@ -3,8 +3,8 @@ use super::*;
 mod option;
 pub use self::option::*;
 
-mod tuples;
-pub use self::tuples::*;
+//mod tuples;
+//pub use self::tuples::*;
 
 /*
 mod slice;

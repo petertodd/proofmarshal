@@ -104,25 +104,6 @@ impl<P: Ptr, T: Decode<P>> Decode<P> for Option<T> {
         }
     }
 
-    fn decode_blob<'p>(blob: FullyValidBlob<'p, Self, P>, loader: &impl Loader<P>) -> Self {
-        if let Some(niche) = T::BLOB_LAYOUT.niche() {
-            let niche = &blob[niche];
-
-            if zeroed(niche) {
-                None
-            } else {
-                let mut decoder = blob.decode_struct(loader);
-                Some(decoder.field::<T>())
-            }
-        } else {
-            match blob.decode_enum(loader) {
-                (0, _) => None,
-                (1, mut decoder) => Some(decoder.field::<T>()),
-                (x, _) => unreachable!("invalid {} discriminant {}", type_name::<Self>(), x)
-            }
-        }
-    }
-
     fn deref_blob<'a>(blob: FullyValidBlob<'a, Self, P>) -> &'a Self
         where Self: Persist
     {
@@ -145,6 +126,7 @@ impl<P: Ptr, T: ValidateChildren<P>> ValidateChildren<P> for Option<T> {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,3 +164,4 @@ mod tests {
         }
     }
 }
+*/
