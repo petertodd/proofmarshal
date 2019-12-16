@@ -74,10 +74,15 @@ pub mod heap;
 //pub mod linkedlist;
 
 /// Generic pointer.
-pub trait Ptr : Sized + NonZero + Persist + fmt::Debug
-{
+pub trait Ptr : Sized + NonZero + Persist + fmt::Debug {
     /// The persistent version of this pointer, if applicable.
-    type Persist : Ptr + Primitive + Into<Self> + Copy;
+    ///
+    /// # Safety
+    ///
+    /// If this is an inhabited type, it must have the same layout as `Self`. Ideally this would be
+    /// expressed as a `Cast<Self>` bound on `Persist`. But this is awkward to implement as
+    /// `Persist` has a `Copy` bound that `Self` does not.
+    type Persist : Ptr + Primitive + coerce::Cast<Self> + Into<Self> + Copy;
 
     type Zone : Zone<Self> + Copy + Eq + Ord + core::hash::Hash + fmt::Debug;
     type Allocator : Alloc<Ptr=Self> + Eq + Ord + core::hash::Hash + fmt::Debug;

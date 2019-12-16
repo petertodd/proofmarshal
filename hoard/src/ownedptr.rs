@@ -191,20 +191,9 @@ where P: Ptr,
     type ValidateChildren = OwnedPtrValidator<T, P>;
 
     fn validate_blob<'a>(blob: Blob<'a, Self, P>) -> Result<BlobValidator<'a, Self, P>, Self::Error> {
-        /*
         let mut fields = blob.validate_struct();
-
-        let raw = fields.field_blob::<P::Persist>();
-        let raw = <P::Persist as Primitive>::validate_blob(raw).map_err(LoadOwnedPtrError::Ptr)?;
-        let raw = <P::Persist as Primitive>::decode_blob(raw);
-
-        let metadata = fields.field_blob::<T::Metadata>();
-        let metadata = <T::Metadata as Primitive>::validate_blob(metadata).map_err(LoadOwnedPtrError::Metadata)?;
-        let metadata = <T::Metadata as Primitive>::decode_blob(metadata);
-
-        let fatptr = FatPtr::<T,_> { raw, metadata };
-        Ok(blob.assume_valid(OwnedPtrValidator::FatPtr(fatptr)))
-        */ todo!()
+        let inner = fields.primitive_field::<FatPtr<T, P::Persist>>().unwrap();
+        Ok(fields.done(OwnedPtrValidator::FatPtr(*inner)))
     }
 }
 

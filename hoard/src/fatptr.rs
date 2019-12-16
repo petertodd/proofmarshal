@@ -4,7 +4,7 @@ use core::fmt;
 use core::cmp;
 use core::hash;
 
-use crate::marshal::Persist;
+use crate::marshal::{Persist, Primitive, blob::*};
 
 use crate::coerce::{
     CastRef,
@@ -25,6 +25,33 @@ where P: NonZero {}
 unsafe impl<T: ?Sized + Pointee, P> Persist for FatPtr<T,P>
 where P: Persist,
 {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ValidateFatPtrError<T, P> {
+    Ptr(P),
+    Metadata(T),
+}
+
+impl<T: ?Sized + Pointee, P> Primitive for FatPtr<T,P>
+where P: Primitive
+{
+    type Error = ValidateFatPtrError<<T::Metadata as Primitive>::Error, P::Error>;
+    const BLOB_LAYOUT: BlobLayout = P::BLOB_LAYOUT.extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        dst.write_primitive(&self.raw)?
+           .write_primitive(&self.metadata)?
+           .finish()
+    }
+
+    fn validate_blob<'a, Q: Ptr>(blob: Blob<'a, Self, Q>) -> Result<FullyValidBlob<'a, Self, Q>, Self::Error> {
+        let mut fields = blob.validate_primitive_struct();
+        fields.field::<P>().map_err(ValidateFatPtrError::Ptr)?;
+        fields.field::<T::Metadata>().map_err(ValidateFatPtrError::Metadata)?;
+
+        unsafe { Ok(fields.assume_done()) }
+    }
+}
 
 impl<T, P> From<P> for FatPtr<T,P> {
     fn from(raw: P) -> Self {

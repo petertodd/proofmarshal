@@ -1,12 +1,16 @@
 //! Volatile, in-memory, zone allocation.
 
 use core::ptr::{NonNull, copy_nonoverlapping, drop_in_place};
-use core::mem::ManuallyDrop;
+use core::mem::{self, ManuallyDrop};
 use core::fmt;
 
 use std::alloc::Layout;
 
 use super::*;
+
+use crate::marshal::{Persist, Primitive, blob::{WriteBlob, Blob, FullyValidBlob, BlobLayout}};
+use crate::never::NeverAllocator;
+use crate::coerce::{TryCastRef, TryCast};
 
 #[derive(Default,Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Heap;
@@ -77,7 +81,7 @@ impl From<!> for HeapPtr {
 }
 
 impl Ptr for HeapPtr {
-    type Persist = !;
+    type Persist = NeverPersist;
     type Zone = Heap;
     type Allocator = Heap;
 
@@ -153,6 +157,94 @@ impl HeapPtr {
 impl fmt::Pointer for HeapPtr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&self.0, f)
+    }
+}
+
+#[allow(unreachable_code)]
+#[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
+pub struct NeverPersist {
+    ptr: NonNull<()>,
+    never: !,
+}
+
+unsafe impl NonZero for NeverPersist {}
+unsafe impl Persist for NeverPersist {}
+
+impl From<NeverPersist> for HeapPtr {
+    fn from(never: NeverPersist) -> HeapPtr {
+        match never.never {}
+    }
+}
+
+impl Primitive for NeverPersist {
+    type Error = !;
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        match self.never {}
+    }
+
+    fn validate_blob<'a, Q: Ptr>(_: Blob<'a, Self, Q>) -> Result<FullyValidBlob<'a, Self, Q>, !> {
+        panic!()
+    }
+
+    fn deref_blob<'a, Q: Ptr>(_: FullyValidBlob<'a, Self, Q>) -> &'a Self {
+        panic!()
+    }
+}
+
+impl Ptr for NeverPersist {
+    type Persist = NeverPersist;
+    type Zone = !;
+    type Allocator = NeverAllocator<Self>;
+
+    #[inline]
+    fn allocator() -> Self::Allocator {
+        unreachable!()
+    }
+
+    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
+        match ptr.raw.never {}
+    }
+
+    fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
+        match owned.raw.never {}
+    }
+
+    fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
+        match owned.raw.never {}
+    }
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist> {
+        match ptr.raw.never {}
+    }
+}
+
+unsafe impl TryCastRef<HeapPtr> for NeverPersist {
+    type Error = !;
+
+    fn try_cast_ref(&self) -> Result<&HeapPtr, !> {
+        match self.never {}
+    }
+}
+
+unsafe impl TryCast<HeapPtr> for NeverPersist {
+    fn try_cast(self) -> Result<HeapPtr, !> {
+        match self.never {}
+    }
+}
+
+unsafe impl TryCastRef<NeverPersist> for NeverPersist {
+    type Error = !;
+
+    fn try_cast_ref(&self) -> Result<&Self, !> {
+        match self.never {}
+    }
+}
+
+unsafe impl TryCast<NeverPersist> for NeverPersist {
+    fn try_cast(self) -> Result<Self, !> {
+        match self.never {}
     }
 }
 

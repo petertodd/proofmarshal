@@ -123,6 +123,15 @@ impl<'a, T: ?Sized + Load<P>, P: Ptr> Blob<'a, T, P> {
         )
     }
 
+    pub fn validate_primitive_struct(self) -> ValidatePrimitiveFields<'a, T, P> {
+        ValidatePrimitiveFields(
+            BlobCursor {
+                blob: self,
+                offset: 0,
+            }
+        )
+    }
+
     pub fn validate_enum(self) -> (u8, ValidateVariant<'a, T, P>) {
         (self[0],
          ValidateVariant(
@@ -213,9 +222,10 @@ impl<'a, T: ?Sized + Load<P>, P: Ptr> BlobCursor<'a, T, P> {
         Ok(validator.state)
     }
 
-    fn primitive_field<F: 'a + Primitive>(&mut self) -> Result<FullyValidBlob<'a, F, P>, F::Error> {
+    fn primitive_field<F: 'a + Primitive>(&mut self) -> Result<&'a F, F::Error> {
         let blob = self.field_blob::<F>();
-        F::validate_blob(blob)
+        let blob = F::validate_blob(blob)?;
+        Ok(unsafe { blob.assume_valid() })
     }
 }
 
@@ -228,6 +238,10 @@ impl<'a, T: ?Sized + Load<P>, P: Ptr> ValidateFields<'a, T, P> {
 
     pub fn field<F: 'a + Decode<P>>(&mut self) -> Result<F::ValidateChildren, F::Error> {
         self.0.validate_field::<F>()
+    }
+
+    pub fn primitive_field<F: 'a + Primitive>(&mut self) -> Result<&'a F, F::Error> {
+        self.0.primitive_field::<F>()
     }
 
     pub fn done(self, state: T::ValidateChildren) -> BlobValidator<'a, T, P> {
@@ -255,6 +269,25 @@ impl<'a, T: ?Sized + Load<P>, P: Ptr> ValidateVariant<'a, T, P> {
         } else {
             Err(PaddingError(()))
         }
+    }
+}
+
+pub struct ValidatePrimitiveFields<'a, T: ?Sized + Pointee, P>(BlobCursor<'a,T,P>);
+
+impl<'a, T: ?Sized + Primitive, P: Ptr> ValidatePrimitiveFields<'a, T, P> {
+    pub fn field_blob<F: Primitive>(&mut self) -> Blob<'a, F, P> {
+        self.0.field_blob::<F>()
+    }
+
+    pub fn field<F: 'a + Primitive>(&mut self) -> Result<&'a F, F::Error> {
+        self.0.primitive_field::<F>()
+    }
+
+    pub unsafe fn assume_done(self) -> FullyValidBlob<'a, T, P> {
+        assert_eq!(self.0.offset, self.0.blob.len(),
+                   "not fully validated");
+
+        self.0.blob.assume_fully_valid()
     }
 }
 
