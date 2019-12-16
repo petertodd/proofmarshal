@@ -1,5 +1,7 @@
 use super::*;
 
+use owned::Owned;
+
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 

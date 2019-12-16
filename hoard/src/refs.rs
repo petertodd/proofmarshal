@@ -1,8 +1,10 @@
+//! Zone references.
+
 use core::ops;
 
 use owned::Owned;
 
-use super::{Ptr, Alloc};
+use crate::zone::{Ptr, Alloc};
 
 #[derive(Debug)]
 #[repr(C)]

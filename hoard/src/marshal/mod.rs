@@ -1,9 +1,14 @@
-use super::*;
+//! Data marshalling.
 
 use core::any::Any;
 use core::convert::TryFrom;
+use core::fmt;
 use core::mem::{self, MaybeUninit};
 use core::slice;
+
+use owned::Owned;
+use crate::zone::*;
+use crate::pointee::*;
 
 pub mod impls;
 

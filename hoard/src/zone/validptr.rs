@@ -6,7 +6,6 @@ use core::hash;
 use core::mem;
 use core::ops;
 
-use crate::fatptr::FatPtr;
 use crate::marshal::Persist;
 use crate::coerce::{TryCast, TryCastRef, TryCastMut};
 

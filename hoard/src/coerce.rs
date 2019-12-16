@@ -1,3 +1,5 @@
+//! In-place coercions.
+
 use core::mem;
 
 pub unsafe trait CastRef<T: ?Sized> {

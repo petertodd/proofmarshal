@@ -1,7 +1,10 @@
 use super::{
-    Persist, Ref, Ptr,
+    Persist,
     blob::*,
 };
+
+use crate::refs::Ref;
+use crate::zone::Ptr;
 
 use core::convert::TryFrom;
 use core::fmt;
