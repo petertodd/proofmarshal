@@ -11,23 +11,23 @@ use crate::{
     coerce,
     pointee::Pointee,
     refs::*,
-    marshal::{*, blob::*},
+    marshal::{*, primitive::Primitive, blob::*},
 };
 
-
-mod fatptr;
+pub mod fatptr;
 pub use self::fatptr::FatPtr;
 
-mod validptr;
+pub mod validptr;
 pub use self::validptr::ValidPtr;
 
-mod ownedptr;
+pub mod ownedptr;
 pub use self::ownedptr::OwnedPtr;
 
-pub mod never;
+//pub mod never;
 
 /// Generic pointer.
-pub trait Ptr : Sized + NonZero + Persist + fmt::Debug {
+pub trait Ptr : Sized + NonZero + fmt::Debug {
+    /*
     /// The persistent version of this pointer, if applicable.
     ///
     /// # Safety
@@ -35,12 +35,16 @@ pub trait Ptr : Sized + NonZero + Persist + fmt::Debug {
     /// If this is an inhabited type, it must have the same layout as `Self`. Ideally this would be
     /// expressed as a `Cast<Self>` bound on `Persist`. But this is awkward to implement as
     /// `Persist` has a `Copy` bound that `Self` does not.
-    type Persist : Ptr + Primitive + coerce::Cast<Self> + Into<Self> + Copy;
-
+    */
+    type Persist : Primitive + Copy + fmt::Debug;
     type Zone : Zone<Self> + Copy + Eq + Ord + core::hash::Hash + fmt::Debug;
-    type Allocator : Alloc<Ptr=Self> + Eq + Ord + core::hash::Hash + fmt::Debug;
 
-    fn allocator() -> Self::Allocator where Self: Default;
+    fn zone() -> Self::Zone where Self: Default;
+
+    /*
+    type Allocator : Alloc<Ptr=Self> + Eq + Ord + core::hash::Hash + fmt::Debug;
+    */
+
 
     fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self>
         where Self: Clone;
@@ -57,6 +61,7 @@ pub trait Ptr : Sized + NonZero + Persist + fmt::Debug {
     }
 
 
+    /*
     fn drop_take<T>(owned: OwnedPtr<T, Self>) -> Option<T> {
         let mut r = None;
 
@@ -72,39 +77,34 @@ pub trait Ptr : Sized + NonZero + Persist + fmt::Debug {
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>));
 
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist>;
-}
-
-pub trait PtrMut : Ptr<Zone : ZoneMut<Self>> {
-}
-
-pub trait Zone<P: Ptr> {
-    fn get<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T, P>) -> Ref<'a, T, P>;
-
-    fn take<T: ?Sized + Load<P>>(&self, ptr: OwnedPtr<T, P>) -> Own<T::Owned, P>;
-
-    /*
-    fn get_ref<'a, T: ?Sized + Load<P>>(&self, ptr: impl Into<Ref<'a, OwnedPtr<T, P>>>) -> Ref<'a, T>
-        where P: 'a
-    {
-        match ptr.into() {
-            Ref::Borrowed(ptr) => self.get(ptr),
-            Ref::Owned(ptr) => Ref::Owned(self.take(ptr)),
-        }
-    }
     */
 }
 
+//pub trait PersistPtr<P> : Ptr + Cast<P> {
+//}
+
+// /// Mutable `Ptr`.
+//pub trait PtrMut : Ptr<Zone : ZoneMut<Self>> {
+//}
+
+pub trait Zone<P: Ptr> {
+    //fn get<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T, P>) -> Ref<'a, T, P>;
+
+    //fn take<T: ?Sized + Load<P>>(&self, ptr: OwnedPtr<T, P>) -> Own<T::Owned, P>;
+}
+
 pub trait ZoneMut<P: Ptr> : Zone<P> {
-    fn get_mut<'a, T: ?Sized + Load<P>>(&self, ptr: &'a mut ValidPtr<T, P>) -> RefMut<'a, T, P>;
+    //fn get_mut<'a, T: ?Sized + Load<P>>(&self, ptr: &'a mut ValidPtr<T, P>) -> RefMut<'a, T, P>;
 }
 
 pub trait Alloc : Sized {
     type Ptr : Ptr;
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, Self::Ptr>;
-    fn zone(&self) -> <Self::Ptr as Ptr>::Zone;
+    //fn zone(&self) -> <Self::Ptr as Ptr>::Zone;
 }
 
+/*
 impl<A: Alloc> Alloc for &'_ mut A {
     type Ptr = A::Ptr;
 
@@ -116,4 +116,4 @@ impl<A: Alloc> Alloc for &'_ mut A {
         (**self).zone()
     }
 }
-
+*/

@@ -1,32 +1,27 @@
-use super::*;
-
 use core::any::type_name;
 use core::fmt;
 use core::mem;
 
 use nonzero::NonZero;
 
-const fn option_blob_layout(inner: BlobLayout) -> BlobLayout {
-    let r = [BlobLayout::new(1).extend(inner),
-             inner];
-    r[inner.has_niche() as usize]
-}
+use crate::zone::Ptr;
+use crate::marshal::prelude::*;
 
-unsafe impl<P: Ptr, T: Encode<P>> Encode<P> for Option<T> {
-    const BLOB_LAYOUT: BlobLayout =
-        BlobLayout::new(
-            if T::BLOB_LAYOUT.has_niche() { 0 } else { 1 }
-            + T::BLOB_LAYOUT.size()
-        );
-
+impl<'a, T, P: Ptr> SaveState<'a, P> for Option<T>
+where T: NonZero + SaveState<'a, P>
+{
     type State = Option<T::State>;
 
-    fn init_encode_state(&self) -> Self::State {
-        self.as_ref().map(T::init_encode_state)
+    fn init_save_state(&'a self) -> Self::State {
+        self.as_ref().map(T::init_save_state)
     }
+}
 
-    fn encode_poll<D: Dumper<P>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>
-        where P: Ptr
+unsafe impl<T, P: Ptr> Encode<P> for Option<T>
+where T: NonZero + Encode<P>
+{
+    fn encode_poll<'a, D: Dumper<P>>(&'a self, state: &mut Option<<T as SaveState<'a,P>>::State>, dumper: D)
+        -> Result<D, D::Pending>
     {
         match (self, state) {
             (None, None) => Ok(dumper),
@@ -35,29 +30,22 @@ unsafe impl<P: Ptr, T: Encode<P>> Encode<P> for Option<T> {
         }
     }
 
-    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+    fn encode_blob<'a, W: WriteBlob>(&'a self, state: &Option<<T as SaveState<'a,P>>::State>, dst: W) -> Result<W::Ok, W::Error> {
         match (self, state) {
             (None, None) => {
-                if T::BLOB_LAYOUT.has_niche() {
-                    dst
-                } else {
-                    dst.write_bytes(&[0])?
-                }.write_padding(T::BLOB_LAYOUT.size())?
-                 .finish()
+                dst.write_padding(mem::size_of::<Self>())?
+                   .finish()
             },
             (Some(value), Some(state)) => {
-                if T::BLOB_LAYOUT.has_niche() {
-                    dst
-                } else {
-                    dst.write_bytes(&[1])?
-                }.write(value, state)?
-                 .finish()
+                dst.write(value, state)?
+                   .finish()
             },
             _ => unreachable!()
         }
     }
 }
 
+/*
 #[derive(Debug)]
 pub enum OptionError<E> {
     Discriminant(u8),
@@ -164,4 +152,5 @@ mod tests {
         }
     }
 }
+*/
 */

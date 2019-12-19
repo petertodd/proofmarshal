@@ -1,58 +1,60 @@
-use super::*;
+//! Raw, *unvalidated*, zone pointers.
 
-use core::fmt;
 use core::cmp;
+use core::fmt;
 use core::hash;
 
-use crate::marshal::{Persist, Primitive, blob::*};
+use super::*;
 
-use crate::coerce::{
-    CastRef,
-    TryCast, TryCastRef, TryCastMut
+use crate::{
+    coerce::{CastRef, TryCastRef, TryCast, TryCastMut},
+    marshal::{
+        blob::{Blob, ValidBlob, WriteBlob},
+        primitive::Primitive,
+    },
 };
 
 /// A zone pointer with metadata. *Not* necessarily valid.
 #[repr(C)]
 pub struct FatPtr<T: ?Sized + Pointee, P> {
+    /// The pointer itself.
     pub raw: P,
+
+    /// Metadata associated with this pointer.
     pub metadata: T::Metadata,
 }
 
 unsafe impl<T: ?Sized + Pointee, P> NonZero for FatPtr<T,P>
 where P: NonZero {}
 
-/// Implemented for all `P: Persist` because metadata is always `Persist`.
-unsafe impl<T: ?Sized + Pointee, P> Persist for FatPtr<T,P>
-where P: Persist,
-{}
-
+/// Returned when validation of a `FatPtr` blob fails.
 #[derive(Debug, PartialEq, Eq)]
-pub enum ValidateFatPtrError<T, P> {
+pub enum ValidateError<T, P> {
     Ptr(P),
     Metadata(T),
 }
 
-impl<T: ?Sized + Pointee, P> Primitive for FatPtr<T,P>
+unsafe impl<T: ?Sized + Pointee, P> Primitive for FatPtr<T,P>
 where P: Primitive
 {
-    type Error = ValidateFatPtrError<<T::Metadata as Primitive>::Error, P::Error>;
-    const BLOB_LAYOUT: BlobLayout = P::BLOB_LAYOUT.extend(<T::Metadata as Primitive>::BLOB_LAYOUT);
-
+    type Error = ValidateError<<T::Metadata as Primitive>::Error, P::Error>;
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
         dst.write_primitive(&self.raw)?
            .write_primitive(&self.metadata)?
            .finish()
     }
 
-    fn validate_blob<'a, Q: Ptr>(blob: Blob<'a, Self, Q>) -> Result<FullyValidBlob<'a, Self, Q>, Self::Error> {
-        let mut fields = blob.validate_primitive_struct();
-        fields.field::<P>().map_err(ValidateFatPtrError::Ptr)?;
-        fields.field::<T::Metadata>().map_err(ValidateFatPtrError::Metadata)?;
+    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        let mut blob = blob.validate_primitive_struct();
+        blob.field::<P>().map_err(ValidateError::Ptr)?;
+        blob.field::<T::Metadata>().map_err(ValidateError::Metadata)?;
 
-        unsafe { Ok(fields.assume_done()) }
+        Ok(unsafe { blob.done() })
     }
 }
 
+/// Sized types have no pointer metadata, allowing pointers to them to be converted directly to fat
+/// pointers.
 impl<T, P> From<P> for FatPtr<T,P> {
     fn from(raw: P) -> Self {
         Self { raw, metadata: () }

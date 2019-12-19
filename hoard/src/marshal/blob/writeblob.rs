@@ -7,6 +7,8 @@ use core::ptr;
 use core::slice;
 
 use super::*;
+use crate::marshal::primitive::Primitive;
+use crate::marshal::en::{Encode, SaveState};
 
 pub trait WriteBlob : Sized {
     type Ok;
@@ -15,14 +17,19 @@ pub trait WriteBlob : Sized {
     /// Write an encodable value.
     #[inline(always)]
     fn write_primitive<T: Primitive>(self, value: &T) -> Result<Self, Self::Error> {
-        self.write::<!, T>(value, &())
+        //self.write::<!, T>(value, &())
+        todo!()
     }
 
     /// Write an encodable value.
     #[inline(always)]
-    fn write<P: Ptr, T: Encode<P>>(self, value: &T, state: &T::State) -> Result<Self, Self::Error> {
+    fn write<'a, P: Ptr, T: Encode<P>>(self, value: &'a T, state: &<T as SaveState<'a, P>>::State)
+        -> Result<Self, Self::Error>
+    {
+        /*
         let value_writer = ValueWriter::new(self, T::BLOB_LAYOUT.size());
         value.encode_blob(state, value_writer)
+        */ todo!()
     }
 
     /// Writes bytes to the blob.
@@ -43,6 +50,7 @@ pub trait WriteBlob : Sized {
     fn finish(self) -> Result<Self::Ok, Self::Error>;
 }
 
+/*
 pub(crate) struct ValueWriter<W> {
     inner: W,
     remaining: usize,
@@ -85,6 +93,7 @@ impl<W: WriteBlob> WriteBlob for ValueWriter<W> {
         Ok(self.inner)
     }
 }
+*/
 
 impl WriteBlob for &'_ mut [u8] {
     type Ok = ();
@@ -136,106 +145,7 @@ impl WriteBlob for &'_ mut [MaybeUninit<u8>] {
     }
 }
 
-/// Encoding of a fixed-size value in a pile.
-#[derive(Default,Clone,Copy,Debug,PartialEq,Eq,Hash)]
-pub struct BlobLayout {
-    size: usize,
-    niche_start: usize,
-    niche_end: usize,
-    pub(crate) inhabited: bool,
-}
-
-impl BlobLayout {
-    /// Creates a new `Encoding` with a given length.
-    pub const fn new(size: usize) -> Self {
-        Self {
-            size,
-            niche_start: 0,
-            niche_end: 0,
-            inhabited: true,
-        }
-    }
-
-    /// Creates a non-zero layout.
-    ///
-    /// The entire length will be considered a non-zero niche.
-    pub const fn new_nonzero(size: usize) -> Self {
-        Self {
-            size,
-            niche_start: 0,
-            niche_end: size,
-            inhabited: true,
-        }
-    }
-
-    pub(crate) const fn never() -> Self {
-        Self {
-            size: 0,
-            niche_start: 0,
-            niche_end: 0,
-            inhabited: false,
-        }
-    }
-
-    /// Creates a layout with a non-zero niche.
-    pub const fn with_niche(size: usize, niche: Range<usize>) -> Self {
-        // HACK: since we don't have const panic yet...
-        let _ = niche.end - niche.start - 1;
-        let _: usize = (niche.end > niche.start) as usize - 1;
-        Self {
-            size,
-            niche_start: niche.start,
-            niche_end: niche.end,
-            inhabited: true,
-        }
-    }
-
-    /// Gets the size in bytes.
-    pub const fn size(self) -> usize {
-        self.size
-    }
-
-    pub const fn inhabited(self) -> bool {
-        self.inhabited
-    }
-
-    /// Creates a layout describing `self` followed by `next`.
-    ///
-    /// If either `self` or `next` have a non-zero niche, the niche with the shortest length will
-    /// be used; if the lengths are the same the first niche is used.
-    pub const fn extend(self, next: BlobLayout) -> Self {
-        let size = self.size + next.size;
-
-        let niche_starts = [self.niche_start, self.size + next.niche_start];
-        let niche_ends = [self.niche_end, self.size + next.niche_end];
-
-        let niche_size1 = self.niche_end - self.niche_start;
-        let niche_size2 = next.niche_end - next.niche_start;
-
-        let i = ((niche_size2 != 0) & (niche_size2 < niche_size1)) as usize;
-
-        Self {
-            size,
-            niche_start: niche_starts[i],
-            niche_end: niche_ends[i],
-            inhabited: self.inhabited & next.inhabited,
-        }
-    }
-
-    pub const fn has_niche(self) -> bool {
-        self.inhabited & (self.niche_start != self.niche_end)
-    }
-
-    /// Gets the non-zero niche, if present.
-    pub fn niche(self) -> Option<Range<usize>> {
-        if self.has_niche() {
-            Some(self.niche_start .. self.niche_end)
-        } else {
-            None
-        }
-    }
-}
-
+/*
 #[cfg(test)]
 mod test {
     use super::*;
@@ -255,3 +165,4 @@ mod test {
         Ok(())
     }
 }
+*/

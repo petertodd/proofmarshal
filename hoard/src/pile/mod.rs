@@ -1,4 +1,4 @@
-//! Append-only, copy-on-write, persistence via byte slices and offsets.
+//! Persistence via "piles" of copy-on-write append-only bytes.
 //!
 //! A `Pile` is a memory zone that (conceptually) consists of a linear byte slice. Pointers to data
 //! within a pile are simply 64-bit, little-endian, integer `Offset`'s from the beginning of the
@@ -27,6 +27,7 @@ use crate::marshal::{*, blob::*};
 
 use crate::coerce::{TryCast, TryCastRef, CastRef};
 
+/*
 pub mod offset;
 use self::offset::Kind;
 pub use self::offset::{Offset, OffsetMut};
@@ -676,3 +677,4 @@ mod test {
     }
 */
 }
+*/

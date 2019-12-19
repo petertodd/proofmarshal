@@ -2,7 +2,8 @@ use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
 use core::ptr;
 
-use crate::{*, marshal::{*, blob::*}};
+use crate::prelude::*;
+use crate::marshal::prelude::*;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -11,8 +12,38 @@ pub struct Cell<T, P: Ptr> {
     next: Option<OwnedPtr<Self, P>>,
 }
 
-unsafe impl<T: Persist, P: Ptr> Persist for Cell<T,P> {}
+pub struct EncodeCellState<'a, T: SaveState<'a, P>, P: Ptr> {
+    marker: PhantomData<&'a ()>,
 
+    stack: Vec<*const Cell<T,P>>,
+
+    value: T::State,
+    next: Option<P::Persist>,
+}
+
+impl<'a, T, P: Ptr> SaveState<'a, P> for Cell<T,P>
+where T: Encode<P>
+{
+    type State = EncodeCellState<'a, T, P>;
+
+    fn init_save_state(&'a self) -> Self::State {
+        todo!()
+    }
+}
+
+unsafe impl<T, P: Ptr> Encode<P> for Cell<T,P>
+where T: Encode<P>
+{
+    fn encode_poll<'a, D: Dumper<P>>(&'a self, state: &mut <Self as SaveState<'a,P>>::State, dumper: D) -> Result<D, D::Pending> {
+        todo!()
+    }
+
+    fn encode_blob<'a, W: WriteBlob>(&'a self, state: &<Self as SaveState<'a,P>>::State, dst: W) -> Result<W::Ok, W::Error> {
+        todo!()
+    }
+}
+
+/*
 impl<T, P: Ptr> Cell<T, P> {
     pub fn new(value: T, next: Option<OwnedPtr<Self, P>>) -> Self {
         Self { value, next }
@@ -206,3 +237,4 @@ mod test {
         }
     }
 }
+*/

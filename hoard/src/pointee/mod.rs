@@ -7,13 +7,10 @@ use core::mem::{self, MaybeUninit};
 
 use core::alloc::Layout;
 
-//mod slice;
-//pub use self::slice::*;
-
 mod maybedropped;
 pub use self::maybedropped::MaybeDropped;
 
-use crate::marshal::{Persist, Primitive};
+use crate::marshal::primitive::Primitive;
 
 /// A target of a pointer.
 ///
@@ -22,7 +19,7 @@ use crate::marshal::{Persist, Primitive};
 /// Other code can assume `Pointee` is implemented correctly.
 pub unsafe trait Pointee {
     /// Fat pointer metadata.
-    type Metadata : Persist + Primitive + Copy + fmt::Debug + Eq + Ord + Hash + Send + Sync;
+    type Metadata : Primitive + Copy + fmt::Debug + Eq + Ord + Hash + Send + Sync;
 
     fn metadata(this: &Self) -> Self::Metadata {
         Self::metadata_from_dropped(MaybeDropped::from_ref(this))
@@ -54,70 +51,24 @@ pub unsafe trait Pointee {
         }
     }
 
-    /// Computes alignment from metadata.
-    fn align(metadata: Self::Metadata) -> usize;
-}
+    /// Computes a `Layout` from the pointer metadata.
+    fn layout(metadata: Self::Metadata) -> Layout;
 
-/// A type whose size can be computed at runtime from a dropped value.
-///
-/// # Safety
-///
-/// Other code can assume `DynSized` is implemented correctly.
-pub unsafe trait DynSized : Pointee {
-    /// Computes the size from a potentially dropped value.
-    fn size(dropped: &MaybeDropped<Self>) -> usize;
-
-    /// Computes a `Layout` from a potentially dropped value.
-    #[inline(always)]
-    fn layout(dropped: &MaybeDropped<Self>) -> Layout {
-        let size = Self::size(dropped);
-        let align = Self::align(Self::metadata_from_dropped(dropped));
-        unsafe {
-            Layout::from_size_align_unchecked(size, align)
-        }
-    }
-}
-
-/// A type whose size can be computed at runtime from pointer metadata.
-///
-/// # Safety
-///
-/// Other code can assume `PtrSized` is implemented correctly.
-pub unsafe trait PtrSized : Pointee {
-    /// Computes the size from the metadata.
-    fn size(metadata: Self::Metadata) -> usize;
-
-    /// Computes a `Layout` from the metadata.
-    #[inline(always)]
-    fn layout(metadata: Self::Metadata) -> Layout {
-        let size = Self::size(metadata);
-        let align = Self::align(metadata);
-        unsafe {
-            Layout::from_size_align_unchecked(size, align)
-        }
-    }
-}
-
-unsafe impl<T: ?Sized> DynSized for T
-where T: PtrSized
-{
-    fn size(dropped: &MaybeDropped<Self>) -> usize {
-        <T as PtrSized>::size(T::metadata_from_dropped(dropped))
+    fn size(metadata: Self::Metadata) -> usize {
+        Self::layout(metadata).size()
     }
 }
 
 unsafe impl<T> Pointee for T {
     type Metadata = ();
 
-    fn metadata_from_dropped(_: &MaybeDropped<T>) -> Self::Metadata {
-        Self::make_sized_metadata()
-    }
-
     fn make_sized_metadata() -> Self::Metadata {
         unsafe {
             MaybeUninit::uninit().assume_init()
         }
     }
+
+    fn metadata_from_dropped(_: &MaybeDropped<Self>) -> () {}
 
     #[inline(always)]
     fn make_fat_ptr(thin: *const (), _: Self::Metadata) -> *const Self {
@@ -129,25 +80,7 @@ unsafe impl<T> Pointee for T {
         thin as *mut Self
     }
 
-    #[inline(always)]
-    fn align(_: ()) -> usize {
-        mem::align_of::<Self>()
-    }
-}
-
-unsafe impl<T> PtrSized for T {
-    #[inline(always)]
-    fn size(_: ()) -> usize {
-        mem::size_of::<Self>()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sized_metadata() {
-        let _:() = Pointee::metadata(MaybeDropped::from_ref(&()));
+    fn layout(_: ()) -> Layout {
+        Layout::new::<Self>()
     }
 }

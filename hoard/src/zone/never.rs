@@ -1,3 +1,5 @@
+//! Uninhabited zones and pointers.
+
 use super::*;
 
 use owned::Owned;
@@ -5,6 +7,9 @@ use owned::Owned;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
+/// An uninhabited pointer allocator.
+///
+/// Useful when a `Ptr` doesn't implement `Default`.
 #[allow(unreachable_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NeverAllocator<P> {

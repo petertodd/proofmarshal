@@ -23,10 +23,6 @@ pub struct OwnedPtr<T: ?Sized + Pointee, P: Ptr> {
 unsafe impl<T: ?Sized + Pointee, P: Ptr> NonZero for OwnedPtr<T,P>
 where P: NonZero {}
 
-/// Always implemented because pointers and metadata are always `Persist`.
-unsafe impl<T: ?Sized + Pointee, P: Ptr> Persist for OwnedPtr<T,P>
-{}
-
 unsafe impl<T: ?Sized + Pointee, P: Ptr, Q: Ptr> TryCastRef<OwnedPtr<T,Q>> for OwnedPtr<T,P>
 where P: TryCastRef<Q>
 {
@@ -53,11 +49,13 @@ impl<T: ?Sized + Pointee, P: Ptr> ops::DerefMut for OwnedPtr<T,P> {
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T,P> {
+/*
     pub fn new(value: impl Take<T>) -> Self
         where P: Default
     {
         P::allocator().alloc(value)
     }
+*/
 
     /// Creates a new `OwnedPtr` from a `ValidPtr`.
     ///
@@ -107,6 +105,7 @@ where T: fmt::Debug
     }
 }
 
+/*
 impl<T: ?Sized + Pointee, P: Ptr> fmt::Pointer for OwnedPtr<T,P>
 where P: fmt::Pointer,
 {
@@ -114,6 +113,7 @@ where P: fmt::Pointer,
         fmt::Pointer::fmt(&*self.inner, f)
     }
 }
+*/
 
 
 
@@ -130,6 +130,7 @@ pub enum EncodeOwnedPtrState<T, P> {
     Ptr(P),
 }
 
+/*
 unsafe impl<T, P> Encode<P> for OwnedPtr<T,P>
 where P: Ptr,
       T: ?Sized + Save<P>,
@@ -252,4 +253,5 @@ mod tests {
         */
     }
 }
+*/
 */

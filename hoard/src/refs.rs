@@ -61,7 +61,7 @@ where P: Default
     fn from(this: T) -> Self {
         Self {
             this,
-            zone: P::allocator().zone(),
+            zone: P::zone(),
         }
     }
 }
@@ -72,7 +72,7 @@ where P: Default
     fn from(this: &'a T) -> Self {
         Self {
             this,
-            zone: P::allocator().zone(),
+            zone: P::zone(),
         }
     }
 }
@@ -83,7 +83,7 @@ where P: Default
     fn from(this: &'a mut T) -> Self {
         Self {
             this,
-            zone: P::allocator().zone(),
+            zone: P::zone(),
         }
     }
 }
@@ -103,7 +103,7 @@ where P: Default
     fn from(this: &'a mut T) -> Self {
         Self {
             this,
-            zone: P::allocator().zone(),
+            zone: P::zone(),
         }
     }
 }
