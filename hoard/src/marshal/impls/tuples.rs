@@ -1,4 +1,5 @@
-use super::*;
+use crate::marshal::prelude::*;
+use crate::zone::Ptr;
 
 #[derive(Debug)]
 pub struct TupleError;
@@ -11,26 +12,23 @@ macro_rules! tuple {
     () => ();
     ( $(($name:ident, $state:ident),)+ ) => {
         #[allow(non_snake_case)]
-        unsafe impl<P: Ptr, $($name: Encode<P>),+ > Encode<P> for ($($name,)+) {
-            const BLOB_LAYOUT: BlobLayout = {
-                let layout = BlobLayout::new(0);
+        impl<'a, P: Ptr, $($name: SaveState<'a, P>),+ > SaveState<'a, P> for ($($name,)+) {
+            type State = ( $(<$name as SaveState<'a, P>>::State,)+ );
 
-                $(
-                    let layout = layout.extend(<$name as Encode<P>>::BLOB_LAYOUT);
-                )+
+            fn init_save_state(&'a self) -> Self::State {
+                assert_eq!(core::mem::align_of::<Self>(), 1);
 
-                layout
-            };
-
-            type State = ( $(<$name as Encode<P>>::State,)+ );
-            fn init_encode_state(&self) -> Self::State {
                 let ($(ref $name,)+) = self;
-                ( $($name.init_encode_state(),)+ )
+                ( $($name.init_save_state(),)+ )
             }
+        }
 
-            fn encode_poll<D: Dumper<P>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Pending>
-                where P: Ptr
+        #[allow(non_snake_case)]
+        unsafe impl<P: Ptr, $($name: Encode<P>),+ > Encode<P> for ($($name,)+) {
+            fn encode_poll<'a, D: Dumper<P>>(&'a self, state: &mut ( $(<$name as SaveState<'a, P>>::State,)+ ), dumper: D)
+                -> Result<D, D::Pending>
             {
+                assert_eq!(core::mem::align_of::<Self>(), 1);
                 let ($(ref $name,)+) = self;
                 let ($(ref mut $state,)+) = state;
                 $(
@@ -39,7 +37,10 @@ macro_rules! tuple {
                 Ok(dumper)
             }
 
-            fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+            fn encode_blob<'a, W: WriteBlob>(&'a self, state: &( $(<$name as SaveState<'a, P>>::State,)+ ), dst: W)
+                -> Result<W::Ok, W::Error>
+            {
+                assert_eq!(core::mem::align_of::<Self>(), 1);
                 let ($(ref $name,)+) = self;
                 let ($(ref $state,)+) = state;
                 $(
@@ -49,6 +50,7 @@ macro_rules! tuple {
             }
         }
 
+        /*
         impl<P: Ptr, $($name: Decode<P>),+ > Decode<P> for ($($name,)+) {
             type Error = TupleError;
 
@@ -79,6 +81,7 @@ macro_rules! tuple {
                 Ok(())
             }
         }
+        */
 
         peel! { $( ($name, $state), )+ }
     }
@@ -90,10 +93,9 @@ tuple! { (T0, s0), (T1, s1), (T2, s2), (T3, s3), (T4, s4), (T5, s5), (T6, s6), (
 mod test {
     use super::*;
 
-    use crate::pile::PileMut;
-
     #[test]
     fn encodings() {
+        /*
         let pile = PileMut::default();
 
         macro_rules! t {
@@ -107,5 +109,6 @@ mod test {
             (1u8,2u8) => [1,2];
             (1u8,(2u8, 3u8)) => [1,2,3];
         }
+        */
     }
 }
