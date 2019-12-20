@@ -24,6 +24,7 @@
 #![feature(arbitrary_self_types)]
 #![feature(const_if_match)]
 #![feature(optin_builtin_traits)]
+#![feature(never_type)]
 
 #![allow(unused_imports)]
 #![allow(unused_variables)]
@@ -36,17 +37,15 @@ compile_error!("64-bit pointers required");
 compile_error!("little endian required");
 
 pub mod coerce;
-
 pub mod pointee;
 
 pub mod marshal;
-
 pub mod zone;
-
 pub mod refs;
 
-pub mod linkedlist;
+pub mod pile;
 
+pub mod linkedlist;
 
 /// Prelude
 pub mod prelude {

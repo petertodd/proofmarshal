@@ -11,7 +11,10 @@ use crate::{
     coerce,
     pointee::Pointee,
     refs::*,
-    marshal::{*, primitive::Primitive, blob::*},
+    marshal::{
+        prelude::*,
+        primitive::Primitive,
+    },
 };
 
 pub mod fatptr;
@@ -23,11 +26,10 @@ pub use self::validptr::ValidPtr;
 pub mod ownedptr;
 pub use self::ownedptr::OwnedPtr;
 
-//pub mod never;
+pub mod never;
 
 /// Generic pointer.
 pub trait Ptr : Sized + NonZero + fmt::Debug {
-    /*
     /// The persistent version of this pointer, if applicable.
     ///
     /// # Safety
@@ -35,7 +37,6 @@ pub trait Ptr : Sized + NonZero + fmt::Debug {
     /// If this is an inhabited type, it must have the same layout as `Self`. Ideally this would be
     /// expressed as a `Cast<Self>` bound on `Persist`. But this is awkward to implement as
     /// `Persist` has a `Copy` bound that `Self` does not.
-    */
     type Persist : Primitive + Copy + fmt::Debug;
     type Zone : Zone<Self> + Copy + Eq + Ord + core::hash::Hash + fmt::Debug;
 
@@ -83,12 +84,12 @@ pub trait Ptr : Sized + NonZero + fmt::Debug {
 //pub trait PersistPtr<P> : Ptr + Cast<P> {
 //}
 
-// /// Mutable `Ptr`.
-//pub trait PtrMut : Ptr<Zone : ZoneMut<Self>> {
-//}
+/// Mutable `Ptr`.
+pub trait PtrMut : Ptr<Zone : ZoneMut<Self>> {
+}
 
 pub trait Zone<P: Ptr> {
-    //fn get<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T, P>) -> Ref<'a, T, P>;
+    fn get<'a, T: ?Sized + Load<P>>(&self, ptr: &'a ValidPtr<T, P>) -> Ref<'a, T, P>;
 
     //fn take<T: ?Sized + Load<P>>(&self, ptr: OwnedPtr<T, P>) -> Own<T::Owned, P>;
 }

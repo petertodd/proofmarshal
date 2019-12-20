@@ -70,16 +70,20 @@ use core::ops;
 use std::alloc::Layout;
 
 use leint::Le;
+use nonzero::NonZero;
+use owned::Owned;
 
 use super::*;
 
-use crate::marshal::{
-    Encode, Save, Dumper,
-    Persist,
-    blob::*,
-};
+use crate::{
+    prelude::*,
 
-use crate::coerce::{TryCast, TryCastRef, TryCastMut};
+    pointee::Pointee,
+    coerce::{TryCast, TryCastRef, TryCastMut},
+    marshal::prelude::*,
+    marshal::primitive::Primitive,
+    zone::ValidPtr,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -92,7 +96,18 @@ pub struct Offset<'pile, 'version> {
 }
 
 unsafe impl NonZero for Offset<'_,'_> {}
-unsafe impl Persist for Offset<'_,'_> {}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct OffsetMut<'p,'v>(Offset<'p,'v>);
+
+unsafe impl NonZero for OffsetMut<'_,'_> {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Kind<'p,'v> {
+    Offset(Offset<'p,'v>),
+    Ptr(NonNull<u16>),
+}
 
 impl fmt::Debug for Offset<'_,'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -103,11 +118,6 @@ impl fmt::Debug for Offset<'_,'_> {
     }
 }
 
-impl From<Offset<'_, '_>> for usize {
-    fn from(offset: Offset<'_,'_>) -> usize {
-        offset.get()
-    }
-}
 
 #[derive(Debug)]
 pub struct OffsetError {
@@ -143,12 +153,11 @@ impl<'p,'v> Offset<'p,'v> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct OffsetMut<'p,'v>(Offset<'p,'v>);
-
-unsafe impl NonZero for OffsetMut<'_,'_> {}
-unsafe impl Persist for OffsetMut<'_,'_> {}
+impl From<Offset<'_, '_>> for usize {
+    fn from(offset: Offset<'_,'_>) -> usize {
+        offset.get()
+    }
+}
 
 unsafe impl<'p,'v> TryCastRef<OffsetMut<'p,'v>> for Offset<'p,'v> {
     type Error = !;
@@ -200,12 +209,21 @@ impl<'p, 'v> From<Offset<'p,'v>> for OffsetMut<'p,'v> {
 impl<'p,'v> Ptr for Offset<'p, 'v> {
     type Persist = Self;
     type Zone = Pile<'p, 'v>;
+
+    fn zone() -> Self::Zone
+        where Self: Default
+    {
+        unreachable!()
+    }
+
+    /*
     type Allocator = crate::never::NeverAllocator<Self>;
 
     #[inline]
     fn allocator() -> Self::Allocator {
         panic!()
     }
+    */
 
     #[inline]
     fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
@@ -226,6 +244,7 @@ impl<'p,'v> Ptr for Offset<'p, 'v> {
         let _ = own.into_inner();
     }
 
+    /*
     #[inline]
     fn drop_take_unsized<T: ?Sized + Pointee>(_: OwnedPtr<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
     }
@@ -234,6 +253,7 @@ impl<'p,'v> Ptr for Offset<'p, 'v> {
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self> {
         Err(ptr.raw)
     }
+    */
 }
 
 impl fmt::Pointer for Offset<'_, '_> {
@@ -248,9 +268,8 @@ pub enum DecodeOffsetError {
     OutOfRange(u64),
 }
 
-impl Primitive for Offset<'_,'_> {
+unsafe impl Primitive for Offset<'_,'_> {
     type Error = DecodeOffsetError;
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
 
     #[inline]
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
@@ -259,7 +278,7 @@ impl Primitive for Offset<'_,'_> {
     }
 
     #[inline]
-    fn validate_blob<'a, P: Ptr>(blob: Blob<'a, Self, P>) -> Result<FullyValidBlob<'a, Self, P>, Self::Error> {
+    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
         let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
 
         if raw & 1 == 0 {
@@ -267,23 +286,10 @@ impl Primitive for Offset<'_,'_> {
         } else {
             let raw = raw >> 1;
             if raw <= Self::MAX as u64 {
-                unsafe { Ok(blob.assume_fully_valid()) }
+                unsafe { Ok(blob.assume_valid()) }
             } else {
                 Err(DecodeOffsetError::OutOfRange(raw))
             }
-        }
-    }
-
-    #[inline]
-    fn decode_blob<'a, P: Ptr>(blob: FullyValidBlob<'a, Self, P>) -> Self {
-        <Self as Primitive>::deref_blob(blob).clone()
-    }
-
-    #[inline]
-    fn deref_blob<'a, P: Ptr>(blob: FullyValidBlob<'a, Self, P>) -> &'a Self {
-        match <Self as Primitive>::validate_blob(Blob::from(blob)) {
-            Ok(_) => unsafe { blob.assume_valid() },
-            Err(e) => panic!("fully valid offset not valid: {:?}", e),
         }
     }
 }
@@ -297,12 +303,10 @@ impl Default for OffsetMut<'static, '_> {
 impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
     type Persist = Offset<'p, 'v>;
     type Zone = PileMut<'p, 'v>;
-    type Allocator = PileMut<'p, 'v>;
+    //type Allocator = PileMut<'p, 'v>;
 
     #[inline]
-    fn allocator() -> Self::Allocator
-        where Self: Default
-    {
+    fn zone() -> Self::Zone {
         let pile = PileMut::default();
 
         // Safe because OffsetMut::default() is implemented for the exact same lifetimes as
@@ -310,8 +314,19 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
         unsafe { mem::transmute(pile) }
     }
 
+    /*
+    #[inline]
+    fn allocator() -> Self::Allocator
+        where Self: Default
+    {
+        let pile = PileMut::default();
+
+    }
+    */
+
     #[inline]
     fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
+        /*
         let raw = match Self::try_get_dirty(ptr) {
             Ok(r) => {
                 let cloned = ManuallyDrop::new(r.clone());
@@ -326,16 +341,20 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
                     FatPtr { raw, metadata: ptr.metadata }
             ))
         }
+        */ todo!()
     }
 
     #[inline]
     fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
+        /*
         Self::drop_take_unsized(owned, |value|
             // Safe because drop_take_unsized() takes a FnOnce, so this closure can only run once.
             unsafe { ManuallyDrop::drop(value) }
         )
+        */ todo!()
     }
 
+    /*
     #[inline]
     fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
         let FatPtr { raw, metadata } = owned.into_inner().into_inner();
@@ -369,12 +388,7 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
             }
         }
     }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum Kind<'p,'v> {
-    Offset(Offset<'p,'v>),
-    Ptr(NonNull<u16>),
+    */
 }
 
 #[inline]

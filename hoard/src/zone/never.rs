@@ -7,6 +7,7 @@ use owned::Owned;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
+/*
 /// An uninhabited pointer allocator.
 ///
 /// Useful when a `Ptr` doesn't implement `Default`.
@@ -28,13 +29,14 @@ impl<P: Ptr> Alloc for NeverAllocator<P> {
         match self.never {}
     }
 }
+*/
 
 impl Ptr for ! {
     type Persist = !;
     type Zone = !;
-    type Allocator = NeverAllocator<!>;
+    //type Allocator = NeverAllocator<!>;
 
-    fn allocator() -> Self::Allocator {
+    fn zone() -> ! { // where Self: Default
         unreachable!()
     }
 
@@ -46,6 +48,7 @@ impl Ptr for ! {
         match ptr.raw {}
     }
 
+    /*
     fn drop_take_unsized<T: ?Sized + Pointee>(ptr: OwnedPtr<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
         match ptr.raw {}
     }
@@ -53,6 +56,7 @@ impl Ptr for ! {
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist> {
         match ptr.raw {}
     }
+    */
 }
 
 impl PtrMut for ! {}
@@ -62,13 +66,17 @@ impl<P: Ptr> Zone<P> for ! {
         match *self {}
     }
 
+    /*
     fn take<T: ?Sized + Pointee + Owned>(&self, _: OwnedPtr<T, P>) -> Own<T::Owned, P> {
         match *self {}
     }
+    */
 }
 
 impl<P: Ptr> ZoneMut<P> for ! {
+    /*
     fn get_mut<'a, T: ?Sized + Pointee>(&self, _: &'a mut ValidPtr<T, P>) -> RefMut<'a, T, P> {
         match *self {}
     }
+    */
 }

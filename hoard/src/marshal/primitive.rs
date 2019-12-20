@@ -19,7 +19,7 @@ use leint::Le;
 ///
 /// `Encode` and `Decode` is implemented for any `T: Primitive`
 pub unsafe trait Primitive : super::Freeze + Sized {
-    type Error : 'static;
+    type Error : 'static + fmt::Debug;
 
     fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error>;
     fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error>;

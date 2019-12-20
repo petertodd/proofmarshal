@@ -194,6 +194,10 @@ impl<'a, T: ?Sized + Load<P>, P: Ptr> BlobValidator<'a, T, P> {
             Ok(()) => Ok(unsafe { self.blob.assume_valid() }),
         }
     }
+
+    pub fn into_state(self) -> T::ChildValidator {
+        self.state
+    }
 }
 
 impl<'a, T: ?Sized + Load<P>, P: Ptr> From<ValidBlob<'a, T>> for BlobValidator<'a, T, P>

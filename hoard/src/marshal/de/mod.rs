@@ -18,7 +18,7 @@ use super::primitive::Primitive;
 /// A type whose values can be loaded from pointers in a zone.
 pub unsafe trait Load<P: Ptr> : Save<P> + Freeze {
     /// Error returned when `Blob` validation fails.
-    type Error : 'static;
+    type Error : 'static + fmt::Debug;
 
     /// What validates children of this type.
     type ChildValidator : ChildValidator<P>;
@@ -57,7 +57,7 @@ impl<P: Ptr> ChildValidator<P> for () {
 /// `Load` but for sized types.
 pub unsafe trait Decode<P: Ptr> : Encode<P> + Freeze {
     /// Error returned when `Blob` validation fails.
-    type Error : 'static;
+    type Error : 'static + fmt::Debug;
 
     /// What validates children of this type.
     type ChildValidator : ChildValidator<P>;

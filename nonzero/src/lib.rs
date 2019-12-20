@@ -1,5 +1,7 @@
 //! Marker trait for non-zero types.
 
+#![feature(never_type)]
+
 use core::num;
 use core::ptr::NonNull;
 
