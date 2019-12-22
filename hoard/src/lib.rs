@@ -25,6 +25,10 @@
 #![feature(const_if_match)]
 #![feature(optin_builtin_traits)]
 #![feature(never_type)]
+#![feature(backtrace)]
+
+#![allow(incomplete_features)]
+#![feature(const_generics)]
 
 #![allow(unused_imports)]
 #![allow(unused_variables)]
@@ -39,9 +43,11 @@ compile_error!("little endian required");
 pub mod coerce;
 pub mod pointee;
 
-pub mod marshal;
 pub mod zone;
-pub mod refs;
+pub mod blob;
+pub mod load;
+
+pub mod heap;
 
 pub mod pile;
 
@@ -50,12 +56,14 @@ pub mod linkedlist;
 /// Prelude
 pub mod prelude {
     pub use crate::zone::{
-        Ptr, //PtrMut,
-        Zone, ZoneMut,
-        Alloc,
+        Alloc, Zone,
+        TryGet, Get,
         OwnedPtr,
+
+        refs::{Own, Ref, RefMut},
     };
 
+    /*
     pub use crate::marshal::{
         en::Save, de::Load,
     };
@@ -65,4 +73,5 @@ pub mod prelude {
         Ref,
         RefMut,
     };
+    */
 }

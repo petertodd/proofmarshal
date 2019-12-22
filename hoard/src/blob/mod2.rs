@@ -16,13 +16,12 @@ use crate::{
     pointee::{Pointee, MaybeDropped},
 };
 
+pub mod validate;
+use self::validate::*;
 
 mod writeblob;
 pub use self::writeblob::*;
 */
-
-pub mod validate;
-use self::validate::*;
 
 use crate::{
     pointee::Pointee,
@@ -47,6 +46,11 @@ pub struct Blob<'a, T: ?Sized + Pointee> {
 pub struct ValidBlob<'a, T: ?Sized> {
     marker: PhantomData<fn(&'a T)>,
     inner: &'a T,
+}
+
+pub struct BlobValidator<'a, T: ?Sized + Load<Z>, Z: Zone> {
+    blob: Blob<'a, T>,
+    state: T::ChildValidator,
 }
 
 /*

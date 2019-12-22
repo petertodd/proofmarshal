@@ -1,5 +1,6 @@
 use super::*;
 
+use core::convert::identity;
 use core::cmp;
 use core::fmt;
 use core::hash;
@@ -7,24 +8,28 @@ use core::mem;
 use core::ops;
 use core::marker::PhantomData;
 
-use crate::{
-    coerce::*,
-    marshal::{
-        en::{Encode, Dumper, Save, SaveState},
-        de::{Load, Decode, PtrValidator},
-    },
-};
+use nonzero::NonZero;
+
+use crate::blob::{BlobValidator, StructValidator};
+use crate::load::{Validate, ValidateChildren, PtrValidator};
 
 /// Wrapper around a `FatPtr` guaranteeing that the target of the pointer is valid.
 ///
 /// Implements `Deref<Target=FatPtr>` so the fields of the wrapped pointer are available;
 /// `DerefMut` is *not* implemented because mutating the wrapper pointer could invalidate it.
 #[repr(transparent)]
-pub struct ValidPtr<T: ?Sized + Pointee, P>(FatPtr<T,P>);
+pub struct ValidPtr<T: ?Sized + Pointee, Z: Zone>(FatPtr<T, Z>);
 
-unsafe impl<T: ?Sized + Pointee, P> NonZero for ValidPtr<T,P>
-where P: NonZero {}
+impl<T: ?Sized + Pointee, Z: Zone> ops::Deref for ValidPtr<T, Z> {
+    type Target = FatPtr<T, Z>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
+unsafe impl<T: ?Sized + Pointee, Z: Zone> NonZero for ValidPtr<T, Z> {}
+
+/*
 unsafe impl<T: ?Sized + Pointee, P, Q> TryCastRef<ValidPtr<T,Q>> for ValidPtr<T,P>
 where P: TryCastRef<Q>
 {
@@ -48,28 +53,16 @@ where P: TryCastMut<Q>
 unsafe impl<T: ?Sized + Pointee, P, Q> TryCast<ValidPtr<T,Q>> for ValidPtr<T,P>
 where P: TryCast<Q>
 {}
+*/
 
-impl<T: ?Sized + Pointee, P> ops::Deref for ValidPtr<T,P> {
-    type Target = FatPtr<T,P>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T: ?Sized + Pointee, P> ValidPtr<T,P> {
+impl<T: ?Sized + Pointee, Z: Zone> ValidPtr<T, Z> {
     /// Creates a new `ValidPtr` from a `FatPtr`.
     ///
     /// # Safety
     ///
     /// You are asserting that the pointer is in fact valid.
-    pub unsafe fn new_unchecked(ptr: FatPtr<T,P>) -> Self {
+    pub unsafe fn new_unchecked(ptr: FatPtr<T, Z>) -> Self {
         Self(ptr)
-    }
-
-    /// Unwraps the pointer.
-    pub fn into_inner(self) -> FatPtr<T,P> {
-        self.0
     }
 
     /// Gets mutable access to the raw pointer.
@@ -77,38 +70,33 @@ impl<T: ?Sized + Pointee, P> ValidPtr<T,P> {
     /// # Safety
     ///
     /// This is unsafe because changes to the raw pointer could make it invalid.
-    pub unsafe fn raw_mut(&mut self) -> &mut P {
+    pub unsafe fn raw_mut(&mut self) -> &mut Z::Ptr {
         &mut self.0.raw
     }
-}
 
-impl<T: ?Sized + Pointee, P> From<ValidPtr<T,P>> for FatPtr<T,P> {
-    /// Forwards to `into_inner()`
-    fn from(valid: ValidPtr<T,P>) -> Self {
-        valid.into_inner()
+    pub fn into_inner(self) -> FatPtr<T,Z> {
+        self.0
     }
 }
 
 // standard impls
-impl<T: ?Sized + Pointee, P> fmt::Debug for ValidPtr<T,P>
-where P: fmt::Debug,
+impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for ValidPtr<T, Z>
+where T: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ValidPtr")
-            .field("raw", &self.raw)
-            .field("metadata", &self.metadata)
-            .finish()
+        Z::fmt_debug_valid_ptr(self, f)
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> fmt::Pointer for ValidPtr<T,P>
-where P: fmt::Debug,
+impl<T: ?Sized + Pointee, Z: Zone> fmt::Pointer for ValidPtr<T, Z>
+where Z::Ptr: fmt::Pointer
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&self.0, f)
     }
 }
 
+/*
 impl<T: ?Sized + Pointee, P, Q> cmp::PartialEq<ValidPtr<T,Q>> for ValidPtr<T,P>
 where P: cmp::PartialEq<Q>
 {
@@ -251,40 +239,63 @@ where P: Ptr,
     fn validate_poll<'a, V>(state: &mut Self::ValidateState, validator: &V) -> Result<(), V::Error>
         where V: PtrValidator<P>
     {
+    }
+    */
+}
+*/
+*/
+
+impl<T: ?Sized + Validate, Z: Zone> Validate for ValidPtr<T, Z> {
+    type Error = <FatPtr<T, Z::Persist> as Validate>::Error;
+
+    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        let mut blob = blob.validate_struct();
+        blob.field::<FatPtr<T, Z::Persist>, _>(identity)?;
+
+        unsafe { blob.assume_valid() }
+    }
+}
+
+pub enum ValidateState<T: ?Sized + Load<Z>, Z: Zone> {
+    FatPtr(FatPtr<T, Z::Persist>),
+    Value(T::ValidateChildren),
+    Done,
+}
+
+impl<T: ?Sized + Load<Z>, Z: Zone> ValidateChildren<Z> for ValidateState<T, Z> {
+    fn poll<V>(&mut self, ptr_validator: &V) -> Result<(), V::Error>
+        where V: PtrValidator<Z>
+    {
         loop {
-            match state {
-                ValidateState::Done => break Ok(()),
-                ValidateState::FatPtr(fatptr) => {
-                    *state = match validator.validate_ptr(fatptr)? {
-                        Some(state) => ValidateState::Value(state),
-                        None => ValidateState::Done,
+            match self {
+                Self::Done => break Ok(()),
+                Self::FatPtr(fatptr) => {
+                    *self = match ptr_validator.validate_ptr(fatptr)? {
+                        Some(value) => Self::Value(value),
+                        None => Self::Done,
                     };
                 },
-                ValidateState::Value(value_state) => {
-                    T::validate_poll(value_state, validator)?;
-                    *state = ValidateState::Done;
+                Self::Value(value) => {
+                    value.poll(ptr_validator)?;
+                    *self = Self::Done;
                 }
             }
         }
     }
-    */
 }
 
-pub enum ValidateState<T: ?Sized + Load<P>, P: Ptr> {
-    FatPtr(FatPtr<T, P::Persist>),
-    Value(T::ChildValidator),
-    Done,
-}
-*/
+unsafe impl<T: ?Sized + Load<Z>, Z: Zone> Load<Z> for ValidPtr<T, Z> {
+    type ValidateChildren = ValidateState<T,Z>;
 
-/*
-impl<T: ?Sized + Load<P>, P: Ptr> ValidateChildren<P> for OwnedPtrValidator<T, P> {
-    fn validate_children<V>(&mut self, ptr_validator: &mut V) -> Result<(), V::Error>
-        where V: ValidatePtr<P>
-    {
+    fn validate_children(&self) -> Self::ValidateChildren {
+        match Z::try_get_dirty(self) {
+            Err(fatptr) => ValidateState::FatPtr(fatptr),
+            Ok(_) => ValidateState::Done,
+        }
     }
 }
 
+/*
 /*
 impl<T: ?Sized + Load<Q>, P: Decode<Q>, Q> fmt::Debug for OwnedPtrValidator<T,P,Q>
 where P: Ptr + fmt::Debug,

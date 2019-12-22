@@ -1,28 +1,33 @@
 use super::*;
 
 use core::any::type_name;
+use core::convert::identity;
+use core::borrow::Borrow;
+use core::borrow::BorrowMut;
 use core::fmt;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
 use core::ops;
+use core::ptr;
 
-use crate::marshal::*;
-use crate::marshal::blob::*;
-use crate::coerce::TryCastRef;
+use nonzero::NonZero;
+
+use crate::blob::{BlobValidator, StructValidator};
+use crate::load::{Validate, ValidateChildren, PtrValidator};
 
 /// An owned pointer.
 ///
 /// Extends`ValidPtr` with ownership semantics, acting like it owns a `T` value and properly
 /// deallocating the pointer on drop.
 #[repr(transparent)]
-pub struct OwnedPtr<T: ?Sized + Pointee, P: Ptr> {
+pub struct OwnedPtr<T: ?Sized + Pointee, Z: Zone> {
     marker: PhantomData<Box<T>>,
-    inner: ManuallyDrop<ValidPtr<T,P>>,
+    inner: ManuallyDrop<ValidPtr<T, Z>>,
 }
 
-unsafe impl<T: ?Sized + Pointee, P: Ptr> NonZero for OwnedPtr<T,P>
-where P: NonZero {}
+unsafe impl<T: ?Sized + Pointee, Z: Zone> NonZero for OwnedPtr<T, Z> {}
 
+/*
 unsafe impl<T: ?Sized + Pointee, P: Ptr, Q: Ptr> TryCastRef<OwnedPtr<T,Q>> for OwnedPtr<T,P>
 where P: TryCastRef<Q>
 {
@@ -33,22 +38,35 @@ where P: TryCastRef<Q>
             .map(|inner| unsafe { mem::transmute(inner) })
     }
 }
+*/
 
-impl<T: ?Sized + Pointee, P: Ptr> ops::Deref for OwnedPtr<T,P> {
-    type Target = ValidPtr<T,P>;
+impl<T: ?Sized + Pointee, Z: Zone> ops::Deref for OwnedPtr<T, Z> {
+    type Target = ValidPtr<T, Z>;
 
-    fn deref(&self) -> &ValidPtr<T,P> {
+    fn deref(&self) -> &ValidPtr<T, Z> {
         &self.inner
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> ops::DerefMut for OwnedPtr<T,P> {
-    fn deref_mut(&mut self) -> &mut ValidPtr<T,P> {
+impl<T: ?Sized + Pointee, Z: Zone> ops::DerefMut for OwnedPtr<T, Z> {
+    fn deref_mut(&mut self) -> &mut ValidPtr<T, Z> {
         &mut self.inner
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T,P> {
+impl<T: ?Sized + Pointee, Z: Zone> Borrow<ValidPtr<T, Z>> for OwnedPtr<T, Z> {
+    fn borrow(&self) -> &ValidPtr<T, Z> {
+        self
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> BorrowMut<ValidPtr<T, Z>> for OwnedPtr<T, Z> {
+    fn borrow_mut(&mut self) -> &mut ValidPtr<T, Z> {
+        self
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> OwnedPtr<T, Z> {
 /*
     pub fn new(value: impl Take<T>) -> Self
         where P: Default
@@ -63,7 +81,7 @@ impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T,P> {
     ///
     /// The `ValidPtr` must point to a uniquely owned value that can be safely dropped via
     /// `Ptr::dealloc_owned()`.
-    pub unsafe fn new_unchecked(ptr: ValidPtr<T,P>) -> Self {
+    pub unsafe fn new_unchecked(ptr: ValidPtr<T, Z>) -> Self {
         Self {
             marker: PhantomData,
             inner: ManuallyDrop::new(ptr),
@@ -74,37 +92,62 @@ impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T,P> {
     ///
     /// The value is *not* deallocated! It is the callee's responsibility to do that; failing to do
     /// so may leak memory.
-    pub fn into_inner(self) -> ValidPtr<T,P> {
+    pub fn into_inner(self) -> ValidPtr<T, Z> {
         let mut this = ManuallyDrop::new(self);
 
-        unsafe { (&mut *this.inner as *mut ValidPtr<T,P>).read() }
+        unsafe { (&mut *this.inner as *mut ValidPtr<T, Z>).read() }
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> Drop for OwnedPtr<T,P> {
+impl<T: ?Sized + Pointee, Z: Zone> Drop for OwnedPtr<T, Z> {
     fn drop(&mut self) {
-        let this = unsafe { core::ptr::read(self) };
-        P::dealloc_owned(this)
+        unsafe {
+            let this = ptr::read(self);
+            Z::try_take_dirty_unsized(this, |this| {
+                match this {
+                    Ok(value) => ptr::drop_in_place(value),
+                    Err(_persist_ptr) => (),
+                }
+            })
+        }
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> Clone for OwnedPtr<T,P>
-where T: Clone,
-      P: Clone
+impl<T: ?Sized + Pointee, Z: Zone> Clone for OwnedPtr<T, Z>
+where T: Clone, Z: Clone
 {
     fn clone(&self) -> Self {
-        P::clone_ptr(self)
+        Z::clone_ptr(self)
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> fmt::Debug for OwnedPtr<T,P>
+impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for OwnedPtr<T, Z>
 where T: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        P::fmt_debug_own(self, f)
+        Z::fmt_debug_valid_ptr(self, f)
     }
 }
 
+impl<T: ?Sized + Validate, Z: Zone> Validate for OwnedPtr<T, Z> {
+    type Error = <FatPtr<T, Z::Persist> as Validate>::Error;
+
+    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        let mut blob = blob.validate_struct();
+        blob.field::<FatPtr<T, Z::Persist>, _>(identity)?;
+        unsafe { blob.assume_valid() }
+    }
+}
+
+unsafe impl<T: ?Sized + Load<Z>, Z: Zone> Load<Z> for OwnedPtr<T, Z> {
+    type ValidateChildren = <ValidPtr<T,Z> as Load<Z>>::ValidateChildren;
+
+    fn validate_children(&self) -> Self::ValidateChildren {
+        self.inner.validate_children()
+    }
+}
+
+/*
 /*
 impl<T: ?Sized + Pointee, P: Ptr> fmt::Pointer for OwnedPtr<T,P>
 where P: fmt::Pointer,
@@ -253,5 +296,6 @@ mod tests {
         */
     }
 }
+*/
 */
 */

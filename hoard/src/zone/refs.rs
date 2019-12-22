@@ -2,53 +2,53 @@
 
 use core::ops;
 
-use owned::Owned;
-
-use crate::zone::{Ptr, Alloc};
+use super::Zone;
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct Own<T: ?Sized, P: Ptr> {
-    pub zone: P::Zone,
+pub struct Own<T: ?Sized, Z> {
+    pub zone: Z,
     pub this: T,
 }
 
-impl<T: ?Sized, P: Ptr> Own<T,P> {
+#[derive(Debug)]
+#[repr(C)]
+pub struct Ref<'a, T: ?Sized, Z> {
+    pub this: &'a T,
+    pub zone: Z,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct RefMut<'a, T: ?Sized, Z> {
+    pub this: &'a mut T,
+    pub zone: Z,
+}
+
+impl<T: ?Sized, Z: Zone> Own<T, Z> {
     pub fn into<U>(self) -> U
         where T: Into<U>
     {
         self.this.into()
     }
 
-    pub fn as_ref<'a>(&'a self) -> Ref<'a, T, P> {
+    pub fn as_ref<'a>(&'a self) -> Ref<'a, T, Z> {
         Ref {
             this: &self.this,
-            zone: self.zone,
+            zone: self.zone.duplicate(),
         }
     }
 
-    pub fn as_mut<'a>(&'a mut self) -> RefMut<'a, T, P> {
+    pub fn as_mut<'a>(&'a mut self) -> RefMut<'a, T, Z> {
         RefMut {
             this: &mut self.this,
-            zone: self.zone,
+            zone: self.zone.duplicate(),
         }
     }
 }
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct Ref<'a, T: ?Sized, P: Ptr> {
-    pub this: &'a T,
-    pub zone: P::Zone,
-}
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct RefMut<'a, T: ?Sized, P: Ptr> {
-    pub this: &'a mut T,
-    pub zone: P::Zone,
-}
-
+/*
 pub enum CowRef<'a, T: ?Sized + Owned, P: Ptr> {
     Borrowed(Ref<'a, T, P>),
     Owned(Own<T::Owned, P>),
@@ -107,36 +107,38 @@ where P: Default
         }
     }
 }
+*/
 
 // ---- Deref impls ------
-impl<T: ?Sized, P: Ptr> ops::Deref for Own<T,P> {
+impl<T: ?Sized, Z: Zone> ops::Deref for Own<T,Z> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.this
     }
 }
 
-impl<T: ?Sized, P: Ptr> ops::DerefMut for Own<T,P> {
+impl<T: ?Sized, Z: Zone> ops::DerefMut for Own<T,Z> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.this
     }
 }
 
-impl<'a, T: ?Sized, P: Ptr> ops::Deref for Ref<'a, T, P> {
+impl<'a, T: ?Sized, Z: Zone> ops::Deref for Ref<'a, T, Z> {
     type Target = &'a T;
     fn deref(&self) -> &&'a T {
         &self.this
     }
 }
 
-impl<'a, T: ?Sized, P: Ptr> ops::Deref for RefMut<'a, T, P> {
-    type Target = Ref<'a, T, P>;
-    fn deref(&self) -> &Ref<'a, T, P> {
+impl<'a, T: ?Sized, Z: Zone> ops::Deref for RefMut<'a, T, Z> {
+    type Target = Ref<'a, T, Z>;
+    fn deref(&self) -> &Ref<'a, T, Z> {
         // Safe b/c Ref and RefMut are #[repr(C)] with same layout
-        unsafe { &*(self as *const Self as *const Ref<T,P>) }
+        unsafe { &*(self as *const Self as *const Ref<T,Z>) }
     }
 }
 
+/*
 // --- Clone and Copy impls ---
 impl<T: Clone, P: Ptr> Clone for Own<T,P> {
     fn clone(&self) -> Self {
@@ -154,3 +156,4 @@ impl<'a, T: ?Sized, P: Ptr> Clone for Ref<'a,T,P> {
     }
 }
 impl<'a, T: ?Sized, P: Ptr> Copy for Ref<'a,T,P> {}
+*/

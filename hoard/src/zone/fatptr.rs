@@ -4,63 +4,50 @@ use core::cmp;
 use core::fmt;
 use core::hash;
 
+use nonzero::NonZero;
+
 use super::*;
 
-use crate::{
-    coerce::{CastRef, TryCastRef, TryCast, TryCastMut},
-    marshal::{
-        blob::{Blob, ValidBlob, WriteBlob},
-        primitive::Primitive,
-    },
-};
+use crate::load::{Validate, ValidationError};
+use crate::blob::{BlobValidator, StructValidator};
 
 /// A zone pointer with metadata. *Not* necessarily valid.
 #[repr(C)]
-pub struct FatPtr<T: ?Sized + Pointee, P> {
+pub struct FatPtr<T: ?Sized + Pointee, Z: Zone> {
     /// The pointer itself.
-    pub raw: P,
+    pub raw: Z::Ptr,
 
     /// Metadata associated with this pointer.
     pub metadata: T::Metadata,
 }
 
-unsafe impl<T: ?Sized + Pointee, P> NonZero for FatPtr<T,P>
-where P: NonZero {}
+unsafe impl<T: ?Sized + Pointee, Z: Zone> NonZero for FatPtr<T, Z> {}
 
 /// Returned when validation of a `FatPtr` blob fails.
 #[derive(Debug, PartialEq, Eq)]
-pub enum ValidateError<T, P> {
+pub enum ValidateFatPtrError<T, P> {
     Ptr(P),
     Metadata(T),
 }
 
-unsafe impl<T: ?Sized + Pointee, P> Primitive for FatPtr<T,P>
-where P: Primitive
-{
-    type Error = ValidateError<<T::Metadata as Primitive>::Error, P::Error>;
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
-        dst.write_primitive(&self.raw)?
-           .write_primitive(&self.metadata)?
-           .finish()
-    }
+impl<T: ValidationError, P: ValidationError> ValidationError for ValidateFatPtrError<T, P> {
+}
 
-    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        let mut blob = blob.validate_primitive_struct();
-        blob.field::<P>().map_err(ValidateError::Ptr)?;
-        blob.field::<T::Metadata>().map_err(ValidateError::Metadata)?;
+impl<T: ?Sized + Validate, Z: PersistZone> Validate for FatPtr<T, Z> {
+    type Error = ValidateFatPtrError<<T::Metadata as Validate>::Error,
+                                     <Z::PersistPtr as Validate>::Error>;
 
-        Ok(unsafe { blob.done() })
+    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        let mut blob = blob.validate_struct();
+
+        blob.field::<Z::PersistPtr, _>(ValidateFatPtrError::Ptr)?;
+        blob.field::<T::Metadata, _>(ValidateFatPtrError::Metadata)?;
+
+        unsafe { blob.assume_valid() }
     }
 }
 
-/// Sized types have no pointer metadata, allowing pointers to them to be converted directly to fat
-/// pointers.
-impl<T, P> From<P> for FatPtr<T,P> {
-    fn from(raw: P) -> Self {
-        Self { raw, metadata: () }
-    }
-}
-
+/*
 unsafe impl<T: ?Sized + Pointee, P, Q> TryCastRef<FatPtr<T,Q>> for FatPtr<T,P>
 where P: TryCastRef<Q>
 {
@@ -98,12 +85,11 @@ where P: CastRef<Q>
         }
     }
 }
+*/
 
 // standard impls
 
-impl<T: ?Sized + Pointee, P: Ptr> fmt::Debug for FatPtr<T,P>
-where P: fmt::Debug,
-{
+impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for FatPtr<T, Z> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("FatPtr")
             .field("raw", &self.raw)
@@ -112,47 +98,37 @@ where P: fmt::Debug,
     }
 }
 
-impl<T: ?Sized + Pointee, P, Q> cmp::PartialEq<FatPtr<T,Q>> for FatPtr<T,P>
-where P: cmp::PartialEq<Q>,
+impl<T: ?Sized + Pointee, Z: Zone> fmt::Pointer for FatPtr<T, Z>
+where Z::Ptr: fmt::Pointer
 {
-    fn eq(&self, other: &FatPtr<T,Q>) -> bool {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Pointer::fmt(&self.raw, f)
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> cmp::PartialEq<FatPtr<T,Y>> for FatPtr<T,Z>
+where Z::Ptr: cmp::PartialEq<Y::Ptr>,
+{
+    fn eq(&self, other: &FatPtr<T, Y>) -> bool {
         (self.raw == other.raw) && (self.metadata == other.metadata)
     }
 }
 
-impl<T: ?Sized + Pointee, P> cmp::Eq for FatPtr<T,P>
-where P: cmp::Eq,
+impl<T: ?Sized + Pointee, Z: Zone> cmp::Eq for FatPtr<T, Z>
 {}
 
-impl<T: ?Sized + Pointee, P> Clone for FatPtr<T,P>
-where P: Clone,
-{
+impl<T: ?Sized + Pointee, Z: Zone> Clone for FatPtr<T, Z> {
     fn clone(&self) -> Self {
-        Self { raw: self.raw.clone(), metadata: self.metadata }
+        *self
     }
 }
+impl<T: ?Sized + Pointee, Z: Zone> Copy for FatPtr<T, Z> {}
 
-impl<T: ?Sized + Pointee, P> Copy for FatPtr<T,P>
-where P: Copy,
-{}
-
-impl<T: ?Sized + Pointee, P> hash::Hash for FatPtr<T,P>
-where P: hash::Hash,
-{
+impl<T: ?Sized + Pointee, Z: Zone> hash::Hash for FatPtr<T, Z> {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.raw.hash(state);
         self.metadata.hash(state);
     }
 }
 
-
-impl<T: ?Sized + Pointee, P: Ptr> fmt::Pointer for FatPtr<T,P>
-where P: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("FatPtr")
-            .field(&self.raw)
-            .field(&self.metadata)
-            .finish()
-    }
-}
+// TODO: PartialOrd/Ord

@@ -6,50 +6,68 @@ use core::convert::TryFrom;
 use core::marker::PhantomData;
 use core::mem::{self, MaybeUninit};
 use core::ops::{self, Range};
-use core::ptr;
+use core::ptr::{self, NonNull};
 use core::slice;
 
-/*
 use crate::{
-    zone::Ptr,
-    marshal::de::{Load, PtrValidator, ChildValidator},
-    pointee::{Pointee, MaybeDropped},
-};
-
-
-mod writeblob;
-pub use self::writeblob::*;
-*/
-
-pub mod validate;
-use self::validate::*;
-
-use crate::{
+    load::Validate,
     pointee::Pointee,
-    zone::Zone,
 };
 
-use super::Load;
+mod cursor;
+pub use self::cursor::Error;
+
+pub trait BlobValidator<T: ?Sized + Validate> {
+    type Ok;
+    type Error;
+
+    type StructValidator : StructValidator<T, Ok=Self::Ok, Error=Self::Error>;
+    type EnumValidator : EnumValidator<T, Ok=Self::Ok, Error=Self::Error>;
+
+    fn metadata(&self) -> T::Metadata;
+
+    fn validate_struct(self) -> Self::StructValidator;
+    fn validate_enum(self) -> (u8, Self::EnumValidator);
+
+    unsafe fn validate_option<U: Validate, F>(self, f: F) -> Result<Self::Ok, Self::Error>
+        where F: FnOnce(U::Error) -> T::Error;
+
+    fn validate_bytes(self, f: impl for<'a> FnOnce(Blob<'a, T>) -> Result<ValidBlob<'a, T>, T::Error>)
+        -> Result<Self::Ok, Self::Error>;
+}
+
+pub trait StructValidator<T: ?Sized + Validate> {
+    type Ok;
+    type Error;
+
+    fn field<U: Validate, F>(&mut self, f: F) -> Result<ValidBlob<U>, Self::Error>
+        where F: FnOnce(U::Error) -> T::Error;
+
+    unsafe fn assume_valid(self) -> Result<Self::Ok, Self::Error>;
+}
+
+pub trait EnumValidator<T: ?Sized + Validate> {
+    type Ok;
+    type Error;
+
+    fn field<U: Validate, F>(&mut self, f: F) -> Result<ValidBlob<U>, Self::Error>
+        where F: FnOnce(U::Error) -> T::Error;
+
+    /// Asserts that the enum is valid.
+    unsafe fn assume_valid(self) -> Result<Self::Ok, Self::Error>;
+}
 
 /// Unverified bytes from a persistent zone.
 pub struct Blob<'a, T: ?Sized + Pointee> {
     // *invariant* over 'a
     marker: PhantomData<fn(&'a [u8]) -> &'a T>,
-    ptr: *const u8,
+    ptr: NonNull<u8>,
 
     /// The pointer metadata.
     pub metadata: T::Metadata,
 }
 
-
-/// A `Blob<T>` that has been fully verified.
-#[derive(Debug)]
-pub struct ValidBlob<'a, T: ?Sized> {
-    marker: PhantomData<fn(&'a T)>,
-    inner: &'a T,
-}
-
-/*
+pub struct ValidBlob<'a, T: ?Sized + Pointee>(Blob<'a, T>);
 
 impl<'a, T: ?Sized + Pointee> Blob<'a, T> {
     /// Creates a new `Blob` from a slice and metadata.
@@ -74,9 +92,15 @@ impl<'a, T: ?Sized + Pointee> Blob<'a, T> {
                    "{} needs alignment", type_name::<T>());
         Self {
             marker: PhantomData,
-            ptr: buf.as_ptr(),
+            ptr: NonNull::new(buf.as_ptr() as *mut u8).unwrap(),
             metadata,
         }
+    }
+
+    pub fn into_validator(self) -> impl BlobValidator<T, Ok=ValidBlob<'a, T>, Error=cursor::Error<T::Error>>
+        where T: Validate
+    {
+        cursor::BlobCursor::from(self)
     }
 
     /// Asserts that `Blob` is fully valid, converting it into a `ValidBlob`.
@@ -86,32 +110,19 @@ impl<'a, T: ?Sized + Pointee> Blob<'a, T> {
     /// `ValidBlob<'a, T>` derefs to `&'a T`, so you are asserting that the `Blob` is valid for all
     /// purposes.
     pub unsafe fn assume_valid(self) -> ValidBlob<'a, T> {
-        let inner = &*T::make_fat_ptr(self.ptr as *const (), self.metadata);
-
-        assert_eq!(T::layout(self.metadata), core::alloc::Layout::for_value(inner),
-                   "<{} as Pointee>::layout() incorrectly implemented", type_name::<T>());
-
-        ValidBlob { marker: PhantomData, inner }
-    }
-
-    pub fn validate_struct(self) -> StructValidator<'a, T> {
-        StructValidator(BlobCursor::from(self))
-    }
-
-    pub fn validate_primitive_struct(self) -> PrimitiveStructValidator<'a, T> {
-        PrimitiveStructValidator(BlobCursor::from(self))
-    }
-
-    pub fn validate_enum(self) -> (u8, VariantValidator<'a, T>) {
-        (self[0],
-         VariantValidator(
-             BlobCursor {
-                 blob: self,
-                 offset: 1,
-             })
-        )
+        ValidBlob(self)
     }
 }
+
+impl<'a, T: ?Sized + Pointee> ValidBlob<'a, T> {
+    pub unsafe fn to_ref(self) -> &'a T {
+        let inner = &*T::make_fat_ptr(self.ptr.as_ptr() as *const (), self.metadata);
+        assert_eq!(T::layout(self.metadata), core::alloc::Layout::for_value(inner),
+                   "<{} as Pointee>::layout() incorrectly implemented", type_name::<T>());
+        inner
+    }
+}
+
 
 impl<'a, T: ?Sized + Pointee> ops::Deref for Blob<'a, T> {
     type Target = [u8];
@@ -127,20 +138,14 @@ impl<'a, T: ?Sized + Pointee> From<Blob<'a, T>> for &'a [u8] {
     fn from(blob: Blob<'a, T>) -> &'a [u8] {
         // Safe because it's the only safe ways to create blobs ensure the size is correct.
         unsafe {
-            slice::from_raw_parts(blob.ptr, T::layout(blob.metadata).size())
+            slice::from_raw_parts(blob.ptr.as_ptr(), T::layout(blob.metadata).size())
         }
     }
 }
 
 impl<'a, T: ?Sized + Pointee> From<ValidBlob<'a, T>> for Blob<'a, T> {
     fn from(blob: ValidBlob<'a, T>) -> Blob<'a, T> {
-        // SAFETY: Uninit bytes would be an issue, except that ValidBlob's are guaranteed to have
-        // come from [u8]'s via Blob.
-        Blob {
-            marker: PhantomData,
-            metadata: T::metadata(blob.inner),
-            ptr: blob.inner as *const T as *const u8,
-        }
+        blob.0
     }
 }
 
@@ -153,10 +158,10 @@ impl<T: ?Sized + Pointee> fmt::Debug for Blob<'_, T> {
     }
 }
 
-impl<'a, T: ?Sized> ops::Deref for ValidBlob<'a, T> {
-    type Target = &'a T;
+impl<'a, T: ?Sized + Pointee> ops::Deref for ValidBlob<'a, T> {
+    type Target = Blob<'a, T>;
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        &self.0
     }
 }
 
@@ -171,54 +176,13 @@ impl<'a, T: ?Sized + Pointee> Clone for Blob<'a, T> {
 }
 impl<'a, T: ?Sized + Pointee> Copy for Blob<'a, T> {}
 
-impl<'a, T: ?Sized> Clone for ValidBlob<'a, T> {
+impl<'a, T: ?Sized + Pointee> Clone for ValidBlob<'a, T> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<'a, T: ?Sized> Copy for ValidBlob<'a, T> {}
-
-
-impl<'a, T: ?Sized + Load<P>, P: Ptr> BlobValidator<'a, T, P> {
-    /// Creates a new `BlobValidator`.
-    ///
-    /// # Safety
-    ///
-    /// The `state` must be correct for the `blob`.
-    pub unsafe fn new(blob: Blob<'a, T>, state: T::ChildValidator) -> Self {
-        Self { blob, state }
-    }
-
-    /// Validates the blob's children.
-    pub fn poll<V>(&mut self, ptr_validator: &V) -> Result<ValidBlob<'a, T>, V::Error>
-        where V: PtrValidator<P>
-    {
-        match self.state.poll(ptr_validator) {
-            Err(e) => Err(e),
-
-            // SAFETY: Load is an unsafe trait, with the contract that the child validator
-            // returning Ok() means the blob is valid.
-            Ok(()) => Ok(unsafe { self.blob.assume_valid() }),
-        }
-    }
-
-    pub fn into_state(self) -> T::ChildValidator {
-        self.state
-    }
-}
-
-impl<'a, T: ?Sized + Load<P>, P: Ptr> From<ValidBlob<'a, T>> for BlobValidator<'a, T, P>
-where T::ChildValidator: Default
-{
-    /// This is safe, even though `BlobValidator::new()` is unsafe, because we're starting from a
-    /// `ValidBlob` so regardless of what the state does we can't accidentally return something
-    /// invalid.
-    fn from(blob: ValidBlob<'a, T>) -> Self {
-        unsafe { BlobValidator::new(blob.into(), Default::default()) }
-    }
-}
+impl<'a, T: ?Sized + Pointee> Copy for ValidBlob<'a, T> {}
 
 #[cfg(test)]
 mod test {
 }
-*/

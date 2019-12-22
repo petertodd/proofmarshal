@@ -1,5 +1,6 @@
 //! Targets of pointers.
 
+use core::any::Any;
 use core::fmt;
 use core::hash::Hash;
 use core::ptr::NonNull;
@@ -10,7 +11,7 @@ use core::alloc::Layout;
 mod maybedropped;
 pub use self::maybedropped::MaybeDropped;
 
-use crate::marshal::primitive::Primitive;
+use crate::load::Validate;
 
 /// A target of a pointer.
 ///
@@ -19,7 +20,7 @@ use crate::marshal::primitive::Primitive;
 /// Other code can assume `Pointee` is implemented correctly.
 pub unsafe trait Pointee {
     /// Fat pointer metadata.
-    type Metadata : Primitive + Copy + fmt::Debug + Eq + Ord + Hash + Send + Sync;
+    type Metadata : Validate + Any + Copy + fmt::Debug + Eq + Ord + Hash + Send + Sync;
 
     fn metadata(this: &Self) -> Self::Metadata {
         Self::metadata_from_dropped(MaybeDropped::from_ref(this))

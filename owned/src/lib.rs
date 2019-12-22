@@ -15,13 +15,13 @@ pub use self::refs::Ref;
 pub unsafe trait Owned {
     type Owned : Borrow<Self> + Take<Self>;
 
-    unsafe fn to_owned(this: &mut ManuallyDrop<Self>) -> Self::Owned;
+    unsafe fn to_owned(this: &ManuallyDrop<Self>) -> Self::Owned;
 }
 
 unsafe impl<T> Owned for T {
     type Owned = T;
 
-    unsafe fn to_owned(this: &mut ManuallyDrop<Self>) -> Self::Owned {
+    unsafe fn to_owned(this: &ManuallyDrop<Self>) -> Self::Owned {
         (this as *const _ as *const Self).read()
     }
 }
@@ -29,7 +29,7 @@ unsafe impl<T> Owned for T {
 unsafe impl<T> Owned for [T] {
     type Owned = Vec<T>;
 
-    unsafe fn to_owned(this: &mut ManuallyDrop<[T]>) -> Self::Owned {
+    unsafe fn to_owned(this: &ManuallyDrop<[T]>) -> Self::Owned {
         let len = this.len();
 
         let mut r = Vec::<T>::with_capacity(len);

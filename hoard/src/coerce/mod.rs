@@ -2,12 +2,23 @@
 
 use core::mem;
 
+mod slice;
+pub use self::slice::*;
+
+mod scalars;
+pub use self::scalars::*;
+
 pub unsafe trait CastRef<T: ?Sized> {
     fn as_cast_ref(&self) -> &T;
 }
 
 pub unsafe trait CastMut<T: ?Sized> : CastRef<T> {
-    fn as_cast_mut(&mut self) -> &mut T;
+    fn as_cast_mut(&mut self) -> &mut T {
+        let r = self.as_cast_ref();
+
+        #[allow(mutable_transmutes)]
+        unsafe { mem::transmute(r) }
+    }
 }
 
 pub unsafe trait Cast<T> : CastRef<T> {
@@ -22,7 +33,12 @@ pub unsafe trait TryCastRef<T: ?Sized> {
 }
 
 pub unsafe trait TryCastMut<T: ?Sized> : TryCastRef<T> {
-    fn try_cast_mut(&mut self) -> Result<&mut T, Self::Error>;
+    fn try_cast_mut(&mut self) -> Result<&mut T, Self::Error> {
+        let r = self.try_cast_ref()?;
+
+        #[allow(mutable_transmutes)]
+        Ok(unsafe { mem::transmute(r) })
+    }
 }
 
 pub unsafe trait TryCast<T> : TryCastRef<T> {
@@ -96,37 +112,4 @@ unsafe impl TryCastMut<!> for ! {
     fn try_cast_mut(&mut self) -> Result<&mut Self, !> {
         match *self {}
     }
-}
-
-macro_rules! unsafe_impl_identity_cast {
-    ($( $t:ty, )*) => {$(
-        unsafe impl TryCastRef<$t> for $t {
-            type Error = !;
-
-            #[inline(always)]
-            fn try_cast_ref(&self) -> Result<&Self, !> {
-                Ok(self)
-            }
-        }
-
-        unsafe impl TryCast<$t> for $t {
-            #[inline(always)]
-            fn try_cast(self) -> Result<Self, !> where Self: Sized {
-                Ok(self)
-            }
-        }
-
-        unsafe impl TryCastMut<$t> for $t {
-            #[inline(always)]
-            fn try_cast_mut(&mut self) -> Result<&mut Self, !> {
-                Ok(self)
-            }
-        }
-    )*}
-}
-
-unsafe_impl_identity_cast! {
-    (), bool,
-    u8, u16, u32, u64, u128,
-    i8, i16, i32, i64, i128,
 }

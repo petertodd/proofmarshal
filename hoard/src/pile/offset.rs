@@ -1,3 +1,4 @@
+/*
 //! Pile pointers.
 //!
 //! # Lifetimes
@@ -56,34 +57,25 @@
 //!
 //! Note the lifetimes! It's the pointer's job to "own" that data, so `Offset<'p, 'v>` owns a
 //! phantom `&'s [u8]`.
+*/
 
-use core::any::Any;
 use core::cmp;
-use core::convert::{TryFrom, TryInto};
+use core::convert::TryInto;
 use core::fmt;
 use core::marker::PhantomData;
-use core::mem::{self, ManuallyDrop};
+use core::mem;
 use core::num::NonZeroU64;
-use core::ptr::{self, NonNull};
-use core::ops;
+use core::ptr::NonNull;
 
 use std::alloc::Layout;
 
 use leint::Le;
 use nonzero::NonZero;
-use owned::Owned;
 
-use super::*;
+use super::Pile;
 
-use crate::{
-    prelude::*,
-
-    pointee::Pointee,
-    coerce::{TryCast, TryCastRef, TryCastMut},
-    marshal::prelude::*,
-    marshal::primitive::Primitive,
-    zone::ValidPtr,
-};
+use crate::blob;
+use crate::load::{Validate, ValidationError};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -95,34 +87,25 @@ pub struct Offset<'pile, 'version> {
     raw: Le<NonZeroU64>,
 }
 
+impl fmt::Debug for Offset<'_,'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        assert!(self.raw.get().get() & 1 == 1);
+        <usize as fmt::Debug>::fmt(&self.get(), f)
+    }
+}
+
 unsafe impl NonZero for Offset<'_,'_> {}
+unsafe impl NonZero for OffsetMut<'_,'_> {}
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct OffsetMut<'p,'v>(Offset<'p,'v>);
 
-unsafe impl NonZero for OffsetMut<'_,'_> {}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Kind<'p,'v> {
     Offset(Offset<'p,'v>),
     Ptr(NonNull<u16>),
-}
-
-impl fmt::Debug for Offset<'_,'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        assert!(self.raw.get().get() & 1 == 1);
-        f.debug_tuple("Offset")
-            .field(&self.get())
-            .finish()
-    }
-}
-
-
-#[derive(Debug)]
-pub struct OffsetError {
-    pub(super) offset: usize,
-    pub(super) size: usize,
 }
 
 impl<'p,'v> Offset<'p,'v> {
@@ -153,6 +136,7 @@ impl<'p,'v> Offset<'p,'v> {
     }
 }
 
+/*
 impl From<Offset<'_, '_>> for usize {
     fn from(offset: Offset<'_,'_>) -> usize {
         offset.get()
@@ -198,6 +182,7 @@ unsafe impl<'p,'v> TryCast<Offset<'p,'v>> for OffsetMut<'p,'v> {
         self.try_cast_ref().map(|r| *r)
     }
 }
+*/
 
 impl<'p, 'v> From<Offset<'p,'v>> for OffsetMut<'p,'v> {
     #[inline]
@@ -206,6 +191,7 @@ impl<'p, 'v> From<Offset<'p,'v>> for OffsetMut<'p,'v> {
     }
 }
 
+/*
 impl<'p,'v> Ptr for Offset<'p, 'v> {
     type Persist = Self;
     type Zone = Pile<'p, 'v>;
@@ -255,6 +241,7 @@ impl<'p,'v> Ptr for Offset<'p, 'v> {
     }
     */
 }
+*/
 
 impl fmt::Pointer for Offset<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -262,44 +249,35 @@ impl fmt::Pointer for Offset<'_, '_> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum DecodeOffsetError {
-    Ptr(u64),
-    OutOfRange(u64),
-}
-
-unsafe impl Primitive for Offset<'_,'_> {
-    type Error = DecodeOffsetError;
+impl Validate for Offset<'_,'_> {
+    type Error = ValidateOffsetError;
 
     #[inline]
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
-        dst.write_bytes(&self.raw.get().get().to_le_bytes())?
-           .finish()
-    }
+    fn validate<B: blob::BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        blob.validate_bytes(|blob| {
+            let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
 
-    #[inline]
-    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
-
-        if raw & 1 == 0 {
-            Err(DecodeOffsetError::Ptr(raw))
-        } else {
-            let raw = raw >> 1;
-            if raw <= Self::MAX as u64 {
-                unsafe { Ok(blob.assume_valid()) }
+            if raw & 1 == 0 {
+                Err(ValidateOffsetError(raw))
             } else {
-                Err(DecodeOffsetError::OutOfRange(raw))
+                let idx = raw >> 1;
+                if idx <= Self::MAX as u64 {
+                    unsafe { Ok(blob.assume_valid()) }
+                } else {
+                    Err(ValidateOffsetError(raw))
+                }
             }
-        }
+        })
     }
 }
 
-impl Default for OffsetMut<'static, '_> {
-    fn default() -> Self {
-        Offset::new(0).unwrap().into()
-    }
+#[derive(Debug, PartialEq, Eq)]
+pub struct ValidateOffsetError(u64);
+
+impl ValidationError for ValidateOffsetError {
 }
 
+/*
 impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
     type Persist = Offset<'p, 'v>;
     type Zone = PileMut<'p, 'v>;
@@ -390,16 +368,8 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
     }
     */
 }
+*/
 
-#[inline]
-fn fix_layout(layout: Layout) -> Layout {
-    unsafe {
-        Layout::from_size_align_unchecked(
-            layout.size(),
-            cmp::min(layout.align(), 2),
-        )
-    }
-}
 
 impl<'s,'m> OffsetMut<'s,'m> {
     #[inline]
@@ -424,25 +394,23 @@ impl<'s,'m> OffsetMut<'s,'m> {
         }
     }
 
-    #[inline]
-    pub(super) unsafe fn alloc<T: ?Sized + Pointee>(src: &ManuallyDrop<T>) -> Self {
-        let layout = fix_layout(Layout::for_value(src));
-
-        let ptr = if layout.size() > 0 {
-            let dst = NonNull::new(std::alloc::alloc(layout))
-                              .unwrap_or_else(|| std::alloc::handle_alloc_error(layout));
-
-            ptr::copy_nonoverlapping(src as *const _ as *const u8, dst.as_ptr(),
-                                layout.size());
-
-            dst.cast()
-        } else {
-            NonNull::new_unchecked(layout.align() as *mut u16)
-        };
-
-        Self::from_ptr(ptr)
+    #[inline(always)]
+    pub fn get_offset(&self) -> Option<Offset<'s,'m>> {
+        match self.kind() {
+            Kind::Offset(offset) => Some(offset),
+            Kind::Ptr(_) => None,
+        }
     }
 
+    #[inline(always)]
+    pub fn get_ptr(&self) -> Option<NonNull<u16>> {
+        match self.kind() {
+            Kind::Ptr(ptr) => Some(ptr),
+            Kind::Offset(_) => None,
+        }
+    }
+
+    /*
     #[inline]
     pub(super) unsafe fn try_take<T: ?Sized + Pointee + Owned>(self, metadata: T::Metadata) -> Result<T::Owned, Offset<'s,'m>> {
         let this = ManuallyDrop::new(self);
@@ -464,6 +432,7 @@ impl<'s,'m> OffsetMut<'s,'m> {
             }
         }
     }
+    */
 }
 
 impl fmt::Debug for OffsetMut<'_,'_> {

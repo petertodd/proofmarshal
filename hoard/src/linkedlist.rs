@@ -1,240 +1,233 @@
+use core::convert::identity;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
 use core::ptr;
 
 use crate::prelude::*;
-use crate::marshal::prelude::*;
+use crate::load::*;
+use crate::blob::*;
+use crate::zone::*;
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct Cell<T, P: Ptr> {
+pub struct LinkedList<T, Z: Zone> {
+    tip: Option<OwnedPtr<Cell<T,Z>, Z>>,
+}
+
+impl<T, Z: Zone> LinkedList<T, Z> {
+    pub fn new() -> Own<Self, Z>
+        where Z: Default
+    {
+        Own { this: Self::default(), zone: Z::default() }
+    }
+
+    pub fn push_front(&mut self, value: T)
+        where Z: Default
+    {
+        let old_tip = self.tip.take();
+        let new_tip = Z::allocator().alloc(Cell { value, next: old_tip });
+
+        self.tip = Some(new_tip);
+    }
+}
+
+impl<T: Load<Z>, Z: Zone> LinkedList<T, Z> {
+    pub fn pop_front(mut self: RefMut<Self, Z>) -> Option<T>
+        where Z: Get
+    {
+        match self.this.tip.take() {
+            None => None,
+            Some(old_tip) => {
+                let old_tip = self.zone.take(old_tip).this;
+
+                self.this.tip = old_tip.next;
+                Some(old_tip.value)
+            },
+        }
+    }
+
+    pub fn get<'a>(self: Ref<'a, Self, Z>, n: usize) -> Option<&'a T>
+        where Z: Get
+    {
+        match self.tip.as_ref() {
+            Some(tip) => self.zone.get(tip).get(n),
+            None => None,
+        }
+    }
+}
+
+impl<T, Z: Zone> Default for LinkedList<T,Z> {
+    fn default() -> Self {
+        Self { tip: None }
+    }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct Cell<T, Z: Zone> {
     value: T,
-    next: Option<OwnedPtr<Self, P>>,
+    next: Option<OwnedPtr<Self, Z>>,
 }
 
-pub struct EncodeCellState<'a, T: SaveState<'a, P>, P: Ptr> {
-    marker: PhantomData<&'a ()>,
-
-    stack: Vec<*const Cell<T,P>>,
-
-    value: T::State,
-    next: Option<P::Persist>,
-}
-
-impl<'a, T, P: Ptr> SaveState<'a, P> for Cell<T,P>
-where T: Encode<P>
-{
-    type State = EncodeCellState<'a, T, P>;
-
-    fn init_save_state(&'a self) -> Self::State {
-        todo!()
-    }
-}
-
-unsafe impl<T, P: Ptr> Encode<P> for Cell<T,P>
-where T: Encode<P>
-{
-    fn encode_poll<'a, D: Dumper<P>>(&'a self, state: &mut <Self as SaveState<'a,P>>::State, dumper: D) -> Result<D, D::Pending> {
-        todo!()
-    }
-
-    fn encode_blob<'a, W: WriteBlob>(&'a self, state: &<Self as SaveState<'a,P>>::State, dst: W) -> Result<W::Ok, W::Error> {
-        todo!()
-    }
-}
-
-/*
-impl<T, P: Ptr> Cell<T, P> {
-    pub fn new(value: T, next: Option<OwnedPtr<Self, P>>) -> Self {
-        Self { value, next }
-    }
-
-    /*
-    pub fn value<'a>(self: Ref<'a, Self>) -> Ref<'a, T> {
-        match self {
-            Ref::Borrowed(this) => Ref::Borrowed(&this.value),
-            Ref::Owned(this) => Ref::Owned(this.value),
-        }
-    }
-
-    pub fn next<'a>(self: Ref<'a, Self>) -> Option<Ref<'a, OwnedPtr<Self, P>>> {
-        match self {
-            Ref::Borrowed(this) => this.next.as_ref().map(Ref::Borrowed),
-            Ref::Owned(this) => this.next.map(Ref::Owned),
-        }
-    }
-
-    pub fn get<'a>(self: Ref<'a, Self>, mut n: usize, zone: &impl Get<P>) -> Option<Ref<'a, T>>
-        where T: Decode<P>,
+impl<T: Load<Z>, Z: Zone> Cell<T, Z> {
+    pub fn get<'a>(self: Ref<'a, Self, Z>, mut n: usize) -> Option<&'a T>
+        where Z: Get
     {
         let mut this = self;
-        loop {
-            if n == 0 {
-                break Some(this.value())
-            } else if let Some(next) = this.next() {
-                n -= 1;
-                this = zone.get_ref(next);
-            } else {
-                break None
-            }
-        }
-    }
-    */
 
-    pub fn push_front(self: RefMut<Self, P>, value: T)
-        where P: Default
-    {
-        let old_value = mem::replace(&mut self.this.value, value);
-        let next = Self {
-            value: old_value,
-            next: self.this.next.take(),
+        while n != 0 {
+            n -= 1;
+            match this.next.as_ref() {
+                Some(next) => {
+                    this = this.zone.get(next);
+                },
+                None => return None,
+            }
         };
 
-        self.this.next = Some(P::allocator().alloc(next));
+        Some(&this.value)
     }
 }
 
-impl<T, P: Ptr> Primitive for Cell<T,P> {
-    type Error = !;
+impl<T, Z: Zone> Validate for LinkedList<T,Z>
+where T: Validate
+{
+    type Error = <Option<OwnedPtr<Cell<T,Z>, Z>> as Validate>::Error;
 
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(0);
-
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
-        todo!()
-    }
-
-    fn validate_blob<'a, Q: Ptr>(blob: Blob<'a, Self, Q>) -> Result<FullyValidBlob<'a, Self, Q>, Self::Error> {
-        todo!()
-    }
-
-    fn decode_blob<'a, Q: Ptr>(blob: FullyValidBlob<'a, Self, Q>) -> Self {
-        todo!()
+    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        let mut blob = blob.validate_struct();
+        blob.field::<Option<OwnedPtr<Cell<T,Z>, Z>>,_>(identity)?;
+        unsafe { blob.assume_valid() }
     }
 }
 
-/*
+unsafe impl<T, Z: Zone> Load<Z> for LinkedList<T,Z>
+where T: Load<Z>
+{
+    type ValidateChildren = <Option<OwnedPtr<Cell<T,Z>, Z>> as Load<Z>>::ValidateChildren;
+
+    fn validate_children(&self) -> Self::ValidateChildren {
+        self.tip.validate_children()
+    }
+}
+
 #[derive(Debug)]
-pub struct CellEncodeState<T, P> {
-    idx: usize,
-    value_state: T,
-    encode_poll_done: bool,
-    next: Option<P>,
+pub enum ValidateCellError<T, N> {
+    Value(T),
+    Next(N),
 }
 
-fn encode_cell_blob<T, P, Z, W>(value: &T, state: &T::State, ptr: &Option<P::Persist>, dst: W) -> Result<W::Ok, W::Error>
-where P: Ptr,
-      Z: Zone<Ptr=P>,
-      T: Encode<Z>,
-      W: WriteBlob,
-{
-    let ptr_state = <Option<P::Persist> as Encode<Z>>::init_encode_state(ptr);
-    dst.write(value, state)?
-       .write::<Z,_>(ptr, &ptr_state)?
-       .finish()
+impl<T: ValidationError, N: ValidationError> ValidationError for ValidateCellError<T, N> {
 }
 
-unsafe impl<T, P: Ptr, Z> Encode<Z> for Cell<T, P>
-where Z: Zone<Ptr=P>,
-      T: Encode<Z>
+
+impl<T, Z: Zone> Validate for Cell<T,Z>
+where T: Validate
 {
-    type State = CellEncodeState<T::State, P::Persist>;
+    type Error = ValidateCellError<<T as Validate>::Error,
+                                   <Option<OwnedPtr<Self, Z>> as Validate>::Error>;
 
-    const BLOB_LAYOUT: BlobLayout = T::BLOB_LAYOUT.extend(<Option<OwnedPtr<Self, P>> as Encode<Z>>::BLOB_LAYOUT);
+    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        let mut blob = blob.validate_struct();
+        blob.field::<T,_>(ValidateCellError::Value)?;
+        blob.field::<Option<OwnedPtr<Self, Z>>,_>(ValidateCellError::Next)?;
+        unsafe { blob.assume_valid() }
+    }
+}
 
-    fn init_encode_state(&self) -> Self::State {
-        let mut idx = 0;
-        let mut this = self;
-        loop {
-            match this.next.as_ref().map(|next| P::try_get_dirty(next)) {
-                Some(Ok(next)) => {
-                    idx += 1;
-                    this = next;
-                },
-                Some(Err(persist)) => break CellEncodeState {
-                                                idx,
-                                                value_state: this.value.init_encode_state(),
-                                                encode_poll_done: false,
-                                                next: Some(persist),
-                },
-                None => break CellEncodeState {
-                                idx,
-                                value_state: this.value.init_encode_state(),
-                                encode_poll_done: false,
-                                next: None,
-                },
-            }
+pub struct CellValidator<T: Load<Z>, Z: Zone> {
+    value: T::ValidateChildren,
+    next: Option<FatPtr<Cell<T, Z>, Z::Persist>>,
+}
+
+unsafe impl<T, Z: Zone> Load<Z> for Cell<T,Z>
+where T: Load<Z>
+{
+    type ValidateChildren = CellValidator<T, Z>;
+
+    fn validate_children(&self) -> Self::ValidateChildren {
+        CellValidator {
+            value: self.value.validate_children(),
+            next: self.next.as_ref()
+                      .and_then(|ptr| Z::try_get_dirty(ptr).err())
         }
     }
+}
 
-    fn encode_poll<D: Dumper<Z>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Pending> {
-        let mut stack = Vec::with_capacity(state.idx);
-
-        let mut this = self;
-        for i in 0 .. state.idx {
-            if let Some(Ok(next)) = this.next.as_ref().map(|next| P::try_get_dirty(next)) {
-                stack.push(this);
-                this = next;
-            } else {
-                panic!()
-            }
-        }
-
-
+impl<T, Z: Zone> ValidateChildren<Z> for CellValidator<T,Z>
+where T: Load<Z>
+{
+    fn poll<V: PtrValidator<Z>>(&mut self, ptr_validator: &V) -> Result<(), V::Error> {
         loop {
-            if !state.encode_poll_done {
-                dumper = this.value.encode_poll(&mut state.value_state, dumper)?;
-                state.encode_poll_done = true;
-            }
+            self.value.poll(ptr_validator)?;
 
-            if stack.len() > 0 {
-                let (new_dumper, next) = dumper.try_save_blob(Self::BLOB_LAYOUT.size(), |dst| {
-                    match encode_cell_blob(&this.value, &state.value_state, &state.next, dst) {
-                        Ok(()) => (),
-                        Err(never) => never,
+            match self.next.as_ref() {
+                Some(next) => {
+                    match ptr_validator.validate_ptr(next)? {
+                        Some(next) => {
+                            *self = next;
+                        },
+                        None => break Ok(()),
                     }
-                })?;
-                dumper = new_dumper;
-
-                this = stack.pop().unwrap();
-                state.idx -= 1;
-                state.encode_poll_done = false;
-                state.value_state = this.value.init_encode_state();
-                state.next = Some(next);
-            } else {
-                break Ok(dumper)
+                },
+                None => break Ok(()),
             }
         }
     }
-
-    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        assert_eq!(state.idx, 0);
-        assert!(state.encode_poll_done);
-        encode_cell_blob(&self.value, &state.value_state, &state.next, dst)
-    }
 }
-*/
+
+use crate::pile::*;
+pub fn test_linkedlist_validate<'p,'v>(
+    pile: Pile<'p,'v>,
+    list: &LinkedList<bool, Pile<'p, 'v>>,
+) -> Result<(), crate::pile::error::ValidatorError<'p,'v>>
+{
+    let mut validator = list.validate_children();
+    validator.poll(&pile)
+}
+
+use crate::pile::*;
+pub fn test_linkedlist_validate2<'p,'v>(
+    pile: Pile<'p,'v>,
+    list: &LinkedList<LinkedList<bool, Pile<'p,'v>>, Pile<'p, 'v>>,
+) -> Result<(), crate::pile::error::ValidatorError<'p,'v>>
+{
+    let mut validator = list.validate_children();
+    validator.poll(&pile)
+}
+
+pub fn foo() {}
+
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     use crate::pile::*;
 
-    use crate::heap::{Heap, HeapPtr};
-    use crate::refs::Own;
-
     #[test]
-    fn test() {
-        let mut cell: Cell<u8, HeapPtr> = Cell::new(0u8, None);
-        let mut cell = Own::<_, HeapPtr>::from(cell);
+    fn linkedlist_push() {
+        let mut l = LinkedList::<u8, PileMut>::new();
 
-        for i in 1 .. 100 {
-            cell.as_mut().push_front(i);
+        for i in 0 .. 100 {
+            l.push_front(i);
         }
 
         for i in 0 .. 100 {
-            //assert_eq!(*cell.get(i, &Heap).unwrap(), 99 - (i as u8));
+            let n = l.as_ref().get(i);
+            let expected = 99 - i as u8;
+            assert_eq!(n.copied(), Some(expected));
+        }
+
+        for i in 0 .. 100 {
+            let n = l.as_mut().pop_front().unwrap();
+            let expected = 99 - i as u8;
+            assert_eq!(n, expected);
         }
     }
+
+    #[test]
+    fn linkedlist_default() {
+        let _ = LinkedList::<u8, Pile>::default();
+    }
 }
-*/

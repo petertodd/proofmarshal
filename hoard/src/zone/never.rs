@@ -7,58 +7,66 @@ use owned::Owned;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
-/*
-/// An uninhabited pointer allocator.
+/// An uninhabited allocator.
 ///
-/// Useful when a `Ptr` doesn't implement `Default`.
+/// Useful when a `Zone` doesn't implement `Default`.
 #[allow(unreachable_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NeverAllocator<P> {
-    marker: PhantomData<fn(P) -> P>,
+pub struct NeverAllocator<Z> {
+    marker: PhantomData<fn() -> Z>,
     never: !,
 }
 
-impl<P: Ptr> Alloc for NeverAllocator<P> {
-    type Ptr = P;
+impl<Z: Zone> Alloc for NeverAllocator<Z> {
+    type Zone = Z;
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, _src: impl Take<T>) -> OwnedPtr<T, Self::Ptr> {
+    fn alloc<T: ?Sized + Pointee>(&mut self, _src: impl Take<T>) -> OwnedPtr<T, Self::Zone> {
         match self.never {}
     }
 
+    /*
     fn zone(&self) -> P::Zone {
         match self.never {}
     }
+    */
 }
-*/
 
-impl Ptr for ! {
-    type Persist = !;
-    type Zone = !;
-    //type Allocator = NeverAllocator<!>;
+impl Zone for ! {
+    type Ptr = !;
+    type Persist = Self;
+    type Allocator = NeverAllocator<Self>;
+    type Error = !;
 
-    fn zone() -> ! { // where Self: Default
-        unreachable!()
+    fn allocator() -> Self::Allocator {
+        unreachable!("! doesn't implement Default")
+    }
+
+    fn duplicate(&self) -> Self {
+        match *self {}
     }
 
     fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
         match ptr.raw {}
     }
 
-    fn dealloc_owned<T: ?Sized + Pointee>(ptr: OwnedPtr<T,Self>) {
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
         match ptr.raw {}
     }
 
-    /*
-    fn drop_take_unsized<T: ?Sized + Pointee>(ptr: OwnedPtr<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
-        match ptr.raw {}
+    fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
+        owned: OwnedPtr<T, Self>,
+        _: impl FnOnce(Result<&mut ManuallyDrop<T>, FatPtr<T, Self::Persist>>) -> R,
+    ) -> R
+    {
+        match owned.raw {}
     }
-
-    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist> {
-        match ptr.raw {}
-    }
-    */
 }
 
+impl PersistZone for ! {
+    type PersistPtr = !;
+}
+
+/*
 impl PtrMut for ! {}
 
 impl<P: Ptr> Zone<P> for ! {
@@ -80,3 +88,4 @@ impl<P: Ptr> ZoneMut<P> for ! {
     }
     */
 }
+*/

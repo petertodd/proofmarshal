@@ -1,21 +1,127 @@
 //! Zones where data can be stored.
 
-use core::any::type_name;
+use core::any::{Any, type_name};
+use core::borrow::Borrow;
 use core::mem::ManuallyDrop;
 use core::fmt;
+use core::ops;
 
 use nonzero::NonZero;
-use owned::Take;
+use owned::{Take, Owned};
 
 use crate::{
     coerce,
     pointee::Pointee,
-    refs::*,
-    marshal::{
-        prelude::*,
-        primitive::Primitive,
-    },
+    load::{Load, Validate},
 };
+
+pub mod refs;
+use self::refs::*;
+
+mod error;
+pub use self::error::{PtrError, PtrResult};
+
+pub trait Zone : Sized {
+    type Ptr : NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
+    type Persist : PersistZone;
+    type Allocator : Alloc<Zone=Self>;
+
+    type Error : fmt::Debug;
+
+    fn allocator() -> Self::Allocator
+        where Self: Default
+    {
+        unimplemented!("{} implements Default", type_name::<Self>())
+    }
+
+    fn duplicate(&self) -> Self;
+
+    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self>
+        where Self: Clone;
+
+    fn fmt_debug_valid_ptr<T: ?Sized + Pointee, P>(ptr: &P, f: &mut fmt::Formatter<'_>) -> fmt::Result
+        where T: fmt::Debug,
+              P: Borrow<ValidPtr<T, Self>>,
+    {
+        let ptr = ptr.borrow();
+        f.debug_struct(type_name::<P>())
+            .field("raw", &ptr.raw)
+            .field("metadata", &ptr.metadata)
+            .finish()
+    }
+
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>>;
+
+    fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
+        owned: OwnedPtr<T, Self>,
+        f: impl FnOnce(Result<&mut ManuallyDrop<T>, FatPtr<T, Self::Persist>>) -> R,
+    ) -> R;
+
+    fn try_take_dirty<T: ?Sized + Pointee + Owned>(owned: OwnedPtr<T, Self>) -> Result<T::Owned, FatPtr<T, Self::Persist>> {
+        Self::try_take_dirty_unsized(owned, |src| {
+            match src {
+                Err(fatptr) => Err(fatptr),
+                Ok(unsized_value) => unsafe { Ok(T::to_owned(unsized_value)) },
+            }
+        })
+    }
+}
+
+pub trait PersistZone : Zone {
+    type PersistPtr : 'static + Validate + NonZero;
+}
+
+pub trait Alloc : Sized {
+    type Zone : Zone;
+
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, Self::Zone>;
+}
+
+pub trait TryGet : Zone {
+    fn try_get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self>)
+        -> PtrResult<Ref<'a, T, Self>, T, Self>;
+
+    fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>)
+        -> PtrResult<Own<T::Owned, Self>, T, Self>;
+}
+
+pub trait TryGetMut : TryGet {
+    fn try_get_mut<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut ValidPtr<T, Self>)
+        -> PtrResult<RefMut<'a, T, Self>, T, Self>;
+}
+
+pub trait Get : Zone {
+    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self>) -> Ref<'a, T, Self>;
+    fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>) -> Own<T::Owned, Self>;
+}
+
+impl<Z: Get<Error=!>> TryGet for Z {
+    fn try_get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self>)
+        -> PtrResult<Ref<'a, T, Self>, T, Self>
+    {
+        Ok(self.get(ptr))
+    }
+
+    fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>)
+        -> PtrResult<Own<T::Owned, Self>, T, Self>
+    {
+        Ok(self.take(ptr))
+    }
+}
+
+pub trait GetMut : Get {
+    fn get_mut<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut ValidPtr<T, Self>) -> RefMut<'a, T, Self>;
+}
+
+impl<Z: GetMut<Error=!>> TryGetMut for Z {
+    fn try_get_mut<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut ValidPtr<T, Self>)
+        -> PtrResult<RefMut<'a, T, Self>, T, Self>
+    {
+        Ok(self.get_mut(ptr))
+    }
+}
+
 
 pub mod fatptr;
 pub use self::fatptr::FatPtr;
@@ -28,6 +134,7 @@ pub use self::ownedptr::OwnedPtr;
 
 pub mod never;
 
+/*
 /// Generic pointer.
 pub trait Ptr : Sized + NonZero + fmt::Debug {
     /// The persistent version of this pointer, if applicable.
@@ -45,40 +152,6 @@ pub trait Ptr : Sized + NonZero + fmt::Debug {
     /*
     type Allocator : Alloc<Ptr=Self> + Eq + Ord + core::hash::Hash + fmt::Debug;
     */
-
-
-    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self>
-        where Self: Clone;
-
-    fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>);
-
-    fn fmt_debug_own<T: ?Sized + Pointee>(owned: &OwnedPtr<T, Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result
-        where T: fmt::Debug
-    {
-        f.debug_struct(type_name::<OwnedPtr<T, Self>>())
-            .field("raw", &owned.raw)
-            .field("metadata", &owned.metadata)
-            .finish()
-    }
-
-
-    /*
-    fn drop_take<T>(owned: OwnedPtr<T, Self>) -> Option<T> {
-        let mut r = None;
-
-        Self::drop_take_unsized(owned,
-            |src| unsafe {
-                r = Some(ManuallyDrop::take(src));
-            }
-        );
-
-        r
-    }
-
-    fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>));
-
-    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist>;
-    */
 }
 
 //pub trait PersistPtr<P> : Ptr + Cast<P> {
@@ -95,15 +168,8 @@ pub trait Zone<P: Ptr> {
 }
 
 pub trait ZoneMut<P: Ptr> : Zone<P> {
-    //fn get_mut<'a, T: ?Sized + Load<P>>(&self, ptr: &'a mut ValidPtr<T, P>) -> RefMut<'a, T, P>;
 }
 
-pub trait Alloc : Sized {
-    type Ptr : Ptr;
-
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, Self::Ptr>;
-    //fn zone(&self) -> <Self::Ptr as Ptr>::Zone;
-}
 
 /*
 impl<A: Alloc> Alloc for &'_ mut A {
@@ -117,4 +183,5 @@ impl<A: Alloc> Alloc for &'_ mut A {
         (**self).zone()
     }
 }
+*/
 */
