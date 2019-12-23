@@ -1,5 +1,4 @@
-use crate::marshal::prelude::*;
-use crate::zone::Ptr;
+use super::*;
 
 #[derive(Debug)]
 pub struct TupleError;
@@ -11,45 +10,6 @@ macro_rules! peel {
 macro_rules! tuple {
     () => ();
     ( $(($name:ident, $state:ident),)+ ) => {
-        #[allow(non_snake_case)]
-        impl<'a, P: Ptr, $($name: SaveState<'a, P>),+ > SaveState<'a, P> for ($($name,)+) {
-            type State = ( $(<$name as SaveState<'a, P>>::State,)+ );
-
-            fn init_save_state(&'a self) -> Self::State {
-                assert_eq!(core::mem::align_of::<Self>(), 1);
-
-                let ($(ref $name,)+) = self;
-                ( $($name.init_save_state(),)+ )
-            }
-        }
-
-        #[allow(non_snake_case)]
-        unsafe impl<P: Ptr, $($name: Encode<P>),+ > Encode<P> for ($($name,)+) {
-            fn encode_poll<'a, D: Dumper<P>>(&'a self, state: &mut ( $(<$name as SaveState<'a, P>>::State,)+ ), dumper: D)
-                -> Result<D, D::Pending>
-            {
-                assert_eq!(core::mem::align_of::<Self>(), 1);
-                let ($(ref $name,)+) = self;
-                let ($(ref mut $state,)+) = state;
-                $(
-                    let dumper = $name.encode_poll($state, dumper)?;
-                )+
-                Ok(dumper)
-            }
-
-            fn encode_blob<'a, W: WriteBlob>(&'a self, state: &( $(<$name as SaveState<'a, P>>::State,)+ ), dst: W)
-                -> Result<W::Ok, W::Error>
-            {
-                assert_eq!(core::mem::align_of::<Self>(), 1);
-                let ($(ref $name,)+) = self;
-                let ($(ref $state,)+) = state;
-                $(
-                    let dst = dst.write($name, $state)?;
-                )+
-                dst.finish()
-            }
-        }
-
         /*
         impl<P: Ptr, $($name: Decode<P>),+ > Decode<P> for ($($name,)+) {
             type Error = TupleError;
@@ -68,20 +28,20 @@ macro_rules! tuple {
                 ( $( fields.field::<$name>(), )+ )
             }
         }
+        */
 
         #[allow(non_snake_case)]
-        impl<P: Ptr, $($name: ValidateChildren<P>),+ > ValidateChildren<P> for ($($name,)+) {
-            fn validate_children<V>(&mut self, validator: &mut V) -> Result<(), V::Error>
-                where V: ValidatePtr<P>
+        impl<Z: Zone, $($name: ValidateChildren<Z>),+ > ValidateChildren<Z> for ($($name,)+) {
+            fn poll<V>(&mut self, validator: &V) -> Result<(), V::Error>
+                where V: PtrValidator<Z>
             {
                 let ($(ref mut $name,)+) = self;
                 $(
-                    $name.validate_children(validator)?;
+                    $name.poll(validator)?;
                 )+
                 Ok(())
             }
         }
-        */
 
         peel! { $( ($name, $state), )+ }
     }

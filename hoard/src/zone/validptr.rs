@@ -12,6 +12,7 @@ use nonzero::NonZero;
 
 use crate::blob::{BlobValidator, StructValidator};
 use crate::load::{Validate, ValidateChildren, PtrValidator};
+use crate::save::*;
 
 /// Wrapper around a `FatPtr` guaranteeing that the target of the pointer is valid.
 ///
@@ -28,32 +29,6 @@ impl<T: ?Sized + Pointee, Z: Zone> ops::Deref for ValidPtr<T, Z> {
 }
 
 unsafe impl<T: ?Sized + Pointee, Z: Zone> NonZero for ValidPtr<T, Z> {}
-
-/*
-unsafe impl<T: ?Sized + Pointee, P, Q> TryCastRef<ValidPtr<T,Q>> for ValidPtr<T,P>
-where P: TryCastRef<Q>
-{
-    type Error = P::Error;
-
-    fn try_cast_ref(&self) -> Result<&ValidPtr<T,Q>, Self::Error> {
-        self.0.try_cast_ref()
-            .map(|inner| unsafe { mem::transmute(inner) })
-    }
-}
-
-unsafe impl<T: ?Sized + Pointee, P, Q> TryCastMut<ValidPtr<T,Q>> for ValidPtr<T,P>
-where P: TryCastMut<Q>
-{
-    fn try_cast_mut(&mut self) -> Result<&mut ValidPtr<T,Q>, Self::Error> {
-        self.0.try_cast_mut()
-            .map(|inner| unsafe { mem::transmute(inner) })
-    }
-}
-
-unsafe impl<T: ?Sized + Pointee, P, Q> TryCast<ValidPtr<T,Q>> for ValidPtr<T,P>
-where P: TryCast<Q>
-{}
-*/
 
 impl<T: ?Sized + Pointee, Z: Zone> ValidPtr<T, Z> {
     /// Creates a new `ValidPtr` from a `FatPtr`.
@@ -95,155 +70,6 @@ where Z::Ptr: fmt::Pointer
         fmt::Pointer::fmt(&self.0, f)
     }
 }
-
-/*
-impl<T: ?Sized + Pointee, P, Q> cmp::PartialEq<ValidPtr<T,Q>> for ValidPtr<T,P>
-where P: cmp::PartialEq<Q>
-{
-    fn eq(&self, other: &ValidPtr<T,Q>) -> bool {
-        &self.0 == &other.0
-    }
-}
-
-impl<T: ?Sized + Pointee, P, Q> cmp::PartialEq<FatPtr<T,Q>> for ValidPtr<T,P>
-where P: cmp::PartialEq<Q>
-{
-    fn eq(&self, other: &FatPtr<T,Q>) -> bool {
-        &self.0 == other
-    }
-}
-
-impl<T: ?Sized + Pointee, P, Q> cmp::PartialEq<ValidPtr<T,Q>> for FatPtr<T,P>
-where P: cmp::PartialEq<Q>
-{
-    fn eq(&self, other: &ValidPtr<T,Q>) -> bool {
-        self == &other.0
-    }
-}
-
-impl<T: ?Sized + Pointee, P> cmp::Eq for ValidPtr<T,P>
-where P: cmp::Eq {}
-
-impl<T: ?Sized + Pointee, P> Clone for ValidPtr<T,P>
-where P: Clone
-{
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<T: ?Sized + Pointee, P> Copy for ValidPtr<T,P>
-where P: Copy {}
-
-impl<T: ?Sized + Pointee, P> hash::Hash for ValidPtr<T,P>
-where P: hash::Hash,
-{
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.0.hash(state)
-    }
-}
-
-/// State used when encoding a `ValidPtr`.
-#[derive(Debug)]
-pub enum EncodeState<'a, T: ?Sized + Pointee + SaveState<'a, P>, P: Ptr> {
-    /// Initial state; `encode_poll()` has not been called.
-    Initial,
-
-    /// We have a value that needs encoding.
-    Value {
-        value: &'a (),
-        metadata: T::Metadata,
-        value_state: T::State,
-    },
-
-    /// We've finished encoding the value (or never needed too) and now have a pointer that needs
-    /// encoding.
-    Ptr(P::Persist),
-}
-
-impl<'a, T, P: Ptr> SaveState<'a, P> for ValidPtr<T,P>
-where T: ?Sized + Save<P>
-{
-    type State = EncodeState<'a, T, P>;
-
-    fn init_save_state(&'a self) -> Self::State {
-        EncodeState::Initial
-    }
-}
-
-unsafe impl<T, P> Encode<P> for ValidPtr<T,P>
-where P: Ptr,
-      T: ?Sized + Save<P>,
-{
-    fn encode_poll<'a, D: Dumper<P>>(&'a self, state: &mut <Self as SaveState<'a, P>>::State, mut dumper: D)
-        -> Result<D, D::Pending>
-    {
-        loop {
-            match state {
-                EncodeState::Initial => {
-                    *state = match dumper.try_save_ptr(self) {
-                        Ok(ptr) => EncodeState::Ptr(ptr),
-                        Err(value) => EncodeState::Value {
-                            value_state: value.init_save_state(),
-                            metadata: T::metadata(value),
-
-                            // SAFETY: being zero-sized, we can safely coerce anything to a &() reference.
-                            value: unsafe { &*(value as *const T as *const ()) },
-                        },
-                    };
-                },
-                EncodeState::Value { value, metadata, value_state } => {
-                    // SAFETY: we created value from a &'a T reference, so we can safely turn it
-                    // back into one
-                    let value: &'a T = unsafe { &*T::make_fat_ptr(*value, *metadata) };
-                    let (d, persist_ptr) = value.save_poll(value_state, dumper)?;
-                    dumper = d;
-
-                    *state = EncodeState::Ptr(persist_ptr);
-                },
-                EncodeState::Ptr(_) => break Ok(dumper),
-            }
-        }
-    }
-
-    fn encode_blob<'a, W: WriteBlob>(&'a self, state: &<Self as SaveState<'a,P>>::State, dst: W) -> Result<W::Ok, W::Error> {
-        if let EncodeState::Ptr(ptr) = state {
-            dst.write_primitive(ptr)?
-               .write_primitive(&self.metadata)?
-               .finish()
-        } else {
-            panic!("encode_blob() called prior to encode_poll() finishing")
-        }
-    }
-}
-
-/*
-unsafe impl<T, P> Decode<P> for ValidPtr<T, P>
-where P: Ptr,
-      T: ?Sized + Load<P>,
-{
-    type Error = super::fatptr::ValidateError<<T::Metadata as Primitive>::Error,
-                                              <P::Persist as Primitive>::Error>;
-
-    type ChildValidator = ValidPtrValidator<T, P>;
-
-    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<BlobValidator<'a, Self, P>, Self::Error> {
-        /*
-        let mut blob = blob.validate_struct();
-        let inner = blob.primitive_field::<FatPtr<T, P::Persist>>()?;
-        Ok((unsafe { blob.done() }, ValidateState::FatPtr(*inner)))
-        */ todo!()
-    }
-
-    /*
-    fn validate_poll<'a, V>(state: &mut Self::ValidateState, validator: &V) -> Result<(), V::Error>
-        where V: PtrValidator<P>
-    {
-    }
-    */
-}
-*/
-*/
 
 impl<T: ?Sized + Validate, Z: Zone> Validate for ValidPtr<T, Z> {
     type Error = <FatPtr<T, Z::Persist> as Validate>::Error;
@@ -295,8 +121,255 @@ unsafe impl<T: ?Sized + Load<Z>, Z: Zone> Load<Z> for ValidPtr<T, Z> {
     }
 }
 
+/// State used when saving a `ValidPtr`.
+#[derive(Debug)]
+pub enum SaveState<'a, T: ?Sized + Save<'a, Y>, Z: Zone, Y: Zone> {
+    /// Initial state; `encode_poll()` has not been called.
+    Initial(&'a ValidPtr<T, Z>),
+
+    /// We have a value that needs encoding.
+    Value {
+        value: &'a T,
+        state: T::State,
+    },
+
+    /// We've finished encoding the value (or never needed too) and now have a pointer that needs
+    /// encoding.
+    Done(FatPtr<T, Y::Persist>),
+}
+
+impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> Encoded<Y> for ValidPtr<T,Z>
+where T: Saved<Y>
+{
+    type Encoded = ValidPtr<T::Saved, Y>;
+}
+
+impl<'a, T: 'a + ?Sized + Pointee, Z: Zone, Y: Zone> Encode<'a, Y> for ValidPtr<T, Z>
+where T: Save<'a, Y>,
+      Z: Encode<'a, Y>,
+{
+    type State = SaveState<'a, T, Z, Y>;
+
+    fn save_children(&'a self) -> Self::State {
+        SaveState::Initial(self)
+    }
+
+    fn poll<D: Dumper<Y>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Error> {
+        loop {
+            *state = match state {
+                SaveState::Initial(this) => {
+                    match Z::zone_save_ptr(this, &dumper) {
+                        Ok(ptr) => todo!(), //SaveState::Done(ptr),
+                        Err(value) => SaveState::Value { state: value.save_children(), value },
+                    }
+                },
+                SaveState::Value { value, state } => {
+                    dumper = value.poll(state, dumper)?;
+
+                    let (d, ptr) = value.save_blob(state, dumper)?;
+                    dumper = d;
+
+                    let ptr = FatPtr {
+                        metadata: T::metadata(value),
+                        raw: dumper.coerce_ptr(ptr),
+                    };
+
+                    SaveState::Done(ptr)
+                },
+                SaveState::Done(_) => break Ok(dumper),
+            }
+        }
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+        //Z::zone_encode_blob(self, state, dst)
+        todo!()
+    }
+}
 /*
+impl<'a, T: ?Sized + Pointee, Z: Zone, Y: Zone> SavePoll<'a, Y> for ValidPtr<T, Z>
+where T: Save<Y>,
+      Z: SavePoll<'a, Y>,
+{
+    type State = Z::State;
+
+    fn save_children(&'a self) -> Self::State {
+        Z::zone_save_children(self)
+    }
+
+    fn poll<D: Dumper<Y>>(&'a self, state: &mut Self::State, dumper: D) -> Result<D, D::Error> {
+        Z::zone_poll(self, state, dumper)
+        /*
+        loop {
+            match state {
+                SaveState::Initial => {
+                    *state = match dumper.save_ptr(self) {
+                        Ok(ptr) => SaveState::Done(ptr),
+                        Err(value) => SaveState::Value {
+                            value_state: value.save_children(),
+                            metadata: T::metadata(value),
+
+                            // SAFETY: being zero-sized, we can safely coerce anything to a &() reference.
+                            value: unsafe { &*(value as *const T as *const ()) },
+                        },
+                    };
+                },
+                SaveState::Value { value, metadata, value_state } => {
+                    // SAFETY: we created value from a &'a T reference, so we can safely turn it
+                    // back into one
+                    let value: &'a T = unsafe { &*T::make_fat_ptr(*value, *metadata) };
+                    dumper = value.poll(value_state, dumper)?;
+
+                    let (d, raw) = value.save_blob(value_state, dumper)?;
+                    dumper = d;
+
+                    *state = SaveState::Done(
+                        FatPtr {
+                            raw: dumper.coerce_ptr(raw),
+                            metadata: *metadata,
+                        }
+                    );
+                },
+                SaveState::Done(_) => break Ok(dumper),
+            }
+        }
+        */
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> Encode<Y> for ValidPtr<T,Z>
+where T: Save<Y>,
+      Z: Encode<Y>,
+{
+    type Type = ValidPtr<T::Type, Y>;
+
+    fn encode_blob<'a, W: WriteBlob>(&self, state: &<Z as SavePoll<'a, Y>>::State, dst: W) -> Result<W::Ok, W::Error> {
+        Z::zone_encode_blob(self, state, dst)
+    }
+}
+*/
+
 /*
+impl<T: ?Sized + Pointee, P, Q> cmp::PartialEq<ValidPtr<T,Q>> for ValidPtr<T,P>
+where P: cmp::PartialEq<Q>
+{
+    fn eq(&self, other: &ValidPtr<T,Q>) -> bool {
+        &self.0 == &other.0
+    }
+}
+
+impl<T: ?Sized + Pointee, P, Q> cmp::PartialEq<FatPtr<T,Q>> for ValidPtr<T,P>
+where P: cmp::PartialEq<Q>
+{
+    fn eq(&self, other: &FatPtr<T,Q>) -> bool {
+        &self.0 == other
+    }
+}
+
+impl<T: ?Sized + Pointee, P, Q> cmp::PartialEq<ValidPtr<T,Q>> for FatPtr<T,P>
+where P: cmp::PartialEq<Q>
+{
+    fn eq(&self, other: &ValidPtr<T,Q>) -> bool {
+        self == &other.0
+    }
+}
+
+impl<T: ?Sized + Pointee, P> cmp::Eq for ValidPtr<T,P>
+where P: cmp::Eq {}
+
+impl<T: ?Sized + Pointee, P> Clone for ValidPtr<T,P>
+where P: Clone
+{
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: ?Sized + Pointee, P> Copy for ValidPtr<T,P>
+where P: Copy {}
+
+impl<T: ?Sized + Pointee, P> hash::Hash for ValidPtr<T,P>
+where P: hash::Hash,
+{
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state)
+    }
+}
+
+
+impl<'a, T, P: Ptr> SaveState<'a, P> for ValidPtr<T,P>
+where T: ?Sized + Save<P>
+{
+    type State = EncodeState<'a, T, P>;
+
+    fn init_save_state(&'a self) -> Self::State {
+        EncodeState::Initial
+    }
+}
+
+unsafe impl<T, P> Encode<P> for ValidPtr<T,P>
+where P: Ptr,
+      T: ?Sized + Save<P>,
+{
+    fn encode_poll<'a, D: Dumper<P>>(&'a self, state: &mut <Self as SaveState<'a, P>>::State, mut dumper: D)
+        -> Result<D, D::Pending>
+    {
+        loop {
+            match state {
+                EncodeState::Initial => {
+                    *state = match dumper.try_save_ptr(self) {
+                        Ok(ptr) => EncodeState::Ptr(ptr),
+                        Err(value) => EncodeState::Value {
+                            value_state: value.init_save_state(),
+                            metadata: T::metadata(value),
+
+                            // SAFETY: being zero-sized, we can safely coerce anything to a &() reference.
+                            value: unsafe { &*(value as *const T as *const ()) },
+                        },
+                    };
+                },
+                EncodeState::Value { value, metadata, value_state } => {
+                    // SAFETY: we created value from a &'a T reference, so we can safely turn it
+                    // back into one
+                    let value: &'a T = unsafe { &*T::make_fat_ptr(*value, *metadata) };
+                    let (d, persist_ptr) = value.save_poll(value_state, dumper)?;
+                    dumper = d;
+
+                    *state = EncodeState::Ptr(persist_ptr);
+                },
+                EncodeState::Ptr(_) => break Ok(dumper),
+            }
+        }
+    }
+
+    fn encode_blob<'a, W: WriteBlob>(&'a self, state: &<Self as SaveState<'a,P>>::State, dst: W) -> Result<W::Ok, W::Error> {
+    }
+}
+
+unsafe impl<T, P> Decode<P> for ValidPtr<T, P>
+where P: Ptr,
+      T: ?Sized + Load<P>,
+{
+    type Error = super::fatptr::ValidateError<<T::Metadata as Primitive>::Error,
+                                              <P::Persist as Primitive>::Error>;
+
+    type ChildValidator = ValidPtrValidator<T, P>;
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<BlobValidator<'a, Self, P>, Self::Error> {
+        /*
+        let mut blob = blob.validate_struct();
+        let inner = blob.primitive_field::<FatPtr<T, P::Persist>>()?;
+        Ok((unsafe { blob.done() }, ValidateState::FatPtr(*inner)))
+        */ todo!()
+    }
+
+    fn validate_poll<'a, V>(state: &mut Self::ValidateState, validator: &V) -> Result<(), V::Error>
+        where V: PtrValidator<P>
+    {
+    }
+}
+
+
 impl<T: ?Sized + Load<Q>, P: Decode<Q>, Q> fmt::Debug for OwnedPtrValidator<T,P,Q>
 where P: Ptr + fmt::Debug,
       T::ValidateChildren: fmt::Debug,
@@ -316,12 +389,9 @@ mod tests {
 
     #[test]
     fn validator_size() {
-        /*
         assert_eq!(mem::size_of::<<
             (OwnedPtr<(OwnedPtr<u8,!>, OwnedPtr<OwnedPtr<u8,!>,!>), !>, OwnedPtr<u8,!>)
             as Decode<!>>::ValidateChildren>(), 3);
-        */
     }
 }
-*/
 */

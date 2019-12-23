@@ -1,35 +1,113 @@
-use hoard::pile::{Pile, PileMut, Offset, OffsetMut};
-use hoard::{OwnedPtr, Get, GetMut, Ref, Alloc};
+#![feature(never_type)]
 
-pub fn test_get<'a,'p,'v>(pile: &Pile<'p,'v>, ptr: &'a OwnedPtr<(Option<u8>, bool, bool), Offset<'p,'v>>)
--> Ref<'a, (Option<u8>, bool, bool)>
+use hoard::prelude::*;
+use hoard::marshal::prelude::*;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Outpoint {
+    txid: [u8;32],
+    n: Le<u32>,
+}
+
+impl<Z> Encoded<Z> for Outpoint {
+    type Encoded = Self;
+}
+
+impl<Z: Zone> Encode<'_, Z> for Outpoint {
+    type State = ();
+
+    #[inline(always)]
+    fn save_children(&self) -> () {}
+
+    #[inline(always)]
+    fn poll<D: Dumper<Z>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
+        Ok(dumper)
+    }
+
+    #[inline(always)]
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
+        dst.write_primitive(&self.txid)?
+            .write_primitive(&self.n)?
+            .finish()
+    }
+}
+
+impl Validate for Outpoint {
+    type Error = !;
+
+    #[inline(always)]
+    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        let mut blob = blob.validate_struct();
+        blob.field::<[u8;32],_>(Into::into)?;
+        blob.field::<Le<u32>,_>(Into::into)?;
+        unsafe { blob.assume_valid() }
+    }
+}
+
+unsafe impl<Z: Zone> Load<Z> for Outpoint {
+    type ValidateChildren = (<[u8;32] as Load<Z>>::ValidateChildren, <Le<u32> as Load<Z>>::ValidateChildren);
+
+    #[inline(always)]
+    fn validate_children(&self) -> Self::ValidateChildren {
+        (Load::<Z>::validate_children(&self.txid),
+         Load::<Z>::validate_children(&self.n))
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct TxOut<Z: Zone> {
+    value: Le<u64>,
+    script: OwnedPtr<[u8], Z>,
+}
+
+impl<Y: Zone, Z: Zone> Encoded<Y> for TxOut<Z> {
+    type Encoded = TxOut<Y>;
+}
+
+impl<'a, Y: Zone, Z: Zone> Encode<'a, Y> for TxOut<Z>
+where Z: Encode<'a, Y>
 {
-    pile.get(ptr)
+    type State = (<Le<u64> as Encode<'a, Y>>::State,
+                  <OwnedPtr<[u8], Z> as Encode<'a, Y>>::State);
+
+    fn save_children(&'a self) -> Self::State {
+        (Encode::<'a,Y>::save_children(&self.value),
+         Encode::<'a,Y>::save_children(&self.script))
+    }
+
+    fn poll<D: Dumper<Y>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Error> {
+        let dumper = Encode::poll(&self.value, &mut state.0, dumper)?;
+        let dumper = Encode::poll(&self.script, &mut state.1, dumper)?;
+        Ok(dumper)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+        dst.write::<Y,_>(&self.value, &state.0)?
+           .write::<Y,_>(&self.script, &state.1)?
+           .finish()
+    }
 }
 
-pub fn test_mut_get<'a,'p,'v>(pile: &PileMut<'p,'v>, ptr: &'a OwnedPtr<(Option<u8>, bool, bool), OffsetMut<'p,'v>>)
--> Ref<'a, (Option<u8>, bool, bool)>
-{
-    pile.get(ptr)
+impl<Z: Zone> Validate for TxOut<Z> {
+    type Error = <OwnedPtr<[u8], Z> as Validate>::Error;
+
+    #[inline(always)]
+    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        let mut blob = blob.validate_struct();
+        blob.field::<Le<u64>,_>(|x| match x {})?;
+        blob.field::<OwnedPtr<[u8], Z>,_>(Into::into)?;
+        unsafe { blob.assume_valid() }
+    }
 }
 
-pub fn test_get_mut<'a,'p,'v>(pile: &PileMut<'p,'v>, ptr: &'a mut OwnedPtr<(Option<u8>, bool, bool), OffsetMut<'p,'v>>)
--> &'a (Option<u8>, bool, bool)
-{
-    let mut r = pile.get_mut(ptr);
-    r.1 = !r.1;
-    r
-}
+unsafe impl<Z: Zone> Load<Z> for TxOut<Z> {
+    type ValidateChildren = (<Le<u64> as Load<Z>>::ValidateChildren, <OwnedPtr<[u8], Z> as Load<Z>>::ValidateChildren);
 
-pub fn test_take<'a,'p,'v>(pile: &PileMut<'p,'v>, ptr: OwnedPtr<(Option<u8>, bool, bool), OffsetMut<'p,'v>>)
--> (Option<u8>, bool, bool)
-{
-    pile.take(ptr)
-}
-
-pub fn test_drop<'p,'v>(_ptr: OwnedPtr<(OwnedPtr<Option<u8>, OffsetMut<'p, 'v>>, bool, bool), OffsetMut<'p,'v>>) {
-}
-
-pub fn test_alloc<'p,'v>(mut alloc: &mut PileMut<'p,'v>) -> OwnedPtr<Option<u8>, OffsetMut<'p, 'v>> {
-    alloc.alloc(None)
+    #[inline(always)]
+    fn validate_children(&self) -> Self::ValidateChildren {
+        (Load::<Z>::validate_children(&self.value),
+         Load::<Z>::validate_children(&self.script))
+    }
 }

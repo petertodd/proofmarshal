@@ -12,6 +12,12 @@ pub struct ValidateArrayError<E, const N: usize> {
     err: E,
 }
 
+impl<E: Into<!>, const N: usize> From<ValidateArrayError<E, N>> for ! {
+    fn from(err: ValidateArrayError<E,N>) -> ! {
+        err.err.into()
+    }
+}
+
 impl<E: ValidationError, const N: usize> ValidationError for ValidateArrayError<E, N> {
 }
 

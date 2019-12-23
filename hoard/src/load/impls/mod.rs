@@ -6,11 +6,11 @@ pub use self::scalars::*;
 mod option;
 pub use self::option::*;
 
-//mod tuples;
-//pub use self::tuples::*;
+mod tuples;
+pub use self::tuples::*;
 
 mod arrays;
 pub use self::arrays::*;
 
-//mod slice;
-//pub use self::slice::*;
+mod slice;
+pub use self::slice::*;

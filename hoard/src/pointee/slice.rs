@@ -11,13 +11,12 @@ use core::ptr;
 use owned::Take;
 use leint::Le;
 
-use crate::{Zone, Ref};
-use crate::marshal::{Primitive, blob::*};
+use crate::marshal::prelude::*;
 
 /// The length of a slice.
 #[repr(transparent)]
 pub struct SliceLen<T> {
-    marker: PhantomData<*const T>,
+    marker: PhantomData<fn() -> T>,
     len: Le<u64>,
 }
 
@@ -112,12 +111,13 @@ impl<T> From<SliceLen<T>> for Layout {
     }
 }
 
-unsafe impl<T> Sync for SliceLen<T> {}
-unsafe impl<T> Send for SliceLen<T> {}
+//unsafe impl<T> Sync for SliceLen<T> {}
+//unsafe impl<T> Send for SliceLen<T> {}
 
 /// Error when a slice length is too large for a given type.
 #[derive(Debug, PartialEq, Eq)]
 pub struct SliceLenError(());
+impl ValidationError for SliceLenError {}
 
 impl<T> TryFrom<usize> for SliceLen<T> {
     type Error = SliceLenError;
@@ -128,30 +128,13 @@ impl<T> TryFrom<usize> for SliceLen<T> {
     }
 }
 
-impl<T> Primitive for SliceLen<T> {
+impl<T> Validate for SliceLen<T> {
     type Error = SliceLenError;
 
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<u64>());
-
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
-        dst.write_bytes(&self.len.get().to_le_bytes())?
-           .finish()
-    }
-
-    fn validate_blob<'p,P>(blob: Blob<'p, Self, P>) -> Result<FullyValidBlob<'p, Self, P>, Self::Error> {
-        todo!() //Ok(blob.assume_valid(()))
-    }
-
-    fn decode_blob<'p,P>(blob: FullyValidBlob<'p, Self, P>) -> Self {
-        *<Self as Primitive>::load_blob(blob)
-    }
-
-    fn load_blob<'p, P>(blob: FullyValidBlob<'p, Self, P>) -> Ref<'p, Self> {
-        todo!() //unsafe { blob.assume_valid_ref() }
+    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        todo!()
     }
 }
-
-unsafe impl<T> Persist for SliceLen<T> {}
 
 unsafe impl<T> Pointee for [T] {
     type Metadata = SliceLen<T>;
@@ -165,11 +148,6 @@ unsafe impl<T> Pointee for [T] {
     }
 
     #[inline(always)]
-    fn align(_: Self::Metadata) -> usize {
-        mem::align_of::<T>()
-    }
-
-    #[inline(always)]
     fn make_fat_ptr(thin: *const (), len: Self::Metadata) -> *const [T] {
         ptr::slice_from_raw_parts(thin as *const T, len.into())
     }
@@ -178,11 +156,8 @@ unsafe impl<T> Pointee for [T] {
     fn make_fat_ptr_mut(thin: *mut (), len: Self::Metadata) -> *mut [T] {
         ptr::slice_from_raw_parts_mut(thin as *mut T, len.into())
     }
-}
 
-unsafe impl<T> PtrSized for [T] {
-    #[inline(always)]
-    fn size(len: Self::Metadata) -> usize {
-        Layout::from(len).size()
+    fn layout(metadata: Self::Metadata) -> Layout {
+        todo!()
     }
 }

@@ -69,7 +69,7 @@ pub trait Zone : Sized {
 }
 
 pub trait PersistZone : Zone {
-    type PersistPtr : 'static + Validate + NonZero;
+    type PersistPtr : 'static + Validate + NonZero + fmt::Debug;
 }
 
 pub trait Alloc : Sized {

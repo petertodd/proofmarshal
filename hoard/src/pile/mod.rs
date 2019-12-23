@@ -37,6 +37,7 @@ use crate::{
         never::NeverAllocator,
     },
     load::{Load, Validate, ValidateChildren, ValidationError, PtrValidator},
+    save::*,
 };
 
 pub mod offset;
@@ -96,6 +97,66 @@ impl<'p,'v> Zone for Pile<'p,'v> {
         f(Err(fatptr))
     }
 }
+
+impl<Z> Encoded<Z> for Pile<'_, '_> {
+    type Encoded = ();
+}
+
+impl<'a, 'p: 'a, 'v: 'a, 'v2> Encode<'a, Pile<'p, 'v2>> for Pile<'p, 'v> {
+    type State = ();
+
+    fn save_children(&self) -> () {}
+
+    fn poll<D: Dumper<Pile<'p,'v2>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
+        Ok(dumper)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
+        dst.finish()
+    }
+
+    fn zone_save_ptr<T, D>(ptr: &'a ValidPtr<T, Self>, dumper: &D) -> Result<D::PersistPtr, &'a T>
+        where T: ?Sized + Pointee,
+              D: Dumper<Pile<'p,'v2>>
+    {
+        let ptr: ValidPtr<T, Pile<'p, 'v2>> = unsafe { mem::transmute_copy(ptr) };
+        match dumper.save_ptr(&ptr) {
+            Ok(persist) => Ok(persist),
+            Err(r) => todo!(),
+        }
+    }
+}
+
+impl<Z> Encoded<Z> for PileMut<'_, '_> {
+    type Encoded = ();
+}
+
+impl<'a, 'p: 'a, 'v: 'a, 'v2> Encode<'a, Pile<'p, 'v2>> for PileMut<'p, 'v> {
+    type State = ();
+
+    fn save_children(&self) -> () {}
+
+    fn poll<D: Dumper<Pile<'p,'v2>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
+        Ok(dumper)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
+        dst.finish()
+    }
+
+    fn zone_save_ptr<T, D>(ptr: &'a ValidPtr<T, Self>, dumper: &D) -> Result<D::PersistPtr, &'a T>
+        where T: ?Sized + Pointee,
+              D: Dumper<Pile<'p,'v2>>
+    {
+        match Self::try_get_dirty(ptr) {
+            Ok(r) => Err(r),
+            Err(persist_ptr) => {
+                todo!()
+            },
+        }
+    }
+}
+
 
 impl<'p,'v> PersistZone for Pile<'p,'v> {
     type PersistPtr = Offset<'static, 'static>;
@@ -938,6 +999,7 @@ mod tests {
         });
     }
 
+    #[test]
     #[should_panic]
     fn test_get_panic() {
         Pile::new(&[1,2,3], |pile| {

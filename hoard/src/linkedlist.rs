@@ -5,6 +5,7 @@ use core::ptr;
 
 use crate::prelude::*;
 use crate::load::*;
+use crate::save::*;
 use crate::blob::*;
 use crate::zone::*;
 
@@ -176,6 +177,103 @@ where T: Load<Z>
     }
 }
 
+impl<T, Z: Zone, Y: Zone> Encoded<Y> for Cell<T, Z>
+where T: Encoded<Y>,
+{
+    type Encoded = Cell<T::Encoded, Y>;
+}
+
+pub enum SaveCellState<'a, T: Encode<'a, Y>, Z: Zone, Y: Zone> {
+    Initial(&'a Cell<T, Z>),
+    Poll {
+        stack: Vec<&'a T>,
+
+        value: &'a T,
+        value_state: T::State,
+
+        next: Option<<Y::Persist as Zone>::Ptr>,
+    },
+}
+
+fn encode_cell_blob<'a, T, Z, Y, W>(
+    value: &'a T,
+    value_state: &T::State,
+    next: &Option<<Y::Persist as Zone>::Ptr>,
+    dst: W,
+) -> Result<W::Ok, W::Error>
+where T: 'a + Encode<'a, Y>,
+      Z: Zone, Y: Zone,
+      W: WriteBlob,
+{
+    todo!()
+}
+
+impl<'a, T: 'a, Z: Zone, Y: Zone> Encode<'a, Y> for Cell<T, Z>
+where T: Encode<'a, Y>, Z: Encode<'a, Y>
+{
+    type State = SaveCellState<'a, T, Z, Y>;
+
+    fn save_children(&'a self) -> Self::State {
+        SaveCellState::Initial(self)
+    }
+
+    fn poll<D: Dumper<Y>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Error> {
+        if let SaveCellState::Initial(this) = state {
+            let mut stack = vec![];
+
+            let next = loop {
+                match this.next.as_ref().map(|next| Z::zone_save_ptr(next, &dumper)) {
+                    None => break None,
+                    Some(Ok(next_ptr)) => break Some(dumper.coerce_ptr(next_ptr)),
+                    Some(Err(next_cell)) => {
+                        stack.push(&this.value);
+                        *this = next_cell;
+                    },
+                }
+            };
+
+            *state = SaveCellState::Poll {
+                stack,
+                value_state: this.value.save_children(),
+                value: &this.value,
+                next,
+            }
+        };
+
+        if let SaveCellState::Poll { stack, value, value_state, next } = state {
+            loop {
+                dumper = value.poll(value_state, dumper)?;
+
+                if stack.len() > 1 {
+                    let (d, new_next) = dumper.save_blob(mem::size_of::<Self::Encoded>(), |dst| {
+                        encode_cell_blob::<T,Z,Y,_>(value, value_state, next, dst)
+                    })?;
+                    dumper = d;
+
+                    *value = stack.pop().unwrap();
+                    *value_state = value.save_children();
+                    *next = Some(dumper.coerce_ptr(new_next));
+                } else {
+                    break Ok(dumper)
+                }
+            }
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+        if let SaveCellState::Poll { stack, value, value_state, next } = state {
+            assert_eq!(stack.len(), 0, "poll() unfinished");
+
+            encode_cell_blob::<T, Z, Y, W>(value, value_state, next, dst)
+        } else {
+            panic!("poll() unfinished")
+        }
+    }
+}
+
+
 use crate::pile::*;
 pub fn test_linkedlist_validate<'p,'v>(
     pile: Pile<'p,'v>,
@@ -196,7 +294,18 @@ pub fn test_linkedlist_validate2<'p,'v>(
     validator.poll(&pile)
 }
 
-pub fn foo() {}
+pub fn test_linkedlist_save_children<'a, 'p, 'v>(list: &'a Cell<bool, Pile<'p,'v>>,
+) -> SaveCellState<'a, bool, Pile<'p,'v>, Pile<'p,'v>>
+{
+    Save::save_children(list)
+}
+
+pub fn test_linkedlist_save_children_mut<'a, 'p, 'v>(list: &'a Cell<ValidPtr<u8, PileMut<'p,'v>>, PileMut<'p,'v>>,
+) -> SaveCellState<'a, ValidPtr<u8, PileMut<'p,'v>>, PileMut<'p,'v>, Pile<'p,'v>>
+{
+    Save::save_children(list)
+}
+
 
 
 #[cfg(test)]

@@ -46,6 +46,8 @@ pub mod pointee;
 pub mod zone;
 pub mod blob;
 pub mod load;
+pub mod save;
+pub mod marshal;
 
 pub mod heap;
 
@@ -55,6 +57,8 @@ pub mod linkedlist;
 
 /// Prelude
 pub mod prelude {
+    pub use leint::Le;
+
     pub use crate::zone::{
         Alloc, Zone,
         TryGet, Get,

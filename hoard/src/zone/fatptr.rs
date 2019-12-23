@@ -9,6 +9,7 @@ use nonzero::NonZero;
 use super::*;
 
 use crate::load::{Validate, ValidationError};
+use crate::save::*;
 use crate::blob::{BlobValidator, StructValidator};
 
 /// A zone pointer with metadata. *Not* necessarily valid.
@@ -46,46 +47,6 @@ impl<T: ?Sized + Validate, Z: PersistZone> Validate for FatPtr<T, Z> {
         unsafe { blob.assume_valid() }
     }
 }
-
-/*
-unsafe impl<T: ?Sized + Pointee, P, Q> TryCastRef<FatPtr<T,Q>> for FatPtr<T,P>
-where P: TryCastRef<Q>
-{
-    type Error = P::Error;
-
-    fn try_cast_ref(&self) -> Result<&FatPtr<T,Q>, Self::Error> {
-        match self.raw.try_cast_ref() {
-            Err(e) => Err(e),
-            Ok(_) => Ok(unsafe { &*(self as *const _ as *const _) })
-        }
-    }
-}
-
-unsafe impl<T: ?Sized + Pointee, P, Q> TryCastMut<FatPtr<T,Q>> for FatPtr<T,P>
-where P: TryCastMut<Q>
-{
-    fn try_cast_mut(&mut self) -> Result<&mut FatPtr<T,Q>, Self::Error> {
-        match self.raw.try_cast_mut() {
-            Err(e) => Err(e),
-            Ok(_) => Ok(unsafe { &mut *(self as *mut _ as *mut _) })
-        }
-    }
-}
-
-unsafe impl<T: ?Sized + Pointee, P, Q> TryCast<FatPtr<T,Q>> for FatPtr<T,P>
-where P: TryCast<Q>
-{}
-
-impl<T: ?Sized + Pointee, P, Q> AsRef<FatPtr<T,Q>> for FatPtr<T,P>
-where P: CastRef<Q>
-{
-    fn as_ref(&self) -> &FatPtr<T,Q> {
-        unsafe {
-            &*(self as *const _ as *const _)
-        }
-    }
-}
-*/
 
 // standard impls
 
