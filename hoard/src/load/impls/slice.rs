@@ -1,21 +1,13 @@
+use core::convert::TryInto;
 use core::num::NonZeroUsize;
 use core::mem;
 
 use super::*;
 
-use crate::pointee::slice::SliceLen;
 use crate::blob::StructValidator;
 
 unsafe impl<T: Persist> PersistPtr for [T] {
     type Persist = [T::Persist];
-
-    fn coerce_metadata_into_persist(len: SliceLen<T>) -> SliceLen<T::Persist> {
-        todo!()
-    }
-
-    fn coerce_metadata_from_persist(len: SliceLen<T::Persist>) -> SliceLen<T> {
-        todo!()
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -29,7 +21,7 @@ impl<T: ValidateBlob> ValidateBlob for [T] {
     type Error = ValidateSliceError<T::Error>;
 
     fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
-        let len = blob.metadata().get();
+        let len = blob.metadata().get().try_into().unwrap();
         let mut blob = blob.validate_struct();
         for idx in 0 .. len {
             blob.field::<T,_>(|err| ValidateSliceError { idx, err })?;

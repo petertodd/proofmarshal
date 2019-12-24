@@ -12,7 +12,8 @@ use owned::{Take, Owned};
 use crate::{
     coerce,
     pointee::Pointee,
-    load::{Load, ValidateBlob},
+    load::Load,
+    marshal::Primitive,
 };
 
 pub mod refs;
@@ -24,7 +25,7 @@ pub use self::error::{PtrError, PtrResult};
 pub trait Zone : Sized {
     type Ptr : NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
     type Persist : 'static + Zone<Ptr=Self::PersistPtr>;
-    type PersistPtr : 'static + ValidateBlob + NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
+    type PersistPtr : 'static + Primitive + NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
 
     type Allocator : Alloc<Zone=Self>;
 

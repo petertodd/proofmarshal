@@ -1,3 +1,5 @@
+use core::num;
+
 use leint::Le;
 
 use super::*;
@@ -36,9 +38,27 @@ macro_rules! impl_all_valid {
 
 impl_all_valid! {
     (),
-    u8, i8,
-    Le<u16>, Le<u32>, Le<u64>, Le<u128>,
-    Le<i16>, Le<i32>, Le<i64>, Le<i128>,
+    u8, Le<u16>, Le<u32>, Le<u64>, Le<u128>,
+    i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
+}
+
+macro_rules! impl_nonzero {
+    ($( $t:ty, )+) => {$(
+        impl ValidateBlob for $t {
+            type Error = !;
+
+            fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+                todo!()
+            }
+        }
+
+        impl_decode!($t);
+    )+}
+}
+
+impl_nonzero! {
+    num::NonZeroU8, Le<num::NonZeroU16>, Le<num::NonZeroU32>, Le<num::NonZeroU64>, Le<num::NonZeroU128>,
+    num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -1,13 +1,7 @@
 use super::*;
 
-use crate::pointee::slice::SliceLen;
-
 impl<Z, T: Encoded<Z>> Saved<Z> for [T] {
     type Saved = [T::Encoded];
-
-    fn coerce_metadata(metadata: SliceLen<T>) -> SliceLen<T::Encoded> {
-        todo!()
-    }
 }
 
 impl<'a, Z: Zone, T: Encode<'a, Z>> Save<'a, Z> for [T] {

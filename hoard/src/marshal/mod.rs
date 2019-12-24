@@ -11,7 +11,11 @@ pub mod prelude {
 use crate::load::*;
 use crate::save::*;
 
-pub trait Primitive : 'static + Sized + Persist<Persist=Self> + Decode<!> + for<'a> Encode<'a, !> + ValidateBlob
+pub trait Primitive : 'static + Sized
++ Persist<Persist=Self>
++ ValidateBlob
++ Decode<!>
++ for<'a> Encode<'a, !>
 {
     fn save_to_vec(&self) -> Vec<u8> {
         todo!()
@@ -30,4 +34,6 @@ impl_primitive! {
     !, (), bool,
     u8, Le<u16>, Le<u32>, Le<u64>, Le<u128>,
     i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
+    num::NonZeroU8, Le<num::NonZeroU16>, Le<num::NonZeroU32>, Le<num::NonZeroU64>, Le<num::NonZeroU128>,
+    num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
 }

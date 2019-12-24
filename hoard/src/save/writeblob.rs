@@ -5,6 +5,8 @@ use std::ptr;
 
 use super::*;
 
+use crate::marshal::Primitive;
+
 pub trait WriteBlob : Sized {
     type Ok;
     type Error;
@@ -19,10 +21,9 @@ pub trait WriteBlob : Sized {
         )
     }
 
-    fn write_primitive<'a, T: Encode<'a, !>>(self, value: &T) -> Result<Self, Self::Error>
-        where T::State: Default
-    {
-        self.write(value, &Default::default())
+    fn write_primitive<T: Primitive>(self, value: &T) -> Result<Self, Self::Error> {
+        let state = value.save_children();
+        self.write(value, &state)
     }
 
     /// Writes padding bytes.

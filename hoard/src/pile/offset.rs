@@ -77,6 +77,8 @@ use super::Pile;
 use crate::blob::*;
 use crate::load::*;
 use crate::save::*;
+use crate::marshal::*;
+use crate::zone::Zone;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -193,15 +195,6 @@ impl ValidateBlob for Offset<'_,'_> {
     }
 }
 
-impl ValidateBlob for OffsetMut<'_,'_> {
-    type Error = ValidateOffsetError;
-
-    #[inline]
-    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
-        todo!()
-    }
-}
-
 unsafe impl<'a, Z> ValidateChildren<'a, Z> for Offset<'_, '_> {
     type State = ();
     fn validate_children(_: &Offset<'static, 'static>) -> () {}
@@ -211,17 +204,27 @@ unsafe impl<'a, Z> ValidateChildren<'a, Z> for Offset<'_, '_> {
     }
 }
 
-unsafe impl<'a, Z> ValidateChildren<'a, Z> for OffsetMut<'_, '_> {
-    type State = ();
-    fn validate_children(_: &Offset<'static, 'static>) -> () {}
+impl<Z> Decode<Z> for Offset<'_, '_> {}
 
-    fn poll<V: PtrValidator<Z>>(this: &'a Offset<'static, 'static>, _: &mut (), _: &V) -> Result<&'a Self, V::Error> {
-        Ok(unsafe { mem::transmute::<&Offset, &OffsetMut>(this) })
+impl<Z> Encoded<Z> for Offset<'_, '_> {
+    type Encoded = Self;
+}
+
+impl<Z: Zone> Encode<'_, Z> for Offset<'_, '_> {
+    type State = ();
+    fn save_children(&self) -> () {}
+
+    fn poll<D: Dumper<Z>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
+        Ok(dumper)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
+        dst.write_primitive(&self.raw)?
+           .finish()
     }
 }
 
-impl<Z> Decode<Z> for Offset<'_, '_> {}
-impl<Z> Decode<Z> for OffsetMut<'_, '_> {}
+impl Primitive for Offset<'static, 'static> {}
 
 
 impl<'s,'m> OffsetMut<'s,'m> {

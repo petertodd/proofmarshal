@@ -25,30 +25,19 @@ pub trait ValidateBlob : Pointee {
         where B: BlobValidator<Self>;
 }
 
-pub trait Persist : Pointee {
-    type Persist : 'static + ValidateBlob;
+pub trait Persist : Pointee<Metadata=()> {
+    type Persist : 'static + Pointee<Metadata=()> + ValidateBlob;
 }
 
 /// # Safety
 ///
 /// The metadata must be compatible.
 pub unsafe trait PersistPtr : Pointee {
-    type Persist : 'static + ?Sized + ValidateBlob;
-
-    fn coerce_metadata_into_persist(metadata: Self::Metadata) -> <Self::Persist as Pointee>::Metadata;
-    fn coerce_metadata_from_persist(metadata: <Self::Persist as Pointee>::Metadata) -> Self::Metadata;
+    type Persist : 'static + ?Sized + Pointee<Metadata=Self::Metadata> + ValidateBlob;
 }
 
 unsafe impl<T: Persist> PersistPtr for T {
     type Persist = T::Persist;
-
-    fn coerce_metadata_into_persist(_: Self::Metadata) -> <Self::Persist as Pointee>::Metadata {
-        <Self::Persist as Pointee>::make_sized_metadata()
-    }
-
-    fn coerce_metadata_from_persist(metadata: <Self::Persist as Pointee>::Metadata) -> Self::Metadata {
-        Self::make_sized_metadata()
-    }
 }
 
 pub unsafe trait ValidateChildren<'a, Z = !> : Persist {

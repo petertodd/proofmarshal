@@ -2,6 +2,7 @@ use super::*;
 
 use core::slice;
 use core::mem;
+use core::num;
 
 use leint::Le;
 
@@ -25,7 +26,7 @@ impl<Z: Zone> Encode<'_, Z> for bool {
 
     #[inline(always)]
     fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
-        dst.write_bytes(&[*self as u8])?
+        dst.write_bytes(&[if *self { 1 } else { 0 }])?
            .finish()
     }
 
@@ -66,4 +67,6 @@ unsafe_impl_all_valid! {
     (),
     u8, Le<u16>, Le<u32>, Le<u64>, Le<u128>,
     i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
+    num::NonZeroU8, Le<num::NonZeroU16>, Le<num::NonZeroU32>, Le<num::NonZeroU64>, Le<num::NonZeroU128>,
+    num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
 }

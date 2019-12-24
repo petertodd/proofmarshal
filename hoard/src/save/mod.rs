@@ -8,8 +8,8 @@ pub mod impls;
 mod writeblob;
 pub use self::writeblob::WriteBlob;
 
-pub trait Encoded<Z> {
-    type Encoded;
+pub trait Encoded<Z> : Pointee<Metadata=()> {
+    type Encoded : Pointee<Metadata=()>;
 }
 
 pub trait Encode<'a, Z: Zone> : Encoded<Z> {
@@ -24,15 +24,11 @@ pub trait Encode<'a, Z: Zone> : Encoded<Z> {
 }
 
 pub trait Saved<Z> : Pointee {
-    type Saved : ?Sized + Pointee;
-
-    fn coerce_metadata(metadata: Self::Metadata) -> <Self::Saved as Pointee>::Metadata;
+    type Saved : ?Sized + Pointee<Metadata=Self::Metadata>;
 }
 
 impl<Z, T: Encoded<Z>> Saved<Z> for T {
     type Saved = T::Encoded;
-
-    fn coerce_metadata(_: ()) -> () {}
 }
 
 pub trait Save<'a, Z: Zone> : Saved<Z> {
