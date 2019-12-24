@@ -10,8 +10,8 @@ use core::marker::PhantomData;
 
 use nonzero::NonZero;
 
-use crate::blob::{BlobValidator, StructValidator};
-use crate::load::{Validate, ValidateChildren, PtrValidator};
+use crate::blob::*;
+use crate::load::*;
 use crate::save::*;
 
 /// Wrapper around a `FatPtr` guaranteeing that the target of the pointer is valid.
@@ -20,6 +20,7 @@ use crate::save::*;
 /// `DerefMut` is *not* implemented because mutating the wrapper pointer could invalidate it.
 #[repr(transparent)]
 pub struct ValidPtr<T: ?Sized + Pointee, Z: Zone>(FatPtr<T, Z>);
+
 
 impl<T: ?Sized + Pointee, Z: Zone> ops::Deref for ValidPtr<T, Z> {
     type Target = FatPtr<T, Z>;
@@ -71,54 +72,59 @@ where Z::Ptr: fmt::Pointer
     }
 }
 
-impl<T: ?Sized + Validate, Z: Zone> Validate for ValidPtr<T, Z> {
-    type Error = <FatPtr<T, Z::Persist> as Validate>::Error;
+impl<T: ?Sized + PersistPtr, Z: Zone> Persist for ValidPtr<T, Z> {
+    type Persist = ValidPtr<T::Persist, Z::Persist>;
+}
 
-    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+impl<T: ?Sized + Pointee, Z: Zone> ValidateBlob for ValidPtr<T, Z> {
+    type Error = <FatPtr<T,Z> as ValidateBlob>::Error;
+
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
         let mut blob = blob.validate_struct();
-        blob.field::<FatPtr<T, Z::Persist>, _>(identity)?;
-
+        blob.field::<FatPtr<T,Z>,_>(identity)?;
         unsafe { blob.assume_valid() }
     }
 }
 
-pub enum ValidateState<T: ?Sized + Load<Z>, Z: Zone> {
-    FatPtr(FatPtr<T, Z::Persist>),
-    Value(T::ValidateChildren),
-    Done,
+pub enum ValidateState<'a, T: ?Sized + Pointee, S> {
+    Initial,
+    Value {
+        value: &'a T,
+        state: S,
+    },
 }
 
-impl<T: ?Sized + Load<Z>, Z: Zone> ValidateChildren<Z> for ValidateState<T, Z> {
-    fn poll<V>(&mut self, ptr_validator: &V) -> Result<(), V::Error>
-        where V: PtrValidator<Z>
-    {
+unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> ValidateChildren<'a, Z> for ValidPtr<T, Z>
+where T: ValidatePtrChildren<'a, Z>
+{
+    type State = ValidateState<'a, T::Persist, T::State>;
+
+    fn validate_children(_: &'a ValidPtr<T::Persist, Z::Persist>) -> Self::State {
+        ValidateState::Initial
+    }
+
+    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<&'a Self, V::Error> {
         loop {
-            match self {
-                Self::Done => break Ok(()),
-                Self::FatPtr(fatptr) => {
-                    *self = match ptr_validator.validate_ptr(fatptr)? {
-                        Some(value) => Self::Value(value),
-                        None => Self::Done,
-                    };
+            match state {
+                ValidateState::Initial => {
+                    match validator.validate_ptr::<T>(this)? {
+                        Some(value) => {
+                            todo!()
+                        },
+                        None => break Ok(unsafe { mem::transmute(this) }),
+                    }
                 },
-                Self::Value(value) => {
-                    value.poll(ptr_validator)?;
-                    *self = Self::Done;
-                }
+                ValidateState::Value { value, state } => {
+                    T::poll(value, state, validator)?;
+
+                    break Ok(unsafe { mem::transmute(this) })
+                },
             }
         }
     }
 }
 
-unsafe impl<T: ?Sized + Load<Z>, Z: Zone> Load<Z> for ValidPtr<T, Z> {
-    type ValidateChildren = ValidateState<T,Z>;
-
-    fn validate_children(&self) -> Self::ValidateChildren {
-        match Z::try_get_dirty(self) {
-            Err(fatptr) => ValidateState::FatPtr(fatptr),
-            Ok(_) => ValidateState::Done,
-        }
-    }
+impl<Z: Zone, T: ?Sized + Load<Z>> Decode<Z> for ValidPtr<T,Z> {
 }
 
 /// State used when saving a `ValidPtr`.
@@ -135,7 +141,7 @@ pub enum SaveState<'a, T: ?Sized + Save<'a, Y>, Z: Zone, Y: Zone> {
 
     /// We've finished encoding the value (or never needed too) and now have a pointer that needs
     /// encoding.
-    Done(FatPtr<T, Y::Persist>),
+    Done(FatPtr<T::Saved, Y::Persist>),
 }
 
 impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> Encoded<Y> for ValidPtr<T,Z>
@@ -144,9 +150,9 @@ where T: Saved<Y>
     type Encoded = ValidPtr<T::Saved, Y>;
 }
 
-impl<'a, T: 'a + ?Sized + Pointee, Z: Zone, Y: Zone> Encode<'a, Y> for ValidPtr<T, Z>
+impl<'a, T: 'a + ?Sized + Pointee, Z: 'a + Zone, Y: Zone> Encode<'a, Y> for ValidPtr<T, Z>
 where T: Save<'a, Y>,
-      Z: Encode<'a, Y>,
+      Z: SavePtr<Y>,
 {
     type State = SaveState<'a, T, Z, Y>;
 
@@ -158,8 +164,13 @@ where T: Save<'a, Y>,
         loop {
             *state = match state {
                 SaveState::Initial(this) => {
-                    match Z::zone_save_ptr(this, &dumper) {
-                        Ok(ptr) => todo!(), //SaveState::Done(ptr),
+                    match Z::try_save_ptr(this, &dumper) {
+                        Ok(raw) => SaveState::Done(
+                                        FatPtr {
+                                            metadata: T::coerce_metadata(this.metadata),
+                                            raw,
+                                        }
+                                   ),
                         Err(value) => SaveState::Value { state: value.save_children(), value },
                     }
                 },
@@ -168,11 +179,6 @@ where T: Save<'a, Y>,
 
                     let (d, ptr) = value.save_blob(state, dumper)?;
                     dumper = d;
-
-                    let ptr = FatPtr {
-                        metadata: T::metadata(value),
-                        raw: dumper.coerce_ptr(ptr),
-                    };
 
                     SaveState::Done(ptr)
                 },

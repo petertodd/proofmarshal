@@ -25,18 +25,19 @@ use singlelife::Unique;
 
 use crate::{
     pointee::Pointee,
-    blob::{self, Blob, ValidBlob},
     zone::{
         Alloc,
         Get, TryGet,
         GetMut, TryGetMut,
         ValidPtr, OwnedPtr, FatPtr,
-        Zone, PersistZone,
+        Zone,
         PtrError, PtrResult,
         refs::{Own, Ref, RefMut},
         never::NeverAllocator,
     },
-    load::{Load, Validate, ValidateChildren, ValidationError, PtrValidator},
+
+    blob::*,
+    load::*,
     save::*,
 };
 
@@ -46,8 +47,10 @@ use self::offset::{Offset, OffsetMut};
 pub mod error;
 use self::error::*;
 
+/*
 pub mod mapping;
 use self::mapping::Mapping;
+*/
 
 /// Fallible, unverified, `Pile`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -55,22 +58,153 @@ pub struct Pile<'pile, 'version> {
     marker: PhantomData<
         for<'a> fn(&'a Offset<'pile, 'version>) -> &'a [u8]
     >,
-    mapping: &'pile dyn Mapping,
+    //mapping: &'pile dyn Mapping,
+    mapping: &'pile &'pile [u8],
 }
 
-/// Mutable, unverified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PileMut<'s, 'v>(Pile<'s, 'v>);
+impl Pile<'_, '_> {
+    /// Creates a new `Pile` from a slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use hoard::pile::Pile;
+    /// Pile::new([1,2,3,4], |pile| {
+    /// })
+    /// ```
+    #[inline]
+    pub fn new<R>(slice: impl AsRef<[u8]>, f: impl FnOnce(Pile) -> R) -> R {
+        let slice = slice.as_ref();
+        Unique::new(&slice, |slice| {
+            f(Pile::from(slice))
+        })
+    }
+}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TryPile<'pile, 'version>(Pile<'pile, 'version>);
+impl<'p> From<Unique<'p, &&[u8]>> for Pile<'p, 'p> {
+    #[inline]
+    fn from(slice: Unique<'p, &&[u8]>) -> Pile<'p, 'p> {
+        Self {
+            marker: PhantomData,
+            mapping: &*Unique::into_inner(slice),
+        }
+    }
+}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TryPileMut<'s, 'v>(PileMut<'s, 'v>);
+impl<'p> Pile<'p, 'static> {
+    /// Creates an empty `Pile`.
+    ///
+    /// Note how the `'version` parameter is `'static': the earliest possible version of a pile is
+    /// to have nothing in it.
+    ///
+    /// # Examples
+    ///
+    /// ```no_compile
+    /// # use hoard::pile::{Pile, FullyValidateError};
+    /// let empty = Pile::empty();
+    ///
+    /// // Attempting to load anything from an empty pile fails, as there's nothing there...
+    /// assert_eq!(empty.fully_validate::<u8>().unwrap_err(),
+    ///            FullyValidateError::Undersized);
+    ///
+    /// // ...with the exception of zero-sized types!
+    /// empty.fully_validate::<()>().unwrap();
+    /// ```
+    #[inline]
+    pub fn empty() -> Self {
+        static EMPTY_SLICE: &[u8] = &[];
+
+        Self {
+            marker: PhantomData,
+            mapping: &EMPTY_SLICE,
+        }
+    }
+}
+
+impl<'p, 'v> Pile<'p, 'v> {
+    fn slice(&self) -> &'p &'p [u8] {
+        unsafe {
+            //&*(self.mapping as *const dyn Mapping as *const &'p [u8])
+            &*(self.mapping as *const _ as *const &'p [u8])
+        }
+    }
+
+    /*
+    /// Loads the tip of the `Pile`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use hoard::pile::Pile;
+    /// Pile::new([12], |pile| {
+    ///     let tip = pile.fully_validate::<u8>().unwrap();
+    ///     assert_eq!(**tip, 12);
+    /// })
+    /// ```
+    pub fn fully_validate<T: Load<Self>>(&self) -> Result<Ref<'p, T, Self>, FullyValidateError<T::Error>>
+    {
+        let blob = self.get_tip_blob().ok_or(FullyValidateError::Undersized)?;
+        let blob = T::validate(blob.into_validator()).map_err(FullyValidateError::Tip)?;
+
+        unsafe {
+            let r = blob.to_ref();
+            let poll = r.validate_children();
+
+            /* poll.poll(self).map_err(FullyValidateError::Child)?; */
+
+            Ok(Ref {
+                this: r,
+                zone: *self,
+            })
+        }
+    }
+
+    pub fn get_tip_blob<T>(&self) -> Option<Blob<'p, T>> {
+        let start = self.slice().len().saturating_sub(mem::size_of::<T>());
+        let blob = &self.slice()[start ..];
+        Blob::<T>::new(blob, ())
+    }
+
+    /// Creates a new version of an existing pile.
+    ///
+    /// The prefix of the new slice must match the existing pile; in debug builds a mismatch will
+    /// panic.
+    pub fn update<'v2>(&self, new_slice: Unique<'v2, &'p &[u8]>) -> Pile<'p, 'v2>
+        where 'v: 'v2
+    {
+        assert!(self.slice().len() <= new_slice.len());
+        debug_assert!(new_slice.starts_with(self.slice()));
+
+        Pile {
+            marker: PhantomData,
+            mapping: &*Unique::into_inner(new_slice),
+        }
+    }
+
+    pub fn get_blob<'a, T>(&self, ptr: &'a FatPtr<T, Self>) -> Result<Blob<'a, T>, OffsetError<'p,'v>>
+        where T: ?Sized + Validate
+    {
+        let offset = ptr.raw;
+        let start = offset.get();
+        let size = T::layout(ptr.metadata).size();
+
+        // It's impossible for this to overflow as the maximum offset is just a quarter of
+        // usize::MAX
+        let end = start + size;
+        if let Some(slice) = self.slice().get(start .. end) {
+            Ok(Blob::new(slice, ptr.metadata).unwrap())
+        } else {
+            Err(OffsetError::new(self, ptr))
+        }
+    }
+    */
+}
+
 
 impl<'p,'v> Zone for Pile<'p,'v> {
     type Ptr = Offset<'p,'v>;
-    type Persist = Self;
+    type Persist = Pile<'static, 'static>;
+    type PersistPtr = Offset<'static, 'static>;
     type Allocator = NeverAllocator<Self>;
 
     type Error = OffsetError<'p,'v>;
@@ -84,8 +218,9 @@ impl<'p,'v> Zone for Pile<'p,'v> {
         todo!()
     }
 
-    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self>> {
-        Err(FatPtr::clone(ptr))
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
+        //Err(FatPtr::clone(ptr))
+        todo!()
     }
 
     fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
@@ -94,20 +229,86 @@ impl<'p,'v> Zone for Pile<'p,'v> {
     ) -> R
     {
         let fatptr = owned.into_inner().into_inner();
-        f(Err(fatptr))
+        todo!() //f(Err(fatptr))
     }
 }
 
+/// Mutable, unverified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PileMut<'s, 'v>(Pile<'s, 'v>);
+
+impl<'p,'v> Zone for PileMut<'p,'v> {
+    type Ptr = OffsetMut<'p,'v>;
+    type Persist = Pile<'static, 'static>;
+    type PersistPtr = Offset<'static, 'static>;
+    type Allocator = Self;
+
+    type Error = OffsetError<'p,'v>;
+
+    #[inline(always)]
+    fn allocator() -> Self
+        where Self: Default
+    {
+        Self::default()
+    }
+
+    #[inline(always)]
+    fn duplicate(&self) -> Self {
+        self.clone()
+    }
+
+    fn clone_ptr<T>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
+        todo!()
+    }
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
+        /*
+        match ptr.raw.kind() {
+            offset::Kind::Ptr(nonnull) => unsafe {
+                Ok(&*T::make_fat_ptr(nonnull.cast().as_ptr(), ptr.metadata))
+            },
+            offset::Kind::Offset(raw) => Err(FatPtr { raw, metadata: ptr.metadata }),
+        }*/ todo!()
+    }
+
+    fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
+        ptr: OwnedPtr<T, Self>,
+        f: impl FnOnce(Result<&mut ManuallyDrop<T>, FatPtr<T, Self::Persist>>) -> R,
+    ) -> R
+    {
+        /*
+        let FatPtr { raw, metadata } = ptr.into_inner().into_inner();
+        match raw.kind() {
+            offset::Kind::Ptr(nonnull) => unsafe {
+                let v: &mut T = &mut *T::make_fat_ptr_mut(nonnull.cast().as_ptr(), metadata);
+                let v: &mut ManuallyDrop<T> = &mut *(v as *mut _ as *mut _);
+
+                let layout = Self::min_align_layout(Layout::for_value(v));
+                let r = f(Ok(v));
+
+                if layout.size() > 0 {
+                    std::alloc::dealloc(v as *mut _ as *mut u8, layout)
+                }
+                r
+            },
+            offset::Kind::Offset(offset) => {
+                f(Err(FatPtr { raw: offset, metadata }))
+            }
+        }*/ todo!()
+    }
+}
+
+/*
 impl<Z> Encoded<Z> for Pile<'_, '_> {
     type Encoded = ();
 }
 
-impl<'a, 'p: 'a, 'v: 'a, 'v2> Encode<'a, Pile<'p, 'v2>> for Pile<'p, 'v> {
+impl<'a, 'p, 'v> Encode<'a, Self> for Pile<'p, 'v> {
     type State = ();
 
     fn save_children(&self) -> () {}
 
-    fn poll<D: Dumper<Pile<'p,'v2>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
+    fn poll<D: Dumper<Pile<'p,'v>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
         Ok(dumper)
     }
 
@@ -115,15 +316,17 @@ impl<'a, 'p: 'a, 'v: 'a, 'v2> Encode<'a, Pile<'p, 'v2>> for Pile<'p, 'v> {
         dst.finish()
     }
 
-    fn zone_save_ptr<T, D>(ptr: &'a ValidPtr<T, Self>, dumper: &D) -> Result<D::PersistPtr, &'a T>
+    fn zone_save_ptr<T, D>(ptr: &'a ValidPtr<T, Self>, dumper: &D)
+        -> Result<<Self as Zone>::PersistPtr, &'a T>
         where T: ?Sized + Pointee,
-              D: Dumper<Pile<'p,'v2>>
+              D: Dumper<Self>
     {
+        /*
         let ptr: ValidPtr<T, Pile<'p, 'v2>> = unsafe { mem::transmute_copy(ptr) };
         match dumper.save_ptr(&ptr) {
             Ok(persist) => Ok(persist),
             Err(r) => todo!(),
-        }
+        }*/ todo!()
     }
 }
 
@@ -131,12 +334,12 @@ impl<Z> Encoded<Z> for PileMut<'_, '_> {
     type Encoded = ();
 }
 
-impl<'a, 'p: 'a, 'v: 'a, 'v2> Encode<'a, Pile<'p, 'v2>> for PileMut<'p, 'v> {
+impl<'a, 'p, 'v, 'p2, 'v2> Encode<'a, Pile<'p2, 'v2>> for PileMut<'p, 'v> {
     type State = ();
 
     fn save_children(&self) -> () {}
 
-    fn poll<D: Dumper<Pile<'p,'v2>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
+    fn poll<D: Dumper<Pile<'p2,'v2>>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
         Ok(dumper)
     }
 
@@ -144,9 +347,9 @@ impl<'a, 'p: 'a, 'v: 'a, 'v2> Encode<'a, Pile<'p, 'v2>> for PileMut<'p, 'v> {
         dst.finish()
     }
 
-    fn zone_save_ptr<T, D>(ptr: &'a ValidPtr<T, Self>, dumper: &D) -> Result<D::PersistPtr, &'a T>
+    fn zone_save_ptr<T, D>(ptr: &'a ValidPtr<T, Self>, dumper: &D) -> Result<Offset<'static, 'static>, &'a T>
         where T: ?Sized + Pointee,
-              D: Dumper<Pile<'p,'v2>>
+              D: Dumper<Pile<'p2,'v2>>
     {
         match Self::try_get_dirty(ptr) {
             Ok(r) => Err(r),
@@ -155,11 +358,6 @@ impl<'a, 'p: 'a, 'v: 'a, 'v2> Encode<'a, Pile<'p, 'v2>> for PileMut<'p, 'v> {
             },
         }
     }
-}
-
-
-impl<'p,'v> PersistZone for Pile<'p,'v> {
-    type PersistPtr = Offset<'static, 'static>;
 }
 
 impl<'p, 'v> TryGet for Pile<'p, 'v> {
@@ -196,6 +394,7 @@ impl<'p, 'v> TryGet for Pile<'p, 'v> {
 
 impl<'p, 'v> TryGet for PileMut<'p, 'v> {
     fn try_get<'a, T: ?Sized + Validate>(&self, ptr: &'a ValidPtr<T, Self>) -> PtrResult<Ref<'a, T, Self>, T, Self> {
+        /*
         match Self::try_get_dirty(ptr) {
             Ok(r) => Ok(Ref { this: r, zone: *self }),
             Err(_fatptr) => {
@@ -216,9 +415,11 @@ impl<'p, 'v> TryGet for PileMut<'p, 'v> {
                 }
             },
         }
+        */ todo!()
     }
 
     fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>) -> PtrResult<Own<T::Owned, Self>, T, Self> {
+        /*
         match Self::try_take_dirty(ptr) {
             Ok(this) => Ok(Own { this, zone: *self }),
             Err(fatptr) => {
@@ -240,7 +441,7 @@ impl<'p, 'v> TryGet for PileMut<'p, 'v> {
                     },
                 }
             },
-        }
+        }*/ todo!()
     }
 }
 
@@ -388,106 +589,6 @@ impl<'p, 'v> GetMut for PileMut<'p, 'v> {
     }
 }
 
-pub fn test_pilemut_get_mut<'a,'p,'v>(pile: &PileMut<'p,'v>, ptr: &'a mut ValidPtr<[bool;100], PileMut<'p,'v>>) -> &'a mut [bool;100] {
-    let r = pile.get_mut(ptr).this;
-    for n in r.iter_mut() {
-        *n = true;
-    }
-    r
-}
-
-pub fn test_pilemut_take<'p,'v>(pile: &PileMut<'p,'v>, ptr: OwnedPtr<u8, PileMut<'p,'v>>) -> u8 {
-    pile.take(ptr).this
-}
-
-/// ```should_panic
-/// use hoard::prelude::*;
-/// use hoard::pile::{PileMut, offset::*};
-/// use hoard::zone::*;
-///
-/// let mut pile = PileMut::default();
-/// let ptr = pile.alloc(42u8);
-/// let r = pile.get(&ptr);
-/// assert_eq!(**r, 42);
-///
-/// let r = pile.take(ptr);
-/// assert_eq!(*r, 42);
-///
-/// let ptr: FatPtr<u8, PileMut> = FatPtr { raw: Offset::new(0).unwrap().into(), metadata: () };
-/// let ptr = unsafe { ValidPtr::new_unchecked(ptr) };
-/// let r = pile.get(&ptr);
-///
-/// ```
-pub fn test_pilemut_get<'p,'v>(pile: &PileMut<'p,'v>, ptr: &ValidPtr<u8, PileMut<'p,'v>>) -> u8 {
-    pile.get(ptr).clone()
-}
-
-use leint::Le;
-pub fn test_pilemut_get2<'p,'v>(pile: &PileMut<'p,'v>, ptr: &ValidPtr<ValidPtr<Le<u32>, PileMut<'p,'v>>, PileMut<'p,'v>>)
--> u32 {
-    let ptr = pile.get(ptr);
-    pile.get(&ptr).get() + 42
-}
-
-impl Pile<'_, '_> {
-    /// Creates a new `Pile` from a slice.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use hoard::pile::Pile;
-    /// Pile::new([1,2,3,4], |pile| {
-    /// })
-    /// ```
-    #[inline]
-    pub fn new<R>(slice: impl AsRef<[u8]>, f: impl FnOnce(Pile) -> R) -> R {
-        let slice = slice.as_ref();
-        Unique::new(&slice, |slice| {
-            f(Pile::from(slice))
-        })
-    }
-}
-
-impl<'p> From<Unique<'p, &&[u8]>> for Pile<'p, 'p> {
-    #[inline]
-    fn from(slice: Unique<'p, &&[u8]>) -> Pile<'p, 'p> {
-        Self {
-            marker: PhantomData,
-            mapping: &*Unique::into_inner(slice),
-        }
-    }
-}
-
-impl<'p> Pile<'p, 'static> {
-    /// Creates an empty `Pile`.
-    ///
-    /// Note how the `'version` parameter is `'static': the earliest possible version of a pile is
-    /// to have nothing in it.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use hoard::pile::{Pile, FullyValidateError};
-    /// let empty = Pile::empty();
-    ///
-    /// // Attempting to load anything from an empty pile fails, as there's nothing there...
-    /// assert_eq!(empty.fully_validate::<u8>().unwrap_err(),
-    ///            FullyValidateError::Undersized);
-    ///
-    /// // ...with the exception of zero-sized types!
-    /// empty.fully_validate::<()>().unwrap();
-    /// ```
-    #[inline]
-    pub fn empty() -> Self {
-        static EMPTY_SLICE: &[u8] = &[];
-
-        Self {
-            marker: PhantomData,
-            mapping: &EMPTY_SLICE,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum FullyValidateError<E> {
     /// The pile is smaller than the size of the tip.
@@ -499,88 +600,14 @@ pub enum FullyValidateError<E> {
     //Child(Error),
 }
 
-impl<'p, 'v> Pile<'p, 'v> {
-    fn slice(&self) -> &'p &'p [u8] {
-        unsafe {
-            &*(self.mapping as *const dyn Mapping as *const &'p [u8])
-        }
-    }
-
-    /// Loads the tip of the `Pile`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use hoard::pile::Pile;
-    /// Pile::new([12], |pile| {
-    ///     let tip = pile.fully_validate::<u8>().unwrap();
-    ///     assert_eq!(**tip, 12);
-    /// })
-    /// ```
-    pub fn fully_validate<T: Load<Self>>(&self) -> Result<Ref<'p, T, Self>, FullyValidateError<T::Error>>
-    {
-        let blob = self.get_tip_blob().ok_or(FullyValidateError::Undersized)?;
-        let blob = T::validate(blob.into_validator()).map_err(FullyValidateError::Tip)?;
-
-        unsafe {
-            let r = blob.to_ref();
-            let poll = r.validate_children();
-
-            /* poll.poll(self).map_err(FullyValidateError::Child)?; */
-
-            Ok(Ref {
-                this: r,
-                zone: *self,
-            })
-        }
-    }
-
-    pub fn get_tip_blob<T>(&self) -> Option<Blob<'p, T>> {
-        let start = self.slice().len().saturating_sub(mem::size_of::<T>());
-        let blob = &self.slice()[start ..];
-        Blob::<T>::new(blob, ())
-    }
-
-    /// Creates a new version of an existing pile.
-    ///
-    /// The prefix of the new slice must match the existing pile; in debug builds a mismatch will
-    /// panic.
-    pub fn update<'v2>(&self, new_slice: Unique<'v2, &'p &[u8]>) -> Pile<'p, 'v2>
-        where 'v: 'v2
-    {
-        assert!(self.slice().len() <= new_slice.len());
-        debug_assert!(new_slice.starts_with(self.slice()));
-
-        Pile {
-            marker: PhantomData,
-            mapping: &*Unique::into_inner(new_slice),
-        }
-    }
-
-    pub fn get_blob<'a, T>(&self, ptr: &'a FatPtr<T, Self>) -> Result<Blob<'a, T>, OffsetError<'p,'v>>
-        where T: ?Sized + Validate
-    {
-        let offset = ptr.raw;
-        let start = offset.get();
-        let size = T::layout(ptr.metadata).size();
-
-        // It's impossible for this to overflow as the maximum offset is just a quarter of
-        // usize::MAX
-        let end = start + size;
-        if let Some(slice) = self.slice().get(start .. end) {
-            Ok(Blob::new(slice, ptr.metadata).unwrap())
-        } else {
-            Err(OffsetError::new(self, ptr))
-        }
-    }
-}
 
 unsafe impl<'p,'v> PtrValidator<Self> for Pile<'p, 'v> {
     type Error = ValidatorError<'p, 'v>;
 
-    fn validate_ptr<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a FatPtr<T, Self>)
+    fn validate_ptr<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a FatPtr<T, Pile<'static, 'static>>)
         -> Result<Option<T::ValidateChildren>, Self::Error>
     {
+        /*
         let blob = self.get_blob(ptr)
                        .map_err(|err| ValidatorError::Offset { offset: err.offset })?;
 
@@ -600,70 +627,12 @@ unsafe impl<'p,'v> PtrValidator<Self> for Pile<'p, 'v> {
                     offset: ptr.raw,
                 }
             ),
-        }
-    }
-}
-
-impl<'p,'v> Zone for PileMut<'p,'v> {
-    type Ptr = OffsetMut<'p,'v>;
-    type Persist = Pile<'p,'v>;
-    type Allocator = Self;
-
-    type Error = OffsetError<'p,'v>;
-
-    #[inline(always)]
-    fn allocator() -> Self
-        where Self: Default
-    {
-        Self::default()
-    }
-
-    #[inline(always)]
-    fn duplicate(&self) -> Self {
-        self.clone()
-    }
-
-    fn clone_ptr<T>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
-        todo!()
-    }
-
-    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
-        match ptr.raw.kind() {
-            offset::Kind::Ptr(nonnull) => unsafe {
-                Ok(&*T::make_fat_ptr(nonnull.cast().as_ptr(), ptr.metadata))
-            },
-            offset::Kind::Offset(raw) => Err(FatPtr { raw, metadata: ptr.metadata }),
-        }
-    }
-
-    fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
-        ptr: OwnedPtr<T, Self>,
-        f: impl FnOnce(Result<&mut ManuallyDrop<T>, FatPtr<T, Self::Persist>>) -> R,
-    ) -> R
-    {
-        let FatPtr { raw, metadata } = ptr.into_inner().into_inner();
-        match raw.kind() {
-            offset::Kind::Ptr(nonnull) => unsafe {
-                let v: &mut T = &mut *T::make_fat_ptr_mut(nonnull.cast().as_ptr(), metadata);
-                let v: &mut ManuallyDrop<T> = &mut *(v as *mut _ as *mut _);
-
-                let layout = Self::min_align_layout(Layout::for_value(v));
-                let r = f(Ok(v));
-
-                if layout.size() > 0 {
-                    std::alloc::dealloc(v as *mut _ as *mut u8, layout)
-                }
-                r
-            },
-            offset::Kind::Offset(offset) => {
-                f(Err(FatPtr { raw: offset, metadata }))
-            }
-        }
+        }*/ todo!()
     }
 }
 
 
-/*
+
 unsafe impl<'p,'v> PtrValidator<OffsetMut<'p,'v>> for PileMut<'p,'v> {
     type Error = ValidatePtrError;
 
@@ -713,6 +682,7 @@ impl<'p, 'v> PileMut<'p, 'v> {
         self.get_slice(&ptr.raw, T::layout(ptr.metadata).size())
                   .map(|slice| Blob::new(slice, ptr.metadata).unwrap())
     }
+    */
 
     /// Saves a value, producing a vector.
     ///
@@ -724,16 +694,16 @@ impl<'p, 'v> PileMut<'p, 'v> {
     ///
     /// assert_eq!(pile.save_to_vec(&42u8), &[42]);
     /// ```
-    pub fn save_to_vec<T>(&self, value: &T) -> Vec<u8>
-        where T: ?Sized + Save<OffsetMut<'p,'v>>
+    pub fn save_to_vec<'a, T>(&self, value: &'a T) -> Vec<u8>
+        where T: ?Sized + Save<'a, Self>
     {
-        /*
-        let mut state = value.init_save_state();
-        let (dumper, offset) = value.save_poll(&mut state, VecDumper::default()).unwrap();
-        dumper.0
-        */ todo!()
+        let mut state = value.save_children();
+
+        let dumper = value.poll(&mut state, VecDumper::from(*self)).unwrap();
+        let (dumper, _offset) = value.save_blob(&state, dumper).unwrap();
+
+        dumper.into()
     }
-*/
 
     #[inline]
     fn min_align_layout(layout: Layout) -> Layout {
@@ -764,6 +734,13 @@ impl<'p,'v> ops::Deref for PileMut<'p,'v> {
 
 impl Default for PileMut<'_, 'static> {
     /// Returns an empty pile.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use hoard::pile::PileMut;
+    /// let pile = PileMut::default();
+    /// ```
     #[inline]
     fn default() -> Self {
         PileMut::from(Pile::empty())
@@ -800,76 +777,6 @@ impl<'p,'v> Alloc for PileMut<'p,'v> {
 }
 
 /*
-impl<'p,'v> Zone<Offset<'p, 'v>> for Pile<'p, 'v> {
-    fn get<'a, T>(&self, ptr: &'a ValidPtr<T, Offset<'p,'v>>) -> Ref<'a, T, Offset<'p,'v>>
-        where T: ?Sized + Load<Offset<'p,'v>>
-    {
-        /*
-        let blob = self.load_blob(ptr);
-        T::load_blob(blob, self)
-        */
-        todo!()
-    }
-
-    /*
-    fn take<T>(&self, ptr: OwnedPtr<T, Offset<'p,'v>>) -> Own<T::Owned, Offset<'p,'v>>
-        where T: ?Sized + Load<Offset<'p,'v>>
-    {
-        let blob = self.load_blob(&ptr);
-        Own {
-            this: T::decode_blob(blob, self),
-            zone: *self,
-        }
-    }
-    */
-}
-
-impl<'p,'v> Zone<OffsetMut<'p,'v>> for PileMut<'p,'v> {
-    fn get<'a, T>(&self, own: &'a ValidPtr<T, OffsetMut<'p,'v>>) -> Ref<'a, T, OffsetMut<'p,'v>>
-        where T: ?Sized + Load<OffsetMut<'p,'v>>
-    {
-        /*
-        match own.raw.kind() {
-            Kind::Offset(_) => {
-                /*
-                let ptr: &'a ValidPtr<T, Offset<'p,'v>> = own.try_cast_ref().unwrap();
-                let blob = self.load_blob(ptr);
-                T::load_blob(blob, self)
-                */
-                todo!()
-            },
-            Kind::Ptr(ptr) => {
-                let this: &'a T = unsafe {
-                    &*T::make_fat_ptr(ptr.cast().as_ptr(), own.metadata)
-                };
-                Ref { this, zone: *self }
-            },
-        }
-    */ todo!()
-    }
-
-    /*
-    fn take<T>(&self, ptr: OwnedPtr<T, OffsetMut<'p,'v>>) -> Own<T::Owned, OffsetMut<'p,'v>>
-        where T: ?Sized + Load<OffsetMut<'p,'v>>
-    {
-        let ptr = ptr.into_inner();
-
-        let r = if let Ok(valid_offset_ptr) = ptr.try_cast_ref() {
-                let blob = self.load_blob(valid_offset_ptr);
-                T::decode_blob(blob, self)
-        } else {
-            let FatPtr { raw, metadata } = ptr.into_inner();
-            match unsafe { raw.try_take::<T>(metadata) } {
-                Ok(owned) => owned,
-                Err(_offset) => unreachable!(),
-            }
-        };
-
-        Own { this: r, zone: *self }
-    }
-    */
-}
-
 impl<'p,'v> GetMut<OffsetMut<'p,'v>> for PileMut<'p,'v> {
     #[inline]
     fn get_mut<'a, T>(&self, ptr: &'a mut ValidPtr<T, OffsetMut<'p,'v>>) -> RefMut<'a, T, OffsetMut<'p,'v>>
@@ -930,87 +837,66 @@ impl<'p,'v> GetMut<OffsetMut<'p,'v>> for PileMut<'p,'v> {
         }
     }
 }
+*/
 
-pub fn save_to_vec<'p, 'v, T: ?Sized>(value: &T) -> Vec<u8>
-where T: Save<OffsetMut<'p,'v>>
-{
-    let mut state = value.init_save_state();
-    let (dumper, offset) = value.save_poll(&mut state, VecDumper::default()).unwrap();
-    dumper.0
+#[derive(Debug)]
+struct VecDumper<'p, 'v> {
+    pile: PileMut<'p, 'v>,
+    buf: Vec<u8>,
 }
 
-#[derive(Debug, Default)]
-struct VecDumper(Vec<u8>);
+impl<'p> Default for VecDumper<'p, 'static> {
+    fn default() -> Self {
+        Self {
+            pile: PileMut::default(),
+            buf: vec![],
+        }
+    }
+}
 
-impl<'p,'v> Dumper<OffsetMut<'p,'v>> for VecDumper {
-    type Pending = !;
+impl<'p,'v> From<PileMut<'p,'v>> for VecDumper<'p,'v> {
+    fn from(pile: PileMut<'p, 'v>) -> Self {
+        Self { pile, buf: vec![] }
+    }
+}
 
-    fn try_save_ptr<'a, T: ?Sized + Pointee>(&self, ptr: &'a ValidPtr<T, OffsetMut<'p,'v>>) -> Result<Offset<'p,'v>, &'a T> {
-        match ptr.raw.kind() {
-            Kind::Offset(offset) => Ok(offset),
-            Kind::Ptr(nonnull) => {
-                let r: &'a T = unsafe {
-                    &*T::make_fat_ptr(nonnull.cast().as_ptr(), ptr.metadata)
-                };
-                Err(r)
-            }
+impl<'p,'v> From<VecDumper<'p,'v>> for Vec<u8> {
+    fn from(dumper: VecDumper<'p, 'v>) -> Self {
+        dumper.buf
+    }
+}
+
+impl<'p,'v> Dumper<PileMut<'p,'v>> for VecDumper<'p, 'v> {
+    type Error = !;
+    type PersistPtr = Offset<'static, 'static>;
+
+    type WriteBlob = Vec<u8>;
+    type WriteBlobOk = Vec<u8>;
+    type WriteBlobError = !;
+
+    fn try_save_ptr<'a, T: ?Sized + Pointee>(
+        &self,
+        ptr: &'a ValidPtr<T, PileMut<'p, 'v>>
+    ) -> Result<Offset<'static, 'static>, &'a T>
+    {
+        match PileMut::try_get_dirty(ptr) {
+            Ok(r) => Err(r),
+            Err(ptr) => Ok(ptr.raw.cast()),
         }
     }
 
-    fn try_save_blob(mut self, size: usize, f: impl FnOnce(&mut [u8])) -> Result<(Self, Offset<'p,'v>), !> {
-        let offset = self.0.len();
+    fn save_blob(
+        mut self,
+        size: usize,
+        f: impl FnOnce(Self::WriteBlob) -> Result<Self::WriteBlobOk, Self::WriteBlobError>
+    ) -> Result<(Self, Offset<'static, 'static>), !>
+    {
+        let offset = self.pile.slice().len() + self.buf.len();
 
-        self.0.resize(offset + size, 0);
-        f(&mut self.0[offset ..]);
+        self.buf.reserve(size);
+        self.buf = f(self.buf).unwrap();
 
         Ok((self, Offset::new(offset).unwrap()))
-    }
-}
-*/
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use leint::Le;
-
-    #[test]
-    fn test() {
-        Pile::new(&[1,2,3], |pile| {
-            let fatptr: FatPtr<u8,Pile> = FatPtr {
-                raw: Offset::new(0).unwrap(),
-                metadata: (),
-            };
-            let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
-
-            let r = pile.try_get(&validptr).unwrap();
-            assert_eq!(**r, 1);
-        });
-
-        Pile::new(&[1,2,3], |pile| {
-            let fatptr: FatPtr<Le<u32>, Pile> = FatPtr {
-                raw: Offset::new(0).unwrap(),
-                metadata: (),
-            };
-            let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
-
-            let r = pile.try_get(&validptr);
-            assert!(r.is_err());
-        });
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_get_panic() {
-        Pile::new(&[1,2,3], |pile| {
-            let fatptr: FatPtr<Le<u32>, Pile> = FatPtr {
-                raw: Offset::new(0).unwrap(),
-                metadata: (),
-            };
-            let validptr = unsafe { ValidPtr::new_unchecked(fatptr) };
-
-            let _ = pile.get(&validptr);
-        });
     }
 }
 
@@ -1044,7 +930,6 @@ mod test {
         )
     }
 
-/*
     #[derive(Debug, Default)]
     struct DeepDump {
         dst: Vec<u8>,
@@ -1140,7 +1025,6 @@ mod test {
             assert_eq!(dumper.dst, &[]);
         })
     }
-*/
 
     #[test]
     fn pilemut_get() {
@@ -1183,30 +1067,5 @@ mod test {
         })
     */
     }
-
-/*
-    #[test]
-    fn pilemut_getmut() {
-        let mut zone = PileMut::default();
-        let mut owned = zone.alloc((1,2,3));
-
-        let r = zone.get_mut(&mut owned);
-
-        assert_eq!(***r, (1,2,3));
-        r.this.0 = 10;
-        assert_eq!(***r, (10,2,3));
-
-        let r = zone.get_mut(&mut owned);
-        assert_eq!(***r, (10,2,3));
-    }
-
-    #[test]
-    fn offsetmut_clone() {
-        let mut zone = PileMut::default();
-        let v1 = zone.alloc((1,2,3));
-        let v2 = v1.clone();
-        assert_ne!(v1.raw, v2.raw);
-    }
-*/
 }
 */

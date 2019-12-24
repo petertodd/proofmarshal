@@ -10,14 +10,14 @@ use core::ptr::{self, NonNull};
 use core::slice;
 
 use crate::{
-    load::Validate,
+    load::ValidateBlob,
     pointee::Pointee,
 };
 
-mod cursor;
-pub use self::cursor::Error;
+//mod cursor;
+//pub use self::cursor::Error;
 
-pub trait BlobValidator<T: ?Sized + Validate> {
+pub trait BlobValidator<T: ?Sized + ValidateBlob> {
     type Ok;
     type Error;
 
@@ -29,28 +29,29 @@ pub trait BlobValidator<T: ?Sized + Validate> {
     fn validate_struct(self) -> Self::StructValidator;
     fn validate_enum(self) -> (u8, Self::EnumValidator);
 
-    unsafe fn validate_option<U: Validate, F>(self, f: F) -> Result<Self::Ok, Self::Error>
+    unsafe fn validate_option<U: ValidateBlob, F>(self, f: F) -> Result<Self::Ok, Self::Error>
         where F: FnOnce(U::Error) -> T::Error;
 
     fn validate_bytes(self, f: impl for<'a> FnOnce(Blob<'a, T>) -> Result<ValidBlob<'a, T>, T::Error>)
-        -> Result<Self::Ok, Self::Error>;
+        -> Result<Self::Ok, Self::Error>
+    where T: ValidateBlob;
 }
 
-pub trait StructValidator<T: ?Sized + Validate> {
+pub trait StructValidator<T: ?Sized + ValidateBlob> {
     type Ok;
     type Error;
 
-    fn field<U: Validate, F>(&mut self, f: F) -> Result<ValidBlob<U>, Self::Error>
+    fn field<U: ValidateBlob, F>(&mut self, f: F) -> Result<ValidBlob<U>, Self::Error>
         where F: FnOnce(U::Error) -> T::Error;
 
     unsafe fn assume_valid(self) -> Result<Self::Ok, Self::Error>;
 }
 
-pub trait EnumValidator<T: ?Sized + Validate> {
+pub trait EnumValidator<T: ?Sized + ValidateBlob> {
     type Ok;
     type Error;
 
-    fn field<U: Validate, F>(&mut self, f: F) -> Result<ValidBlob<U>, Self::Error>
+    fn field<U: ValidateBlob, F>(&mut self, f: F) -> Result<ValidBlob<U>, Self::Error>
         where F: FnOnce(U::Error) -> T::Error;
 
     /// Asserts that the enum is valid.
@@ -97,11 +98,13 @@ impl<'a, T: ?Sized + Pointee> Blob<'a, T> {
         }
     }
 
+    /*
     pub fn into_validator(self) -> impl BlobValidator<T, Ok=ValidBlob<'a, T>, Error=cursor::Error<T::Error>>
         where T: Validate
     {
         cursor::BlobCursor::from(self)
     }
+    */
 
     /// Asserts that `Blob` is fully valid, converting it into a `ValidBlob`.
     ///
@@ -115,8 +118,8 @@ impl<'a, T: ?Sized + Pointee> Blob<'a, T> {
 }
 
 impl<'a, T: ?Sized + Pointee> ValidBlob<'a, T> {
-    pub unsafe fn to_ref(self) -> &'a T {
-        let inner = &*T::make_fat_ptr(self.ptr.as_ptr() as *const (), self.metadata);
+    pub fn to_ref(self) -> &'a T {
+        let inner = unsafe { &*T::make_fat_ptr(self.ptr.as_ptr() as *const (), self.metadata) };
         assert_eq!(T::layout(self.metadata), core::alloc::Layout::for_value(inner),
                    "<{} as Pointee>::layout() incorrectly implemented", type_name::<T>());
         inner

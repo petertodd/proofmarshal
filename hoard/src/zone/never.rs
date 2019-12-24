@@ -33,7 +33,8 @@ impl<Z: Zone> Alloc for NeverAllocator<Z> {
 
 impl Zone for ! {
     type Ptr = !;
-    type Persist = Self;
+    type Persist = !;
+    type PersistPtr = !;
     type Allocator = NeverAllocator<Self>;
     type Error = !;
 
@@ -60,10 +61,6 @@ impl Zone for ! {
     {
         match owned.raw {}
     }
-}
-
-impl PersistZone for ! {
-    type PersistPtr = !;
 }
 
 /*

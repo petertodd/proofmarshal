@@ -3,14 +3,15 @@
 use core::cmp;
 use core::fmt;
 use core::hash;
+use core::mem;
 
 use nonzero::NonZero;
 
 use super::*;
 
-use crate::load::{Validate, ValidationError};
+use crate::load::*;
 use crate::save::*;
-use crate::blob::{BlobValidator, StructValidator};
+use crate::blob::*;
 
 /// A zone pointer with metadata. *Not* necessarily valid.
 #[repr(C)]
@@ -24,6 +25,10 @@ pub struct FatPtr<T: ?Sized + Pointee, Z: Zone> {
 
 unsafe impl<T: ?Sized + Pointee, Z: Zone> NonZero for FatPtr<T, Z> {}
 
+impl<T: ?Sized + PersistPtr, Z: Zone> Persist for FatPtr<T, Z> {
+    type Persist = FatPtr<T::Persist, Z::Persist>;
+}
+
 /// Returned when validation of a `FatPtr` blob fails.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ValidateFatPtrError<T, P> {
@@ -31,22 +36,48 @@ pub enum ValidateFatPtrError<T, P> {
     Metadata(T),
 }
 
+impl<T: ?Sized + Pointee, Z: Zone> ValidateBlob for FatPtr<T, Z> {
+    type Error = ValidateFatPtrError<<T::Metadata as ValidateBlob>::Error,
+                                     <Z::PersistPtr as ValidateBlob>::Error>;
+
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        let mut blob = blob.validate_struct();
+        blob.field::<Z::PersistPtr, _>(ValidateFatPtrError::Ptr)?;
+        blob.field::<T::Metadata, _>(ValidateFatPtrError::Metadata)?;
+        unsafe { blob.assume_valid() }
+    }
+}
+
+unsafe impl<'a, T: ?Sized + PersistPtr, Z: Zone> ValidateChildren<'a, Z> for FatPtr<T,Z> {
+    type State = ();
+    fn validate_children(this: &Self::Persist) -> () {}
+    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, _: &mut (), _: &V) -> Result<&'a Self, V::Error> {
+        Ok(unsafe { mem::transmute(this) })
+    }
+}
+impl<T: ?Sized + PersistPtr, Z: Zone> Decode<Z> for FatPtr<T,Z> {}
+
+/*
+
 impl<T: ValidationError, P: ValidationError> ValidationError for ValidateFatPtrError<T, P> {
 }
 
-impl<T: ?Sized + Validate, Z: PersistZone> Validate for FatPtr<T, Z> {
+impl<T: ?Sized + Validate, Z: Zone> Validate for FatPtr<T, Z>
+where Z::Ptr: Validate
+{
     type Error = ValidateFatPtrError<<T::Metadata as Validate>::Error,
-                                     <Z::PersistPtr as Validate>::Error>;
+                                     <Z::Ptr as Validate>::Error>;
 
     fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
         let mut blob = blob.validate_struct();
 
-        blob.field::<Z::PersistPtr, _>(ValidateFatPtrError::Ptr)?;
+        blob.field::<Z::Ptr, _>(ValidateFatPtrError::Ptr)?;
         blob.field::<T::Metadata, _>(ValidateFatPtrError::Metadata)?;
 
         unsafe { blob.assume_valid() }
     }
 }
+*/
 
 // standard impls
 

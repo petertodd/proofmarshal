@@ -33,11 +33,15 @@ impl<Z: Zone> Encode<'_, Z> for Outpoint {
     }
 }
 
-impl Validate for Outpoint {
+impl Persist for Outpoint {
+    type Persist = Self;
+}
+
+impl ValidateBlob for Outpoint {
     type Error = !;
 
     #[inline(always)]
-    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
         let mut blob = blob.validate_struct();
         blob.field::<[u8;32],_>(Into::into)?;
         blob.field::<Le<u32>,_>(Into::into)?;
@@ -45,16 +49,26 @@ impl Validate for Outpoint {
     }
 }
 
-unsafe impl<Z: Zone> Load<Z> for Outpoint {
-    type ValidateChildren = (<[u8;32] as Load<Z>>::ValidateChildren, <Le<u32> as Load<Z>>::ValidateChildren);
+unsafe impl<'a,Z> ValidateChildren<'a, Z> for Outpoint {
+    type State = (<[u8;32] as ValidateChildren<'a, Z>>::State,
+                  <Le<u32> as ValidateChildren<'a, Z>>::State);
 
     #[inline(always)]
-    fn validate_children(&self) -> Self::ValidateChildren {
-        (Load::<Z>::validate_children(&self.txid),
-         Load::<Z>::validate_children(&self.n))
+    fn validate_children(this: &'a Self) -> Self::State {
+        (<[u8;32] as ValidateChildren<'a, Z>>::validate_children(&this.txid),
+         <Le<u32> as ValidateChildren<'a, Z>>::validate_children(&this.n))
+    }
+
+    #[inline(always)]
+    fn poll<V: PtrValidator<Z>>(this: &'a Self, state: &mut Self::State, validator: &V) -> Result<&'a Self, V::Error> {
+        <[u8;32] as ValidateChildren<'a, Z>>::poll(&this.txid, &mut state.0, validator)?;
+        <Le<u32> as ValidateChildren<'a, Z>>::poll(&this.n, &mut state.1, validator)?;
+        Ok(unsafe { ::core::mem::transmute(this) })
     }
 }
+impl<Z> Decode<Z> for Outpoint {}
 
+/*
 #[repr(C)]
 #[derive(Debug)]
 pub struct TxOut<Z: Zone> {
@@ -111,3 +125,4 @@ unsafe impl<Z: Zone> Load<Z> for TxOut<Z> {
          Load::<Z>::validate_children(&self.script))
     }
 }
+*/

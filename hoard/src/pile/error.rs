@@ -4,15 +4,17 @@ use std::backtrace::Backtrace;
 
 use super::*;
 
-use crate::load::{Validate, ValidationError};
+use crate::load::*;
+use crate::save::*;
 
 /// An attempt to dereference a pile offset failed.
 #[derive(Debug, PartialEq, Eq)]
 pub struct OffsetError<'p,'v> {
-    pile: Pile<'p, 'v>,
-    pub(crate) offset: Offset<'p, 'v>,
+    pub pile: Pile<'p, 'v>,
+    pub offset: Offset<'p, 'v>,
 }
 
+/*
 impl<'p,'v> OffsetError<'p,'v> {
     pub fn new<T: ?Sized + Validate>(pile: &Pile<'p,'v>, ptr: &FatPtr<T, Pile<'p,'v>>) -> Self {
         Self {
@@ -89,3 +91,4 @@ impl From<OffsetError<'_, '_>> for DerefErrorPayload {
         }
     }
 }
+*/

@@ -41,6 +41,7 @@ impl<'a, T: ?Sized + Pointee> BlobCursor<'a, T> {
     }
 }
 
+/*
 impl<'a, T: ?Sized + Pointee> BlobCursor<'a, T>
 where T: Validate
 {
@@ -55,6 +56,7 @@ where T: Validate
         }
     }
 }
+*/
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error<E> {

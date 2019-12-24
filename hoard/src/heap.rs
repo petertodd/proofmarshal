@@ -30,6 +30,7 @@ unsafe impl Sync for HeapPtr {}
 impl Zone for Heap {
     type Ptr = HeapPtr;
     type Persist = !;
+    type PersistPtr = !;
 
     type Allocator = Self;
     type Error = !;

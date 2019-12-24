@@ -2,9 +2,13 @@ use core::mem::{self, MaybeUninit};
 
 use sliceinit::SliceInitializer;
 
+use crate::blob::StructValidator;
+
 use super::*;
 
-use crate::blob::StructValidator;
+impl<T: Persist, const N: usize> Persist for [T;N] {
+    type Persist = [T::Persist; N];
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ValidateArrayError<E, const N: usize> {
@@ -21,10 +25,10 @@ impl<E: Into<!>, const N: usize> From<ValidateArrayError<E, N>> for ! {
 impl<E: ValidationError, const N: usize> ValidationError for ValidateArrayError<E, N> {
 }
 
-impl<T: Validate, const N: usize> Validate for [T; N] {
+impl<T: ValidateBlob, const N: usize> ValidateBlob for [T; N] {
     type Error = ValidateArrayError<T::Error, N>;
 
-    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
         let mut blob = blob.validate_struct();
 
         for i in 0 .. N {
@@ -35,16 +39,16 @@ impl<T: Validate, const N: usize> Validate for [T; N] {
     }
 }
 
-unsafe impl<Z: Zone, T: Load<Z>, const N: usize> Load<Z> for [T; N] {
-    type ValidateChildren = [T::ValidateChildren; N];
+unsafe impl<'a, Z, T: ValidateChildren<'a, Z>, const N: usize> ValidateChildren<'a, Z> for [T; N] {
+    type State = [T::State; N];
 
-    fn validate_children(&self) -> [T::ValidateChildren; N] {
-        let mut r: [MaybeUninit<T::ValidateChildren>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+    fn validate_children(this: &'a Self::Persist) -> Self::State {
+        let mut r: [MaybeUninit<T::State>; N] = unsafe { MaybeUninit::uninit().assume_init() };
 
         let mut initializer = SliceInitializer::new(&mut r[..]);
 
-        for item in self.iter() {
-            initializer.push(item.validate_children())
+        for item in this.iter() {
+            initializer.push(T::validate_children(item))
         }
 
         initializer.done();
@@ -56,15 +60,16 @@ unsafe impl<Z: Zone, T: Load<Z>, const N: usize> Load<Z> for [T; N] {
 
         r2
     }
+
+    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<&'a Self, V::Error> {
+        for (item, state) in this.iter().zip(state.iter_mut()) {
+            T::poll(item, state, validator)?;
+        }
+        Ok(unsafe { mem::transmute(this) })
+    }
 }
 
-impl<Z: Zone, T: ValidateChildren<Z>, const N: usize> ValidateChildren<Z> for [T; N] {
-    fn poll<V: PtrValidator<Z>>(&mut self, ptr_validator: &V) -> Result<(), V::Error> {
-        for item in self.iter_mut() {
-            item.poll(ptr_validator)?;
-        }
-        Ok(())
-    }
+impl<Z, T: Decode<Z>, const N: usize> Decode<Z> for [T; N] {
 }
 
 /*

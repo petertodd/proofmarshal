@@ -1,17 +1,21 @@
 use super::*;
 
+use core::any::type_name;
 use core::cmp;
 use core::convert::{TryFrom, TryInto};
 use core::fmt;
 use core::hash;
 use core::marker::PhantomData;
-use core::mem;
+use core::mem::{self, size_of, align_of};
 use core::ptr;
 
 use owned::Take;
 use leint::Le;
 
-use crate::marshal::prelude::*;
+use crate::blob::*;
+use crate::load::*;
+use crate::save::*;
+use crate::marshal::Primitive;
 
 /// The length of a slice.
 #[repr(transparent)]
@@ -24,15 +28,7 @@ impl<T> SliceLen<T> {
     /// Creates a new `SliceLen<T>`.
     #[inline(always)]
     pub fn new(len: usize) -> Option<Self> {
-        mem::size_of::<T>().checked_mul(len)
-            .and_then(|len_bytes| {
-                if len_bytes <= (isize::max_value() as usize) {
-                    let len = len.try_into().ok().unwrap();
-                    Some(unsafe { SliceLen::new_unchecked(len) })
-                } else {
-                    None
-                }
-            })
+        Self::try_from(len).ok()
     }
 
     /// Creates a new `SliceLen<T>` without checking that the length is valid.
@@ -99,6 +95,13 @@ impl<T> From<SliceLen<T>> for usize {
     }
 }
 
+impl<T> From<SliceLen<T>> for u64 {
+    #[inline(always)]
+    fn from(len: SliceLen<T>) -> u64 {
+        len.len.get()
+    }
+}
+
 impl<T> From<SliceLen<T>> for Layout {
     #[inline(always)]
     fn from(len: SliceLen<T>) -> Layout {
@@ -124,16 +127,71 @@ impl<T> TryFrom<usize> for SliceLen<T> {
 
     #[inline]
     fn try_from(len: usize) -> Result<Self, Self::Error> {
-        Self::new(len).ok_or(SliceLenError(()))
+        Self::try_from(u64::try_from(len).unwrap())
     }
 }
 
-impl<T> Validate for SliceLen<T> {
+impl<T> TryFrom<u64> for SliceLen<T> {
     type Error = SliceLenError;
 
-    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
-        todo!()
+    #[inline]
+    fn try_from(len: u64) -> Result<Self, Self::Error> {
+        let size: u64 = mem::size_of::<T>().try_into().unwrap();
+
+        size.checked_mul(len)
+            .and_then(|len| {
+                if len <= (isize::max_value() as u64) {
+                    Some(Self { marker: PhantomData, len: len.into() })
+                } else {
+                    None
+                }
+            }).ok_or(SliceLenError(()))
     }
+}
+
+impl<T> TryFrom<Le<u64>> for SliceLen<T> {
+    type Error = SliceLenError;
+
+    #[inline]
+    fn try_from(len: Le<u64>) -> Result<Self, Self::Error> {
+        Self::try_from(u64::from(len))
+    }
+}
+
+impl<T: Persist> Persist for SliceLen<T> {
+    type Persist = SliceLen<T::Persist>;
+}
+
+impl<T> ValidateBlob for SliceLen<T> {
+    type Error = SliceLenError;
+
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        blob.validate_bytes(|blob| {
+            let slice = &blob[..];
+            let len = u64::from_le_bytes(slice.try_into().unwrap());
+
+            Self::try_from(len)?;
+            Ok(unsafe { blob.assume_valid() })
+        })
+    }
+}
+
+unsafe impl<'a, T: Persist, Z> ValidateChildren<'a, Z> for SliceLen<T> {
+    type State = ();
+    fn validate_children(_: &'a SliceLen<T::Persist>) -> () {}
+
+    fn poll<V: PtrValidator<Z>>(this: &'a SliceLen<T::Persist>, _: &mut (), _: &V) -> Result<&'a Self, V::Error> {
+        assert_eq!(Layout::new::<T>(), Layout::new::<T::Persist>(),
+                   "Incorrect Persist implementation on {}; layouts differ", type_name::<T>());
+        Ok(unsafe { mem::transmute(this) })
+    }
+}
+
+impl<Z, T: Persist> Decode<Z> for SliceLen<T> {
+}
+
+impl<Z, T: Encoded<Z>> Encoded<Z> for SliceLen<T> {
+    type Encoded = SliceLen<T::Encoded>;
 }
 
 unsafe impl<T> Pointee for [T] {
@@ -157,7 +215,29 @@ unsafe impl<T> Pointee for [T] {
         ptr::slice_from_raw_parts_mut(thin as *mut T, len.into())
     }
 
-    fn layout(metadata: Self::Metadata) -> Layout {
-        todo!()
+    #[inline(always)]
+    fn layout(len: Self::Metadata) -> Layout {
+        let item_len_rounded_up = (size_of::<T>() + align_of::<T>() - 1) / size_of::<T>() * size_of::<T>();
+        let size = item_len_rounded_up * len.get();
+        Layout::from_size_align(size, align_of::<T>())
+            .unwrap() // optimized away as the above is wrapping arithmetic in release mode
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_layout() {
+        let slice = &[(1u8, 2u64); 100][..];
+
+        let expected_layout = Layout::for_value(slice);
+        assert_eq!(expected_layout.size(), 1600);
+        assert_eq!(expected_layout.align(), 8);
+
+        let metadata = <[_] as Pointee>::metadata(slice);
+        assert_eq!(metadata.len.get(), 100);
+        assert_eq!(<[_] as Pointee>::layout(metadata), expected_layout);
     }
 }

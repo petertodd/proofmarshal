@@ -47,13 +47,15 @@ pub mod zone;
 pub mod blob;
 pub mod load;
 pub mod save;
+
+#[macro_use]
 pub mod marshal;
 
 pub mod heap;
 
 pub mod pile;
 
-pub mod linkedlist;
+//pub mod linkedlist;
 
 /// Prelude
 pub mod prelude {

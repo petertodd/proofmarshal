@@ -1,9 +1,9 @@
 use super::*;
 
-mod scalars;
+pub mod scalars;
 
-mod option;
+pub mod option;
 pub use self::option::*;
 
-mod arrays;
-mod slice;
+pub mod arrays;
+pub mod slice;

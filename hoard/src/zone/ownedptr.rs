@@ -12,8 +12,8 @@ use core::ptr;
 
 use nonzero::NonZero;
 
-use crate::blob::{BlobValidator, StructValidator};
-use crate::load::{Validate, ValidateChildren, PtrValidator};
+use crate::blob::*;
+use crate::load::*;
 use crate::save::*;
 
 /// An owned pointer.
@@ -130,29 +130,45 @@ where T: fmt::Debug
     }
 }
 
-impl<T: ?Sized + Validate, Z: Zone> Validate for OwnedPtr<T, Z> {
-    type Error = <FatPtr<T, Z::Persist> as Validate>::Error;
 
-    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+impl<T: ?Sized + PersistPtr, Z: Zone> Persist for OwnedPtr<T, Z> {
+    type Persist = OwnedPtr<T::Persist, Z::Persist>;
+}
+
+impl<Z: Zone, T: ?Sized + Pointee + ValidateBlob> ValidateBlob for OwnedPtr<T, Z> {
+    type Error = <ValidPtr<T,Z> as ValidateBlob>::Error;
+
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
         let mut blob = blob.validate_struct();
-        blob.field::<FatPtr<T, Z::Persist>, _>(identity)?;
+        blob.field::<ValidPtr<T,Z>,_>(identity)?;
         unsafe { blob.assume_valid() }
     }
 }
 
-unsafe impl<T: ?Sized + Load<Z>, Z: Zone> Load<Z> for OwnedPtr<T, Z> {
-    type ValidateChildren = <ValidPtr<T,Z> as Load<Z>>::ValidateChildren;
+unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> ValidateChildren<'a, Z> for OwnedPtr<T, Z>
+where T: ValidatePtrChildren<'a, Z>
+{
+    type State = super::validptr::ValidateState<'a, T::Persist, T::State>;
 
-    fn validate_children(&self) -> Self::ValidateChildren {
-        self.inner.validate_children()
+    fn validate_children(this: &'a OwnedPtr<T::Persist, Z::Persist>) -> Self::State {
+        <ValidPtr<T,Z> as ValidateChildren<'a, Z>>::validate_children(this)
+    }
+
+    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<&'a Self, V::Error> {
+        <ValidPtr<T,Z> as ValidateChildren<'a, Z>>::poll(this, state, validator)?;
+        Ok(unsafe { mem::transmute(this) })
     }
 }
 
+impl<Z: Zone, T: ?Sized + Load<Z>> Decode<Z> for OwnedPtr<T,Z> {
+}
+
+/*
 impl<Y: Zone, Z: Zone, T: ?Sized + Saved<Y>> Encoded<Y> for OwnedPtr<T, Z> {
     type Encoded = OwnedPtr<T::Saved, Y>;
 }
 
-impl<'a, Y: Zone, Z: Zone + Encode<'a, Y>, T: 'a + ?Sized + Save<'a, Y>> Encode<'a, Y> for OwnedPtr<T, Z> {
+impl<'a, Y: Zone, Z: 'a + Zone + Encode<'a, Y>, T: 'a + ?Sized + Save<'a, Y>> Encode<'a, Y> for OwnedPtr<T, Z> {
     type State = <ValidPtr<T, Z> as Encode<'a, Y>>::State;
 
     fn save_children(&'a self) -> Self::State {
@@ -167,3 +183,4 @@ impl<'a, Y: Zone, Z: Zone + Encode<'a, Y>, T: 'a + ?Sized + Save<'a, Y>> Encode<
         self.inner.encode_blob(state, dst)
     }
 }
+*/

@@ -6,9 +6,6 @@ pub use self::scalars::*;
 mod option;
 pub use self::option::*;
 
-mod tuples;
-pub use self::tuples::*;
-
 mod arrays;
 pub use self::arrays::*;
 

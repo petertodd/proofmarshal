@@ -1,7 +1,13 @@
 use super::*;
 
+use crate::pointee::slice::SliceLen;
+
 impl<Z, T: Encoded<Z>> Saved<Z> for [T] {
     type Saved = [T::Encoded];
+
+    fn coerce_metadata(metadata: SliceLen<T>) -> SliceLen<T::Encoded> {
+        todo!()
+    }
 }
 
 impl<'a, Z: Zone, T: Encode<'a, Z>> Save<'a, Z> for [T] {
@@ -19,7 +25,10 @@ impl<'a, Z: Zone, T: Encode<'a, Z>> Save<'a, Z> for [T] {
         Ok(dumper)
     }
 
-    fn save_blob<D: Dumper<Z>>(&self, state: &Self::State, dumper: D) -> Result<(D, D::PersistPtr), D::Error> {
+    fn save_blob<D: Dumper<Z>>(&self, state: &Self::State, dumper: D)
+        -> Result<(D, FatPtr<[T::Encoded], Z::Persist>),
+                  D::Error>
+    {
         for (item, state) in self.iter().zip(state) {
             todo!()
         }

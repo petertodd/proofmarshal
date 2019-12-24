@@ -1,41 +1,100 @@
+use core::num::NonZeroUsize;
+use core::mem;
+
 use super::*;
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct ValidateSliceError<E> {
-    idx: usize,
-    err: E,
+use crate::pointee::slice::SliceLen;
+use crate::blob::StructValidator;
+
+unsafe impl<T: Persist> PersistPtr for [T] {
+    type Persist = [T::Persist];
+
+    fn coerce_metadata_into_persist(len: SliceLen<T>) -> SliceLen<T::Persist> {
+        todo!()
+    }
+
+    fn coerce_metadata_from_persist(len: SliceLen<T::Persist>) -> SliceLen<T> {
+        todo!()
+    }
 }
 
-impl<E: ValidationError> ValidationError for ValidateSliceError<E> {}
+#[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ValidateSliceError<E> {
+    pub idx: usize,
+    pub err: E,
+}
 
-impl<T: Validate> Validate for [T] {
+impl<T: ValidateBlob> ValidateBlob for [T] {
     type Error = ValidateSliceError<T::Error>;
 
-    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
-        todo!()
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        let len = blob.metadata().get();
+        let mut blob = blob.validate_struct();
+        for idx in 0 .. len {
+            blob.field::<T,_>(|err| ValidateSliceError { idx, err })?;
+        }
+
+        unsafe { blob.assume_valid() }
     }
 }
 
-unsafe impl<Z: Zone, T: Load<Z>> Load<Z> for [T] {
-    type ValidateChildren = Vec<T::ValidateChildren>;
+#[derive(Debug)]
+#[non_exhaustive]
+#[doc(hidden)]
+pub enum ValidateSliceState<S> {
+    #[non_exhaustive]
+    #[doc(hidden)]
+    Value {
+        state: S,
+        next: NonZeroUsize,
+    },
 
-    fn validate_children(&self) -> Self::ValidateChildren {
-        todo!()
-    }
+    #[doc(hidden)]
+    #[non_exhaustive]
+    Done,
 }
 
-impl<Z: Zone, T: ValidateChildren<Z>> ValidateChildren<Z> for Vec<T> {
-    fn poll<V: PtrValidator<Z>>(&mut self, ptr_validator: &V) -> Result<(), V::Error> {
+unsafe impl<'a, Z, T: ValidateChildren<'a, Z>> ValidatePtrChildren<'a, Z> for [T] {
+    type State = ValidateSliceState<T::State>;
+
+    fn validate_children(this: &'a Self::Persist) -> Self::State {
+        if let Some(first) = this.first() {
+            ValidateSliceState::Value {
+                state: T::validate_children(first),
+                next: NonZeroUsize::new(1).unwrap(),
+            }
+        } else {
+            ValidateSliceState::Done
+        }
+    }
+
+    fn poll<V: PtrValidator<Z>>(this: &'a [T::Persist], state: &mut Self::State, validator: &V) -> Result<&'a Self, V::Error> {
         loop {
-            match self.last_mut() {
-                Some(last) => {
-                    last.poll(ptr_validator)?;
-                    self.pop();
+            *state = match state {
+                ValidateSliceState::Value { state, next } => {
+                    let next = next.get();
+                    T::poll(&this[next - 1], state, validator)?;
+
+                    if let Some(value) = &this.get(next) {
+                        ValidateSliceState::Value {
+                            state: T::validate_children(value),
+                            next: NonZeroUsize::new(next + 1).unwrap(),
+                        }
+                    } else {
+                        ValidateSliceState::Done
+                    }
                 },
-                None => break Ok(()),
+                ValidateSliceState::Done => {
+                    break Ok(unsafe { mem::transmute(this) })
+                },
             }
         }
     }
+}
+
+impl<Z, T: Decode<Z>> Load<Z> for [T] {
+    type Error = ValidateSliceError<<T::Persist as ValidateBlob>::Error>;
 }
 
 #[cfg(test)]

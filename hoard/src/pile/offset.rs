@@ -74,8 +74,9 @@ use nonzero::NonZero;
 
 use super::Pile;
 
-use crate::blob;
-use crate::load::{Validate, ValidationError};
+use crate::blob::*;
+use crate::load::*;
+use crate::save::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -122,8 +123,9 @@ impl<'p,'v> Offset<'p,'v> {
         )
     }
 
+    /// Converts the `Offset` into an offset with a different lifetime.
     #[inline]
-    pub fn to_static(&self) -> Offset<'static, 'static> {
+    pub fn cast<'p2,'v2>(&self) -> Offset<'p2, 'v2> {
         Offset {
             marker: PhantomData,
             raw: self.raw,
@@ -136,53 +138,11 @@ impl<'p,'v> Offset<'p,'v> {
     }
 }
 
-/*
 impl From<Offset<'_, '_>> for usize {
     fn from(offset: Offset<'_,'_>) -> usize {
         offset.get()
     }
 }
-
-unsafe impl<'p,'v> TryCastRef<OffsetMut<'p,'v>> for Offset<'p,'v> {
-    type Error = !;
-
-    #[inline(always)]
-    fn try_cast_ref(&self) -> Result<&OffsetMut<'p,'v>, Self::Error> {
-        // Safe because OffsetMut is a #[repr(transparent)] Offset
-        Ok(unsafe { mem::transmute(self) })
-    }
-}
-
-unsafe impl<'p,'v> TryCast<OffsetMut<'p,'v>> for Offset<'p,'v> {
-    #[inline(always)]
-    fn try_cast(self) -> Result<OffsetMut<'p,'v>, Self::Error> {
-        // Safe because OffsetMut is a #[repr(transparent)] Offset
-        Ok(unsafe { mem::transmute(self) })
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct TryCastOffsetMutError(());
-
-unsafe impl<'p,'v> TryCastRef<Offset<'p,'v>> for OffsetMut<'p,'v> {
-    type Error = TryCastOffsetMutError;
-
-    #[inline]
-    fn try_cast_ref(&self) -> Result<&Offset<'p,'v>, Self::Error> {
-        match self.kind() {
-            Kind::Offset(_) => Ok(&self.0),
-            Kind::Ptr(_) => Err(TryCastOffsetMutError(())),
-        }
-    }
-}
-
-unsafe impl<'p,'v> TryCast<Offset<'p,'v>> for OffsetMut<'p,'v> {
-    #[inline]
-    fn try_cast(self) -> Result<Offset<'p,'v>, Self::Error> {
-        self.try_cast_ref().map(|r| *r)
-    }
-}
-*/
 
 impl<'p, 'v> From<Offset<'p,'v>> for OffsetMut<'p,'v> {
     #[inline]
@@ -191,69 +151,31 @@ impl<'p, 'v> From<Offset<'p,'v>> for OffsetMut<'p,'v> {
     }
 }
 
-/*
-impl<'p,'v> Ptr for Offset<'p, 'v> {
-    type Persist = Self;
-    type Zone = Pile<'p, 'v>;
-
-    fn zone() -> Self::Zone
-        where Self: Default
-    {
-        unreachable!()
-    }
-
-    /*
-    type Allocator = crate::never::NeverAllocator<Self>;
-
-    #[inline]
-    fn allocator() -> Self::Allocator {
-        panic!()
-    }
-    */
-
-    #[inline]
-    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
-        unsafe {
-            OwnedPtr::new_unchecked(
-                ValidPtr::new_unchecked(
-                    FatPtr {
-                        raw: ptr.raw,
-                        metadata: ptr.metadata,
-                    }
-                )
-            )
-        }
-    }
-
-    #[inline]
-    fn dealloc_owned<T: ?Sized + Pointee>(own: OwnedPtr<T, Self>) {
-        let _ = own.into_inner();
-    }
-
-    /*
-    #[inline]
-    fn drop_take_unsized<T: ?Sized + Pointee>(_: OwnedPtr<T, Self>, _: impl FnOnce(&mut ManuallyDrop<T>)) {
-    }
-
-    #[inline]
-    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self> {
-        Err(ptr.raw)
-    }
-    */
-}
-*/
-
 impl fmt::Pointer for Offset<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:x}", self.get())
     }
 }
 
-impl Validate for Offset<'_,'_> {
+impl Persist for Offset<'_,'_> {
+    type Persist = Offset<'static, 'static>;
+}
+
+impl Persist for OffsetMut<'_,'_> {
+    type Persist = Offset<'static, 'static>;
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ValidateOffsetError(u64);
+
+impl ValidationError for ValidateOffsetError {
+}
+
+impl ValidateBlob for Offset<'_,'_> {
     type Error = ValidateOffsetError;
 
     #[inline]
-    fn validate<B: blob::BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
         blob.validate_bytes(|blob| {
             let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
 
@@ -271,104 +193,35 @@ impl Validate for Offset<'_,'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct ValidateOffsetError(u64);
+impl ValidateBlob for OffsetMut<'_,'_> {
+    type Error = ValidateOffsetError;
 
-impl ValidationError for ValidateOffsetError {
+    #[inline]
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+        todo!()
+    }
 }
 
-/*
-impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
-    type Persist = Offset<'p, 'v>;
-    type Zone = PileMut<'p, 'v>;
-    //type Allocator = PileMut<'p, 'v>;
+unsafe impl<'a, Z> ValidateChildren<'a, Z> for Offset<'_, '_> {
+    type State = ();
+    fn validate_children(_: &Offset<'static, 'static>) -> () {}
 
-    #[inline]
-    fn zone() -> Self::Zone {
-        let pile = PileMut::default();
-
-        // Safe because OffsetMut::default() is implemented for the exact same lifetimes as
-        // PileMut::default()
-        unsafe { mem::transmute(pile) }
+    fn poll<V: PtrValidator<Z>>(this: &'a Offset<'static, 'static>, _: &mut (), _: &V) -> Result<&'a Self, V::Error> {
+        Ok(unsafe { mem::transmute::<&Offset, &Offset>(this) })
     }
-
-    /*
-    #[inline]
-    fn allocator() -> Self::Allocator
-        where Self: Default
-    {
-        let pile = PileMut::default();
-
-    }
-    */
-
-    #[inline]
-    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
-        /*
-        let raw = match Self::try_get_dirty(ptr) {
-            Ok(r) => {
-                let cloned = ManuallyDrop::new(r.clone());
-
-                unsafe { Self::alloc(&cloned) }
-            },
-            Err(offset) => offset.into(),
-        };
-
-        unsafe {
-            OwnedPtr::new_unchecked(ValidPtr::new_unchecked(
-                    FatPtr { raw, metadata: ptr.metadata }
-            ))
-        }
-        */ todo!()
-    }
-
-    #[inline]
-    fn dealloc_owned<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>) {
-        /*
-        Self::drop_take_unsized(owned, |value|
-            // Safe because drop_take_unsized() takes a FnOnce, so this closure can only run once.
-            unsafe { ManuallyDrop::drop(value) }
-        )
-        */ todo!()
-    }
-
-    /*
-    #[inline]
-    fn drop_take_unsized<T: ?Sized + Pointee>(owned: OwnedPtr<T, Self>, f: impl FnOnce(&mut ManuallyDrop<T>)) {
-        let FatPtr { raw, metadata } = owned.into_inner().into_inner();
-
-        match raw.kind() {
-            Kind::Offset(_) => {},
-            Kind::Ptr(ptr) => {
-                unsafe {
-                    let r: &mut T = &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata);
-                    let r: &mut ManuallyDrop<T> = &mut *(r as *mut _ as *mut _);
-
-                    f(r);
-
-                    let layout = fix_layout(Layout::for_value(r));
-                    if layout.size() > 0 {
-                        std::alloc::dealloc(r as *mut _ as *mut u8, layout);
-                    }
-                }
-            }
-        }
-    }
-
-    #[inline]
-    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, Self::Persist> {
-        match ptr.raw.kind() {
-            Kind::Offset(offset) => Err(offset),
-            Kind::Ptr(nonnull) => {
-                unsafe {
-                    Ok(&*T::make_fat_ptr(nonnull.cast().as_ptr(), ptr.metadata))
-                }
-            }
-        }
-    }
-    */
 }
-*/
+
+unsafe impl<'a, Z> ValidateChildren<'a, Z> for OffsetMut<'_, '_> {
+    type State = ();
+    fn validate_children(_: &Offset<'static, 'static>) -> () {}
+
+    fn poll<V: PtrValidator<Z>>(this: &'a Offset<'static, 'static>, _: &mut (), _: &V) -> Result<&'a Self, V::Error> {
+        Ok(unsafe { mem::transmute::<&Offset, &OffsetMut>(this) })
+    }
+}
+
+impl<Z> Decode<Z> for Offset<'_, '_> {}
+impl<Z> Decode<Z> for OffsetMut<'_, '_> {}
 
 
 impl<'s,'m> OffsetMut<'s,'m> {
@@ -409,30 +262,6 @@ impl<'s,'m> OffsetMut<'s,'m> {
             Kind::Offset(_) => None,
         }
     }
-
-    /*
-    #[inline]
-    pub(super) unsafe fn try_take<T: ?Sized + Pointee + Owned>(self, metadata: T::Metadata) -> Result<T::Owned, Offset<'s,'m>> {
-        let this = ManuallyDrop::new(self);
-
-        match this.kind() {
-            Kind::Offset(offset) => Err(offset),
-            Kind::Ptr(ptr) => {
-                let ptr: *mut T = T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata);
-                let r = &mut *(ptr as *mut ManuallyDrop<T>);
-                let layout = fix_layout(Layout::for_value(r));
-
-                let owned = T::to_owned(r);
-
-                if layout.size() > 0 {
-                    std::alloc::dealloc(r as *mut _ as *mut u8, layout);
-                }
-
-                Ok(owned)
-            }
-        }
-    }
-    */
 }
 
 impl fmt::Debug for OffsetMut<'_,'_> {

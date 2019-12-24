@@ -2,21 +2,35 @@ use leint::Le;
 
 use super::*;
 
+macro_rules! impl_decode {
+    ($t:ty) => {
+        impl Persist for $t {
+            type Persist = Self;
+        }
+
+        unsafe impl<'a, Z> ValidateChildren<'a, Z> for $t {
+            type State = ();
+            fn validate_children(_: &Self) -> () {}
+            fn poll<V: PtrValidator<Z>>(this: &'a Self, _: &mut (), _: &V) -> Result<&'a Self, V::Error> {
+                Ok(this)
+            }
+        }
+        impl<Z> Decode<Z> for $t {
+        }
+    }
+}
+
 macro_rules! impl_all_valid {
     ($( $t:ty, )+) => {$(
-        impl Validate for $t {
+        impl ValidateBlob for $t {
             type Error = !;
 
-            fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+            fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
                 blob.validate_bytes(|blob| unsafe { Ok(blob.assume_valid()) })
             }
         }
 
-        unsafe impl<Z: Zone> Load<Z> for $t {
-
-            type ValidateChildren = ();
-            fn validate_children(&self) -> () {}
-        }
+        impl_decode!($t);
     )+}
 }
 
@@ -30,13 +44,10 @@ impl_all_valid! {
 #[derive(Debug, PartialEq, Eq)]
 pub struct BoolError(());
 
-impl ValidationError for BoolError {
-}
-
-impl Validate for bool {
+impl ValidateBlob for bool {
     type Error = BoolError;
 
-    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
         unsafe {
             blob.validate_bytes(|blob|
                 match &blob[..] {
@@ -48,28 +59,13 @@ impl Validate for bool {
         }
     }
 }
-unsafe impl<Z: Zone> Load<Z> for bool {
-    type ValidateChildren = ();
-    fn validate_children(&self) -> () {}
-}
+impl_decode!(bool);
 
-impl Validate for ! {
+impl ValidateBlob for ! {
     type Error = !;
 
-    fn validate<B: BlobValidator<!>>(blob: B) -> Result<B::Ok, B::Error> {
+    fn validate_blob<B: BlobValidator<Self>>(_: B) -> Result<B::Ok, B::Error> {
         panic!()
     }
 }
-unsafe impl<Z: Zone> Load<Z> for ! {
-    type ValidateChildren = ();
-    fn validate_children(&self) -> () {
-        match *self {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test() {
-    }
-}
+impl_decode!(!);

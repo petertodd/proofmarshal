@@ -17,4 +17,4 @@ pub enum PtrError<ValueError, ZoneError> {
 }
 
 /// Result returned by zone methods that dereference persistent pointers.
-pub type PtrResult<R, T, Z> = core::result::Result<R, PtrError<<T as Validate>::Error, <Z as Zone>::Error>>;
+pub type PtrResult<R, T, Z> = core::result::Result<R, PtrError<<T as Load<Z>>::Error, <Z as Zone>::Error>>;

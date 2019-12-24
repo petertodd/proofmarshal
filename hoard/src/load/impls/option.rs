@@ -8,10 +8,14 @@ use crate::blob::Blob;
 
 use super::*;
 
-impl<T: NonZero + Validate> Validate for Option<T> {
+impl<T: NonZero + Persist> Persist for Option<T> {
+    type Persist = Option<T::Persist>;
+}
+
+impl<T: ValidateBlob> ValidateBlob for Option<T> {
     type Error = OptionError<T::Error>;
 
-    fn validate<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
         unsafe { blob.validate_option::<T,_>(OptionError) }
     }
 }
@@ -19,23 +23,26 @@ impl<T: NonZero + Validate> Validate for Option<T> {
 #[derive(Debug)]
 pub struct OptionError<E>(pub E);
 
-impl<E: ValidationError> ValidationError for OptionError<E> {
-}
+unsafe impl<'a, Z, T: NonZero + ValidateChildren<'a, Z>> ValidateChildren<'a, Z> for Option<T> {
+    type State = Option<T::State>;
 
-unsafe impl<T: NonZero + Load<Z>, Z: Zone> Load<Z> for Option<T> {
-    type ValidateChildren = Option<T::ValidateChildren>;
-
-    fn validate_children(&self) -> Self::ValidateChildren {
-        self.as_ref().map(T::validate_children)
+    fn validate_children(this: &'a Self::Persist) -> Self::State {
+        this.as_ref().map(T::validate_children)
     }
-}
 
-impl<T: ValidateChildren<Z>, Z: Zone> ValidateChildren<Z> for Option<T> {
-    fn poll<V: PtrValidator<Z>>(&mut self, ptr_validator: &V) -> Result<(), V::Error> {
-        match self {
-            None => Ok(()),
-            Some(inner) => inner.poll(ptr_validator),
+    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V)
+        -> Result<&'a Option<T>, V::Error>
+    {
+        match (this, state) {
+            (Some(value), Some(state)) => {
+                T::poll(value, state, validator)?;
+                Ok(unsafe { mem::transmute(this) })
+            },
+            (None, None) => Ok(unsafe { mem::transmute(this) }),
+            _ => unreachable!(),
         }
     }
 }
 
+impl<Z, T: NonZero + Decode<Z>> Decode<Z> for Option<T> {
+}
