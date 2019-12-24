@@ -41,22 +41,20 @@ impl<'a, T: ?Sized + Pointee> BlobCursor<'a, T> {
     }
 }
 
-/*
 impl<'a, T: ?Sized + Pointee> BlobCursor<'a, T>
-where T: Validate
+where T: ValidateBlob
 {
-    fn field<U: Validate, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
+    fn field<U: ValidateBlob, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
         where F: FnOnce(U::Error) -> T::Error
     {
         let blob = self.field_blob::<U>();
-        match U::validate(BlobCursor::from(blob)) {
+        match U::validate_blob(BlobCursor::from(blob)) {
             Ok(valid_blob) => Ok(valid_blob),
             Err(Error::Value(e)) => Err(Error::Value(f(e))),
             Err(Error::Padding) => Err(Error::Padding),
         }
     }
 }
-*/
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error<E> {
@@ -73,7 +71,7 @@ impl<E> From<E> for Error<E> {
 }
 
 impl<'a, T: ?Sized + Pointee> BlobValidator<T> for BlobCursor<'a, T>
-where T: Validate
+where T: ValidateBlob
 {
     type Ok = ValidBlob<'a, T>;
     type Error = Error<T::Error>;
@@ -92,7 +90,7 @@ where T: Validate
         todo!()
     }
 
-    unsafe fn validate_option<U: Validate, F>(mut self, f: F) -> Result<Self::Ok, Self::Error>
+    unsafe fn validate_option<U: ValidateBlob, F>(mut self, f: F) -> Result<Self::Ok, Self::Error>
         where F: FnOnce(U::Error) -> T::Error
     {
         assert_eq!(self.offset, 0);
@@ -114,12 +112,12 @@ where T: Validate
 }
 
 impl<'a, T: ?Sized + Pointee> StructValidator<T> for BlobCursor<'a, T>
-where T: Validate
+where T: ValidateBlob
 {
     type Ok = ValidBlob<'a, T>;
     type Error = Error<T::Error>;
 
-    fn field<U: Validate, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
+    fn field<U: ValidateBlob, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
         where F: FnOnce(U::Error) -> T::Error
     {
         self.field::<U,F>(f)
@@ -133,12 +131,12 @@ where T: Validate
 }
 
 impl<'a, T: ?Sized + Pointee> EnumValidator<T> for BlobCursor<'a, T>
-where T: Validate
+where T: ValidateBlob
 {
     type Ok = ValidBlob<'a, T>;
     type Error = Error<T::Error>;
 
-    fn field<U: Validate, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
+    fn field<U: ValidateBlob, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
         where F: FnOnce(U::Error) -> T::Error
     {
         self.field::<U,F>(f)

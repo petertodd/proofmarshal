@@ -20,7 +20,7 @@ use core::ptr::{self, NonNull};
 
 use std::alloc::Layout;
 
-use owned::Take;
+use owned::{Take, Owned};
 use singlelife::Unique;
 
 use crate::{
@@ -47,19 +47,27 @@ use self::offset::{Offset, OffsetMut};
 pub mod error;
 use self::error::*;
 
-/*
 pub mod mapping;
 use self::mapping::Mapping;
-*/
 
 /// Fallible, unverified, `Pile`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Pile<'pile, 'version> {
+pub struct TryPile<'pile, 'version> {
     marker: PhantomData<
         for<'a> fn(&'a Offset<'pile, 'version>) -> &'a [u8]
     >,
-    //mapping: &'pile dyn Mapping,
-    mapping: &'pile &'pile [u8],
+    mapping: &'pile dyn Mapping,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Pile<'pile, 'version>(TryPile<'pile, 'version>);
+
+impl<'p,'v> ops::Deref for Pile<'p,'v> {
+    type Target = TryPile<'p,'v>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl Pile<'_, '_> {
@@ -84,10 +92,10 @@ impl Pile<'_, '_> {
 impl<'p> From<Unique<'p, &&[u8]>> for Pile<'p, 'p> {
     #[inline]
     fn from(slice: Unique<'p, &&[u8]>) -> Pile<'p, 'p> {
-        Self {
+        Self(TryPile {
             marker: PhantomData,
             mapping: &*Unique::into_inner(slice),
-        }
+        })
     }
 }
 
@@ -114,21 +122,22 @@ impl<'p> Pile<'p, 'static> {
     pub fn empty() -> Self {
         static EMPTY_SLICE: &[u8] = &[];
 
-        Self {
+        Self(TryPile {
             marker: PhantomData,
             mapping: &EMPTY_SLICE,
+        })
+    }
+}
+
+impl<'p, 'v> TryPile<'p, 'v> {
+    fn slice(&self) -> &'p &'p [u8] {
+        unsafe {
+            &*(self.mapping as *const dyn Mapping as *const &'p [u8])
         }
     }
 }
 
 impl<'p, 'v> Pile<'p, 'v> {
-    fn slice(&self) -> &'p &'p [u8] {
-        unsafe {
-            //&*(self.mapping as *const dyn Mapping as *const &'p [u8])
-            &*(self.mapping as *const _ as *const &'p [u8])
-        }
-    }
-
     /*
     /// Loads the tip of the `Pile`.
     ///
@@ -180,9 +189,10 @@ impl<'p, 'v> Pile<'p, 'v> {
             mapping: &*Unique::into_inner(new_slice),
         }
     }
+    */
 
     pub fn get_blob<'a, T>(&self, ptr: &'a FatPtr<T, Self>) -> Result<Blob<'a, T>, OffsetError<'p,'v>>
-        where T: ?Sized + Validate
+        where T: ?Sized + PersistPtr
     {
         let offset = ptr.raw;
         let start = offset.get();
@@ -197,17 +207,15 @@ impl<'p, 'v> Pile<'p, 'v> {
             Err(OffsetError::new(self, ptr))
         }
     }
-    */
 }
 
-
-impl<'p,'v> Zone for Pile<'p,'v> {
+impl<'p,'v> Zone for TryPile<'p,'v> {
     type Ptr = Offset<'p,'v>;
-    type Persist = Pile<'static, 'static>;
+    type Persist = TryPile<'static, 'static>;
     type PersistPtr = Offset<'static, 'static>;
     type Allocator = NeverAllocator<Self>;
 
-    type Error = OffsetError<'p,'v>;
+    type Error = !;
 
     #[inline(always)]
     fn duplicate(&self) -> Self {
@@ -215,12 +223,14 @@ impl<'p,'v> Zone for Pile<'p,'v> {
     }
 
     fn clone_ptr<T>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
-        todo!()
+        unsafe { OwnedPtr::new_unchecked(ValidPtr::new_unchecked(**ptr)) }
     }
 
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
-        //Err(FatPtr::clone(ptr))
-        todo!()
+        Err(FatPtr {
+            raw: ptr.raw.cast(),
+            metadata: ptr.metadata,
+        })
     }
 
     fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
@@ -228,8 +238,87 @@ impl<'p,'v> Zone for Pile<'p,'v> {
         f: impl FnOnce(Result<&mut ManuallyDrop<T>, FatPtr<T, Self::Persist>>) -> R,
     ) -> R
     {
-        let fatptr = owned.into_inner().into_inner();
-        todo!() //f(Err(fatptr))
+        let fat = owned.into_inner().into_inner();
+        f(Err(FatPtr {
+            raw: fat.raw.cast(),
+            metadata: fat.metadata,
+        }))
+    }
+}
+
+impl<'p, 'v> TryGet for TryPile<'p, 'v> {
+    fn try_get<'a, T>(&self, ptr: &'a ValidPtr<T, Self>) -> PtrResult<Ref<'a, T, Self>, T, Self>
+        where T: ?Sized + Load<Self>
+    {
+        /*
+        let blob = self.get_blob(ptr).map_err(|e| PtrError::Ptr(e))?;
+
+        match T::validate(blob.into_validator()) {
+            Ok(valid_blob) => {
+                Ok(Ref {
+                    this: unsafe { valid_blob.to_ref() },
+                    zone: *self,
+                })
+            },
+            Err(blob::Error::Value(e)) => Err(PtrError::Value(e)),
+            Err(blob::Error::Padding) => {
+                todo!()
+            },
+        }
+        */ todo!()
+    }
+
+    fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>) -> PtrResult<Own<T::Owned, Self>, T, Self> {
+        /*
+        let r = self.try_get(&ptr)?;
+
+        unsafe {
+            let r: &ManuallyDrop<T> = &*(r.this as *const _ as *const _);
+
+            Ok(Own {
+                this: T::to_owned(r),
+                zone: *self,
+            })
+        }*/ todo!()
+    }
+}
+
+impl<'p,'v> Zone for Pile<'p,'v> {
+    type Ptr = Offset<'p,'v>;
+    type Persist = Pile<'static, 'static>;
+    type PersistPtr = Offset<'static, 'static>;
+    type Allocator = NeverAllocator<Self>;
+
+    type Error = !;
+
+    #[inline(always)]
+    fn duplicate(&self) -> Self {
+        *self
+    }
+
+    fn clone_ptr<T>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
+        unsafe {
+            OwnedPtr::new_unchecked(ValidPtr::new_unchecked(**ptr))
+        }
+    }
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
+        Err(FatPtr {
+            raw: ptr.raw.cast(),
+            metadata: ptr.metadata,
+        })
+    }
+
+    fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
+        owned: OwnedPtr<T, Self>,
+        f: impl FnOnce(Result<&mut ManuallyDrop<T>, FatPtr<T, Self::Persist>>) -> R,
+    ) -> R
+    {
+        let fat = owned.into_inner().into_inner();
+        f(Err(FatPtr {
+            raw: fat.raw.cast(),
+            metadata: fat.metadata,
+        }))
     }
 }
 
@@ -360,37 +449,6 @@ impl<'a, 'p, 'v, 'p2, 'v2> Encode<'a, Pile<'p2, 'v2>> for PileMut<'p, 'v> {
     }
 }
 
-impl<'p, 'v> TryGet for Pile<'p, 'v> {
-    fn try_get<'a, T: ?Sized + Validate>(&self, ptr: &'a ValidPtr<T, Self>) -> PtrResult<Ref<'a, T, Self>, T, Self> {
-        let blob = self.get_blob(ptr).map_err(|e| PtrError::Ptr(e))?;
-
-        match T::validate(blob.into_validator()) {
-            Ok(valid_blob) => {
-                Ok(Ref {
-                    this: unsafe { valid_blob.to_ref() },
-                    zone: *self,
-                })
-            },
-            Err(blob::Error::Value(e)) => Err(PtrError::Value(e)),
-            Err(blob::Error::Padding) => {
-                todo!()
-            },
-        }
-    }
-
-    fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>) -> PtrResult<Own<T::Owned, Self>, T, Self> {
-        let r = self.try_get(&ptr)?;
-
-        unsafe {
-            let r: &ManuallyDrop<T> = &*(r.this as *const _ as *const _);
-
-            Ok(Own {
-                this: T::to_owned(r),
-                zone: *self,
-            })
-        }
-    }
-}
 
 impl<'p, 'v> TryGet for PileMut<'p, 'v> {
     fn try_get<'a, T: ?Sized + Validate>(&self, ptr: &'a ValidPtr<T, Self>) -> PtrResult<Ref<'a, T, Self>, T, Self> {
@@ -499,6 +557,7 @@ impl<'p, 'v> TryGetMut for PileMut<'p, 'v> {
         }
     }
 }
+*/
 
 fn handle_deref_error<'p,'v,E>(
     pile: Pile<'p,'v>,
@@ -519,23 +578,27 @@ where E: ValidationError
 
 impl<'p, 'v> Get for Pile<'p, 'v> {
     fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self>) -> Ref<'a, T, Self> {
+        /*
         match self.try_get(ptr) {
             Ok(r) => r,
             Err(e) => handle_deref_error(*self, ptr.raw, e),
-        }
+        }*/ todo!()
     }
 
     fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>) -> Own<T::Owned, Self> {
+        /*
         let offset = ptr.raw;
         match self.try_take(ptr) {
             Ok(r) => r,
             Err(e) => handle_deref_error(*self, offset, e),
         }
+        */ todo!()
     }
 }
 
 impl<'p, 'v> Get for PileMut<'p, 'v> {
     fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self>) -> Ref<'a, T, Self> {
+        /*
         match self.try_get(ptr) {
             Ok(r) => r,
             Err(e) => {
@@ -543,9 +606,11 @@ impl<'p, 'v> Get for PileMut<'p, 'v> {
                 handle_deref_error(self.0, offset, e)
             },
         }
+        */ todo!()
     }
 
     fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>) -> Own<T::Owned, Self> {
+        /*
         let raw = ptr.raw;
         match self.try_take(ptr) {
             Ok(r) => r,
@@ -554,9 +619,11 @@ impl<'p, 'v> Get for PileMut<'p, 'v> {
                 handle_deref_error(self.0, offset, e)
             },
         }
+        */ todo!()
     }
 }
 
+/*
 // Slow path, so put the actual implementation in its own function.
 #[inline(never)]
 fn make_mut<'a, 'p, 'v, T>(

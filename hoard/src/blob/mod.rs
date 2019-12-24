@@ -14,8 +14,8 @@ use crate::{
     pointee::Pointee,
 };
 
-//mod cursor;
-//pub use self::cursor::Error;
+mod cursor;
+pub use self::cursor::Error;
 
 pub trait BlobValidator<T: ?Sized + ValidateBlob> {
     type Ok;
@@ -98,13 +98,11 @@ impl<'a, T: ?Sized + Pointee> Blob<'a, T> {
         }
     }
 
-    /*
     pub fn into_validator(self) -> impl BlobValidator<T, Ok=ValidBlob<'a, T>, Error=cursor::Error<T::Error>>
-        where T: Validate
+        where T: ValidateBlob
     {
         cursor::BlobCursor::from(self)
     }
-    */
 
     /// Asserts that `Blob` is fully valid, converting it into a `ValidBlob`.
     ///

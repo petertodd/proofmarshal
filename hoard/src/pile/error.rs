@@ -14,9 +14,8 @@ pub struct OffsetError<'p,'v> {
     pub offset: Offset<'p, 'v>,
 }
 
-/*
 impl<'p,'v> OffsetError<'p,'v> {
-    pub fn new<T: ?Sized + Validate>(pile: &Pile<'p,'v>, ptr: &FatPtr<T, Pile<'p,'v>>) -> Self {
+    pub fn new<T: ?Sized + PersistPtr>(pile: &Pile<'p,'v>, ptr: &FatPtr<T, Pile<'p,'v>>) -> Self {
         Self {
             pile: *pile,
             offset: ptr.raw,
@@ -31,6 +30,10 @@ pub enum DerefError<'p, 'v, E = Box<dyn ValidationError>> {
         pile: Pile<'p, 'v>,
         offset: Offset<'p, 'v>,
         err: E,
+    },
+    Padding {
+        pile: Pile<'p, 'v>,
+        offset: Offset<'p, 'v>,
     }
 }
 
@@ -60,8 +63,14 @@ impl From<DerefError<'_, '_>> for DerefErrorPayload {
             DerefError::Value { pile, offset, err } => {
                 Self::Value {
                     mapping: NonNull::from(pile.slice()).cast(),
-                    offset: offset.to_static(),
+                    offset: offset.cast(),
                     err,
+                }
+            },
+            DerefError::Padding { pile, offset } => {
+                Self::Padding {
+                    mapping: NonNull::from(pile.slice()).cast(),
+                    offset: offset.cast(),
                 }
             },
         }
@@ -78,7 +87,11 @@ pub(crate) enum DerefErrorPayload {
         mapping: NonNull<NonNull<[u8]>>,
         offset: Offset<'static, 'static>,
         err: Box<dyn ValidationError>,
-    }
+    },
+    Padding {
+        mapping: NonNull<NonNull<[u8]>>,
+        offset: Offset<'static, 'static>,
+    },
 }
 
 unsafe impl Send for DerefErrorPayload {}
@@ -87,8 +100,7 @@ impl From<OffsetError<'_, '_>> for DerefErrorPayload {
     fn from(err: OffsetError<'_, '_>) -> Self {
         DerefErrorPayload::Offset {
             mapping: NonNull::from(err.pile.slice()).cast(),
-            offset: err.offset.to_static(),
+            offset: err.offset.cast(),
         }
     }
 }
-*/
