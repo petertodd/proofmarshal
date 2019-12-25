@@ -1,3 +1,5 @@
+use core::convert::TryInto;
+use core::mem;
 use core::num;
 
 use leint::Le;
@@ -38,14 +40,26 @@ impl_all_valid! {
     i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
 }
 
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct NonZeroIntError;
+
 macro_rules! impl_nonzero {
     ($( $t:ty, )+) => {$(
         impl Persist for $t {
             type Persist = Self;
-            type Error = !;
+            type Error = NonZeroIntError;
 
             fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
-                todo!()
+                blob.validate_bytes(|blob| {
+                    let zeros = [0; mem::size_of::<Self>()];
+                    let buf: [u8; mem::size_of::<Self>()] = blob[..].try_into().unwrap();
+                    if zeros == buf {
+                        Err(NonZeroIntError)
+                    } else {
+                        unsafe { Ok(blob.assume_valid()) }
+                    }
+                })
             }
         }
 
