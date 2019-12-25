@@ -1,24 +1,22 @@
 //! Zone references.
 
 use core::ops;
+use core::fmt;
 
 use super::Zone;
 
-#[derive(Debug)]
 #[repr(C)]
 pub struct Own<T: ?Sized, Z> {
     pub zone: Z,
     pub this: T,
 }
 
-#[derive(Debug)]
 #[repr(C)]
 pub struct Ref<'a, T: ?Sized, Z> {
     pub this: &'a T,
     pub zone: Z,
 }
 
-#[derive(Debug)]
 #[repr(C)]
 pub struct RefMut<'a, T: ?Sized, Z> {
     pub this: &'a mut T,
@@ -135,6 +133,23 @@ impl<'a, T: ?Sized, Z: Zone> ops::Deref for RefMut<'a, T, Z> {
     fn deref(&self) -> &Ref<'a, T, Z> {
         // Safe b/c Ref and RefMut are #[repr(C)] with same layout
         unsafe { &*(self as *const Self as *const Ref<T,Z>) }
+    }
+}
+
+// Debug impls
+impl<T: ?Sized + fmt::Debug, Z: Zone> fmt::Debug for Own<T,Z> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.this, f)
+    }
+}
+impl<'a, T: ?Sized + fmt::Debug, Z: Zone> fmt::Debug for Ref<'a, T, Z> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.this, f)
+    }
+}
+impl<'a, T: ?Sized + fmt::Debug, Z: Zone> fmt::Debug for RefMut<'a, T, Z> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.this, f)
     }
 }
 
