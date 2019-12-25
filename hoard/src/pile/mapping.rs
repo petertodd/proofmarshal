@@ -2,12 +2,14 @@ use core::fmt;
 use core::cmp;
 use core::hash;
 
-use super::error::DerefError;
+//use super::error::DerefError;
 
 pub unsafe trait Mapping : fmt::Debug {
+    /*
     fn handle_deref_error<'p>(&'p self, err: DerefError<'p,'_>) -> ! {
         panic!("dereference failed: {:?}", err)
     }
+    */
 }
 
 unsafe impl Mapping for &'_ [u8] {

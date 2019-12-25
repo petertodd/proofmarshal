@@ -12,7 +12,7 @@ use owned::{Take, Owned};
 use crate::{
     coerce,
     pointee::Pointee,
-    load::Load,
+    load::{Load, Persist},
     marshal::Primitive,
 };
 
@@ -20,11 +20,11 @@ pub mod refs;
 use self::refs::*;
 
 mod error;
-pub use self::error::{PtrError, PtrResult};
+pub use self::error::{DerefError, PtrError};
 
 pub trait Zone : Sized {
     type Ptr : NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
-    type Persist : 'static + Zone<Ptr=Self::PersistPtr>;
+    type Persist : 'static + Zone<Ptr=Self::PersistPtr, Error=Self::Error>;
     type PersistPtr : 'static + Primitive + NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
 
     type Allocator : Alloc<Zone=Self>;
@@ -79,15 +79,15 @@ pub trait Alloc : Sized {
 
 pub trait TryGet : Zone {
     fn try_get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self>)
-        -> PtrResult<Ref<'a, T, Self>, T, Self>;
+        -> Result<Ref<'a, T, Self>, DerefError<T, Self>>;
 
     fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>)
-        -> PtrResult<Own<T::Owned, Self>, T, Self>;
+        -> Result<Own<T::Owned, Self>, DerefError<T, Self>>;
 }
 
 pub trait TryGetMut : TryGet {
     fn try_get_mut<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut ValidPtr<T, Self>)
-        -> PtrResult<RefMut<'a, T, Self>, T, Self>;
+        -> Result<RefMut<'a, T, Self>, DerefError<T, Self>>;
 }
 
 pub trait Get : Zone {
@@ -97,13 +97,13 @@ pub trait Get : Zone {
 
 impl<Z: Get<Error=!>> TryGet for Z {
     fn try_get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self>)
-        -> PtrResult<Ref<'a, T, Self>, T, Self>
+        -> Result<Ref<'a, T, Self>, DerefError<T, Self>>
     {
         Ok(self.get(ptr))
     }
 
     fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>)
-        -> PtrResult<Own<T::Owned, Self>, T, Self>
+        -> Result<Own<T::Owned, Self>, DerefError<T, Self>>
     {
         Ok(self.take(ptr))
     }
@@ -115,7 +115,7 @@ pub trait GetMut : Get {
 
 impl<Z: GetMut<Error=!>> TryGetMut for Z {
     fn try_get_mut<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut ValidPtr<T, Self>)
-        -> PtrResult<RefMut<'a, T, Self>, T, Self>
+        -> Result<RefMut<'a, T, Self>, DerefError<T, Self>>
     {
         Ok(self.get_mut(ptr))
     }

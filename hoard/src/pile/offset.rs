@@ -159,21 +159,14 @@ impl fmt::Pointer for Offset<'_, '_> {
     }
 }
 
-impl Persist for Offset<'_,'_> {
-    type Persist = Offset<'static, 'static>;
-}
-
-impl Persist for OffsetMut<'_,'_> {
-    type Persist = Offset<'static, 'static>;
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct ValidateOffsetError(u64);
 
 impl ValidationError for ValidateOffsetError {
 }
 
-impl ValidateBlob for Offset<'_,'_> {
+impl Persist for Offset<'_,'_> {
+    type Persist = Offset<'static, 'static>;
     type Error = ValidateOffsetError;
 
     #[inline]
@@ -195,7 +188,7 @@ impl ValidateBlob for Offset<'_,'_> {
     }
 }
 
-unsafe impl<'a, Z> ValidateChildren<'a, Z> for Offset<'_, '_> {
+unsafe impl<'a, Z> Validate<'a, Z> for Offset<'_, '_> {
     type State = ();
     fn validate_children(_: &Offset<'static, 'static>) -> () {}
 

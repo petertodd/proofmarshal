@@ -42,9 +42,9 @@ impl<'a, T: ?Sized + Pointee> BlobCursor<'a, T> {
 }
 
 impl<'a, T: ?Sized + Pointee> BlobCursor<'a, T>
-where T: ValidateBlob
+where T: Persist
 {
-    fn field<U: ValidateBlob, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
+    fn field<U: Persist, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
         where F: FnOnce(U::Error) -> T::Error
     {
         let blob = self.field_blob::<U>();
@@ -71,7 +71,7 @@ impl<E> From<E> for Error<E> {
 }
 
 impl<'a, T: ?Sized + Pointee> BlobValidator<T> for BlobCursor<'a, T>
-where T: ValidateBlob
+where T: Persist
 {
     type Ok = ValidBlob<'a, T>;
     type Error = Error<T::Error>;
@@ -90,7 +90,7 @@ where T: ValidateBlob
         todo!()
     }
 
-    unsafe fn validate_option<U: ValidateBlob, F>(mut self, f: F) -> Result<Self::Ok, Self::Error>
+    unsafe fn validate_option<U: Persist, F>(mut self, f: F) -> Result<Self::Ok, Self::Error>
         where F: FnOnce(U::Error) -> T::Error
     {
         assert_eq!(self.offset, 0);
@@ -112,12 +112,12 @@ where T: ValidateBlob
 }
 
 impl<'a, T: ?Sized + Pointee> StructValidator<T> for BlobCursor<'a, T>
-where T: ValidateBlob
+where T: Persist
 {
     type Ok = ValidBlob<'a, T>;
     type Error = Error<T::Error>;
 
-    fn field<U: ValidateBlob, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
+    fn field<U: Persist, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
         where F: FnOnce(U::Error) -> T::Error
     {
         self.field::<U,F>(f)
@@ -131,12 +131,12 @@ where T: ValidateBlob
 }
 
 impl<'a, T: ?Sized + Pointee> EnumValidator<T> for BlobCursor<'a, T>
-where T: ValidateBlob
+where T: Persist
 {
     type Ok = ValidBlob<'a, T>;
     type Error = Error<T::Error>;
 
-    fn field<U: ValidateBlob, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
+    fn field<U: Persist, F>(&mut self, f: F) -> Result<ValidBlob<U>, Error<T::Error>>
         where F: FnOnce(U::Error) -> T::Error
     {
         self.field::<U,F>(f)

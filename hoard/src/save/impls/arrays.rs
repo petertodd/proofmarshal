@@ -40,6 +40,7 @@ impl<'a, Z: Zone, T: Encode<'a, Z>, const N: usize> Encode<'a, Z> for [T; N] {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,3 +67,4 @@ mod tests {
         };
     }
 }
+*/

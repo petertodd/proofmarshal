@@ -6,25 +6,21 @@ use super::*;
 
 macro_rules! impl_decode {
     ($t:ty) => {
-        impl Persist for $t {
-            type Persist = Self;
-        }
-
-        unsafe impl<'a, Z> ValidateChildren<'a, Z> for $t {
+        unsafe impl<'a, Z> Validate<'a, Z> for $t {
             type State = ();
             fn validate_children(_: &Self) -> () {}
             fn poll<V: PtrValidator<Z>>(this: &'a Self, _: &mut (), _: &V) -> Result<&'a Self, V::Error> {
                 Ok(this)
             }
         }
-        impl<Z> Decode<Z> for $t {
-        }
+        impl<Z> Decode<Z> for $t {}
     }
 }
 
 macro_rules! impl_all_valid {
     ($( $t:ty, )+) => {$(
-        impl ValidateBlob for $t {
+        impl Persist for $t {
+            type Persist = Self;
             type Error = !;
 
             fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
@@ -44,7 +40,8 @@ impl_all_valid! {
 
 macro_rules! impl_nonzero {
     ($( $t:ty, )+) => {$(
-        impl ValidateBlob for $t {
+        impl Persist for $t {
+            type Persist = Self;
             type Error = !;
 
             fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
@@ -64,7 +61,8 @@ impl_nonzero! {
 #[derive(Debug, PartialEq, Eq)]
 pub struct BoolError(());
 
-impl ValidateBlob for bool {
+impl Persist for bool {
+    type Persist = Self;
     type Error = BoolError;
 
     fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
@@ -81,7 +79,8 @@ impl ValidateBlob for bool {
 }
 impl_decode!(bool);
 
-impl ValidateBlob for ! {
+impl Persist for ! {
+    type Persist = Self;
     type Error = !;
 
     fn validate_blob<B: BlobValidator<Self>>(_: B) -> Result<B::Ok, B::Error> {

@@ -28,19 +28,6 @@ pub struct OwnedPtr<T: ?Sized + Pointee, Z: Zone> {
 
 unsafe impl<T: ?Sized + Pointee, Z: Zone> NonZero for OwnedPtr<T, Z> {}
 
-/*
-unsafe impl<T: ?Sized + Pointee, P: Ptr, Q: Ptr> TryCastRef<OwnedPtr<T,Q>> for OwnedPtr<T,P>
-where P: TryCastRef<Q>
-{
-    type Error = P::Error;
-
-    fn try_cast_ref(&self) -> Result<&OwnedPtr<T,Q>, Self::Error> {
-        self.inner.try_cast_ref()
-            .map(|inner| unsafe { mem::transmute(inner) })
-    }
-}
-*/
-
 impl<T: ?Sized + Pointee, Z: Zone> ops::Deref for OwnedPtr<T, Z> {
     type Target = ValidPtr<T, Z>;
 
@@ -131,12 +118,9 @@ where T: fmt::Debug
 }
 
 
-impl<T: ?Sized + PersistPtr, Z: Zone> Persist for OwnedPtr<T, Z> {
+impl<T: ?Sized + Persist, Z: Zone> Persist for OwnedPtr<T, Z> {
     type Persist = OwnedPtr<T::Persist, Z::Persist>;
-}
-
-impl<Z: Zone, T: ?Sized + Pointee + ValidateBlob> ValidateBlob for OwnedPtr<T, Z> {
-    type Error = <ValidPtr<T,Z> as ValidateBlob>::Error;
+    type Error = <ValidPtr<T,Z> as Persist>::Error;
 
     fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
         let mut blob = blob.validate_struct();
@@ -145,17 +129,17 @@ impl<Z: Zone, T: ?Sized + Pointee + ValidateBlob> ValidateBlob for OwnedPtr<T, Z
     }
 }
 
-unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> ValidateChildren<'a, Z> for OwnedPtr<T, Z>
-where T: ValidatePtrChildren<'a, Z>
+unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> Validate<'a, Z> for OwnedPtr<T, Z>
+where T: Validate<'a, Z>
 {
     type State = super::validptr::ValidateState<'a, T::Persist, T::State>;
 
     fn validate_children(this: &'a OwnedPtr<T::Persist, Z::Persist>) -> Self::State {
-        <ValidPtr<T,Z> as ValidateChildren<'a, Z>>::validate_children(this)
+        <ValidPtr<T,Z> as Validate<'a, Z>>::validate_children(this)
     }
 
     fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<&'a Self, V::Error> {
-        <ValidPtr<T,Z> as ValidateChildren<'a, Z>>::poll(this, state, validator)?;
+        <ValidPtr<T,Z> as Validate<'a, Z>>::poll(this, state, validator)?;
         Ok(unsafe { mem::transmute(this) })
     }
 }

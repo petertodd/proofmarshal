@@ -13,9 +13,8 @@ use crate::save::*;
 
 pub trait Primitive : 'static + Sized
 + Persist<Persist=Self>
-+ ValidateBlob
-+ Decode<!>
 + for<'a> Encode<'a, !>
++ Load<!>
 {
     fn save_to_vec(&self) -> Vec<u8> {
         todo!()

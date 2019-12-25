@@ -7,19 +7,17 @@ use super::*;
 use crate::load::*;
 use crate::save::*;
 
+/*
 /// An attempt to dereference a pile offset failed.
 #[derive(Debug, PartialEq, Eq)]
-pub struct OffsetError<'p,'v> {
-    pub pile: Pile<'p, 'v>,
-    pub offset: Offset<'p, 'v>,
+pub struct OffsetError<T: ?Sized + Pointee, Z> {
+    pub pile: Z,
+    pub ptr: FatPtr<T, P>,
 }
 
-impl<'p,'v> OffsetError<'p,'v> {
-    pub fn new<T: ?Sized + PersistPtr>(pile: &Pile<'p,'v>, ptr: &FatPtr<T, Pile<'p,'v>>) -> Self {
-        Self {
-            pile: *pile,
-            offset: ptr.raw,
-        }
+impl<T: ?Sized + Pointee> {
+    pub fn new<T: ?Sized + Pointee>(pile: P, ptr: FatPtr<T, P>) -> Self {
+        Self { pile, ptr }
     }
 }
 
@@ -50,11 +48,13 @@ pub enum ValidatorError<'p, 'v> {
     },
 }
 
+/*
 impl<'p,'v, E> From<OffsetError<'p, 'v>> for DerefError<'p,'v, E> {
     fn from(err: OffsetError<'p, 'v>) -> Self {
         DerefError::Offset(err)
     }
 }
+*/
 
 impl From<DerefError<'_, '_>> for DerefErrorPayload {
     fn from(err: DerefError) -> DerefErrorPayload {
@@ -96,6 +96,7 @@ pub(crate) enum DerefErrorPayload {
 
 unsafe impl Send for DerefErrorPayload {}
 
+/*
 impl From<OffsetError<'_, '_>> for DerefErrorPayload {
     fn from(err: OffsetError<'_, '_>) -> Self {
         DerefErrorPayload::Offset {
@@ -104,3 +105,5 @@ impl From<OffsetError<'_, '_>> for DerefErrorPayload {
         }
     }
 }
+*/
+*/

@@ -72,12 +72,9 @@ where Z::Ptr: fmt::Pointer
     }
 }
 
-impl<T: ?Sized + PersistPtr, Z: Zone> Persist for ValidPtr<T, Z> {
+impl<T: ?Sized + Persist, Z: Zone> Persist for ValidPtr<T, Z> {
     type Persist = ValidPtr<T::Persist, Z::Persist>;
-}
-
-impl<T: ?Sized + Pointee, Z: Zone> ValidateBlob for ValidPtr<T, Z> {
-    type Error = <FatPtr<T,Z> as ValidateBlob>::Error;
+    type Error = <FatPtr<T,Z> as Persist>::Error;
 
     fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
         let mut blob = blob.validate_struct();
@@ -94,8 +91,8 @@ pub enum ValidateState<'a, T: ?Sized + Pointee, S> {
     },
 }
 
-unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> ValidateChildren<'a, Z> for ValidPtr<T, Z>
-where T: ValidatePtrChildren<'a, Z>
+unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> Validate<'a, Z> for ValidPtr<T, Z>
+where T: Validate<'a, Z>
 {
     type State = ValidateState<'a, T::Persist, T::State>;
 
@@ -105,11 +102,14 @@ where T: ValidatePtrChildren<'a, Z>
 
     fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<&'a Self, V::Error> {
         loop {
-            match state {
+            *state = match state {
                 ValidateState::Initial => {
                     match validator.validate_ptr::<T>(this)? {
                         Some(value) => {
-                            todo!()
+                            ValidateState::Value {
+                                state: T::validate_children(value),
+                                value,
+                            }
                         },
                         None => break Ok(unsafe { mem::transmute(this) }),
                     }

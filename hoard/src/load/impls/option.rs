@@ -8,11 +8,10 @@ use crate::blob::Blob;
 
 use super::*;
 
-impl<T: NonZero + Persist> Persist for Option<T> {
+impl<T: NonZero + Persist> Persist for Option<T>
+where T::Persist: Sized
+{
     type Persist = Option<T::Persist>;
-}
-
-impl<T: ValidateBlob> ValidateBlob for Option<T> {
     type Error = OptionError<T::Error>;
 
     fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
@@ -23,7 +22,9 @@ impl<T: ValidateBlob> ValidateBlob for Option<T> {
 #[derive(Debug)]
 pub struct OptionError<E>(pub E);
 
-unsafe impl<'a, Z, T: NonZero + ValidateChildren<'a, Z>> ValidateChildren<'a, Z> for Option<T> {
+unsafe impl<'a, Z, T: NonZero + Validate<'a, Z>> Validate<'a, Z> for Option<T>
+where T::Persist: Sized
+{
     type State = Option<T::State>;
 
     fn validate_children(this: &'a Self::Persist) -> Self::State {
@@ -44,5 +45,6 @@ unsafe impl<'a, Z, T: NonZero + ValidateChildren<'a, Z>> ValidateChildren<'a, Z>
     }
 }
 
-impl<Z, T: NonZero + Decode<Z>> Decode<Z> for Option<T> {
-}
+impl<Z, T: NonZero + Load<Z>> Decode<Z> for Option<T>
+where T::Persist: Sized
+{}

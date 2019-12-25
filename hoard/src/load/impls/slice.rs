@@ -6,9 +6,6 @@ use super::*;
 
 use crate::blob::StructValidator;
 
-unsafe impl<T: Persist> PersistPtr for [T] {
-    type Persist = [T::Persist];
-}
 
 #[derive(Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -17,7 +14,10 @@ pub struct ValidateSliceError<E> {
     pub err: E,
 }
 
-impl<T: ValidateBlob> ValidateBlob for [T] {
+impl<T: Persist> Persist for [T]
+where T::Persist: Sized
+{
+    type Persist = [T::Persist];
     type Error = ValidateSliceError<T::Error>;
 
     fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
@@ -47,7 +47,9 @@ pub enum ValidateSliceState<S> {
     Done,
 }
 
-unsafe impl<'a, Z, T: ValidateChildren<'a, Z>> ValidatePtrChildren<'a, Z> for [T] {
+unsafe impl<'a, Z, T: Validate<'a, Z>> Validate<'a, Z> for [T]
+where T::Persist: Sized
+{
     type State = ValidateSliceState<T::State>;
 
     fn validate_children(this: &'a Self::Persist) -> Self::State {
@@ -86,7 +88,6 @@ unsafe impl<'a, Z, T: ValidateChildren<'a, Z>> ValidatePtrChildren<'a, Z> for [T
 }
 
 impl<Z, T: Decode<Z>> Load<Z> for [T] {
-    type Error = ValidateSliceError<<T::Persist as ValidateBlob>::Error>;
 }
 
 #[cfg(test)]

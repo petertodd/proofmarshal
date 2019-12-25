@@ -6,9 +6,6 @@ use crate::blob::StructValidator;
 
 use super::*;
 
-impl<T: Persist, const N: usize> Persist for [T;N] {
-    type Persist = [T::Persist; N];
-}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ValidateArrayError<E, const N: usize> {
@@ -25,7 +22,10 @@ impl<E: Into<!>, const N: usize> From<ValidateArrayError<E, N>> for ! {
 impl<E: ValidationError, const N: usize> ValidationError for ValidateArrayError<E, N> {
 }
 
-impl<T: ValidateBlob, const N: usize> ValidateBlob for [T; N] {
+impl<T: Persist, const N: usize> Persist for [T;N]
+where T::Persist: Sized
+{
+    type Persist = [T::Persist; N];
     type Error = ValidateArrayError<T::Error, N>;
 
     fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
@@ -39,7 +39,9 @@ impl<T: ValidateBlob, const N: usize> ValidateBlob for [T; N] {
     }
 }
 
-unsafe impl<'a, Z, T: ValidateChildren<'a, Z>, const N: usize> ValidateChildren<'a, Z> for [T; N] {
+unsafe impl<'a, Z, T: Validate<'a, Z>, const N: usize> Validate<'a, Z> for [T; N]
+where T::Persist: Sized
+{
     type State = [T::State; N];
 
     fn validate_children(this: &'a Self::Persist) -> Self::State {
