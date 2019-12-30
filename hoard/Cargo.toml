@@ -6,12 +6,15 @@ edition = "2018"
 
 [dependencies]
 nonzero = { path = "../nonzero" }
-owned = { path = "../owned" }
 leint = { path = "../leint" }
 singlelife = { path = "../singlelife" }
 sliceinit = { path = "../sliceinit" }
 
+owned = "0.1.0"
 memmap = "0.7.0"
+
+static_assertions = "1.1.0"
+thiserror = "1.0.9"
 
 [dev-dependencies]
 tempfile = "3.1.0"

@@ -1,23 +1,40 @@
-use super::Owned;
+use super::IntoOwned;
 
 use core::mem::{self, ManuallyDrop};
 use core::slice;
 
+/// A trait for taking data.
+///
+/// Implementing `Take<T>` is like implementing `Borrow<T>` but for transferring ownership.
+///
+/// # Safety
+///
+/// This trait is unsafe to implement because `take_unsized()` must not `drop()` or otherwise use
+/// the taken value after the closure returns.
 pub unsafe trait Take<T: ?Sized> : Sized {
+    /// Takes ownership of `Sized` type.
     fn take_sized(self) -> T
         where T: Sized
     {
         self.take_unsized(|src| unsafe {
-            (src as *mut _ as *mut T).read()
+            (src as *const _ as *const T).read()
         })
     }
 
+    /// Takes ownership of the owned version of an unsized type.
     fn take_owned(self) -> T::Owned
-        where T: Owned
+        where T: IntoOwned
     {
-        self.take_unsized(|src| unsafe { T::to_owned(src) })
+        self.take_unsized(|src| unsafe { T::into_owned_unchecked(src) })
     }
 
+    /// Takes ownership of an unsized type with the aid of a closure.
+    ///
+    /// The closure is called with an immutable reference to `ManuallyDrop<T>`. After the closure
+    /// returns the memory occupied by the value will be deallocated, but `drop()` will *not* be
+    /// called on the value itself.
+    ///
+    /// `take_sized()` and `take_owned()` are implemented in terms of this.
     fn take_unsized<F,R>(self, f: F) -> R
         where F: FnOnce(&mut ManuallyDrop<T>) -> R;
 }
@@ -39,7 +56,7 @@ unsafe impl<T> Take<T> for ManuallyDrop<T> {
     }
 }
 
-unsafe impl<T: ?Sized + Owned> Take<T> for Box<T> {
+unsafe impl<T: ?Sized + IntoOwned> Take<T> for Box<T> {
     fn take_unsized<F,R>(self, f: F) -> R
         where F: FnOnce(&mut ManuallyDrop<T>) -> R
     {

@@ -1,115 +1,111 @@
 //! In-place coercions.
 
-use core::mem;
+use static_assertions::assert_impl_all;
 
-mod slice;
-pub use self::slice::*;
+use core::alloc::Layout;
+use core::any::type_name;
+use core::mem::ManuallyDrop;
+
+mod array;
+pub use self::array::*;
 
 mod scalars;
 pub use self::scalars::*;
-
-pub unsafe trait CastRef<T: ?Sized> {
-    fn as_cast_ref(&self) -> &T;
-}
-
-pub unsafe trait CastMut<T: ?Sized> : CastRef<T> {
-    fn as_cast_mut(&mut self) -> &mut T {
-        let r = self.as_cast_ref();
-
-        #[allow(mutable_transmutes)]
-        unsafe { mem::transmute(r) }
-    }
-}
-
-pub unsafe trait Cast<T> : CastRef<T> {
-    fn cast(self) -> T
-        where Self: Sized;
-}
-
-
-pub unsafe trait TryCastRef<T: ?Sized> {
+pub unsafe trait TryCoerce<T> : Sized {
     type Error;
-    fn try_cast_ref(&self) -> Result<&T, Self::Error>;
-}
 
-pub unsafe trait TryCastMut<T: ?Sized> : TryCastRef<T> {
-    fn try_cast_mut(&mut self) -> Result<&mut T, Self::Error> {
-        let r = self.try_cast_ref()?;
+    fn try_coerce_ptr(this: &Self) -> Result<*const T, Self::Error> {
+        assert_eq!(Layout::new::<Self>(), Layout::new::<T>(),
+                   "{} can-not implement TryCoerce<{}>: layouts differ",
+                   type_name::<Self>(), type_name::<T>());
 
-        #[allow(mutable_transmutes)]
-        Ok(unsafe { mem::transmute(r) })
+        Ok(this as *const Self as *const T)
     }
-}
 
-pub unsafe trait TryCast<T> : TryCastRef<T> {
-    fn try_cast(self) -> Result<T, Self::Error> where Self: Sized {
-        assert_eq!(mem::size_of::<Self>(), mem::size_of::<T>());
-        assert_eq!(mem::align_of::<Self>(), mem::align_of::<T>());
+    fn try_coerce(self) -> Result<T, Self::Error> {
+        assert_eq!(Layout::new::<Self>(), Layout::new::<T>(),
+                   "{} can-not implement TryCoerce<{}>: layouts differ",
+                   type_name::<Self>(), type_name::<T>());
 
-        match self.try_cast_ref() {
-            Err(e) => Err(e),
-            Ok(_) => {
-                let this = mem::ManuallyDrop::new(self);
-                unsafe { mem::transmute_copy(&this) }
-            }
+        let r_ptr = Self::try_coerce_ptr(&self)?;
+
+        unsafe {
+            let r = r_ptr.read();
+            drop(self);
+            Ok(r)
         }
     }
 }
 
-unsafe impl<T: ?Sized, U: ?Sized> CastRef<U> for T
-where T: TryCastRef<U>,
-      T::Error: Into<!>
-{
-    fn as_cast_ref(&self) -> &U {
-        match self.try_cast_ref() {
-            Ok(r) => r,
-            Err(e) => e.into(),
-        }
-    }
-}
-
-unsafe impl<T: ?Sized, U: ?Sized> CastMut<U> for T
-where T: TryCastMut<U>,
-      T::Error: Into<!>
-{
-    fn as_cast_mut(&mut self) -> &mut U {
-        match self.try_cast_mut() {
-            Ok(r) => r,
-            Err(e) => e.into(),
-        }
-    }
-}
-
-unsafe impl<T: ?Sized, U> Cast<U> for T
-where T: TryCast<U>,
-      T::Error: Into<!>
-{
-    fn cast(self) -> U where Self: Sized {
-        match self.try_cast() {
-            Ok(r) => r,
-            Err(e) => e.into(),
-        }
-    }
-}
-
-unsafe impl TryCastRef<!> for ! {
+unsafe impl<T> TryCoerce<T> for ! {
     type Error = !;
-    #[inline(always)]
-    fn try_cast_ref(&self) -> Result<&Self, !> {
-        match *self {}
+    fn try_coerce_ptr(this: &Self) -> Result<*const T, Self::Error> {
+        match *this {}
     }
-}
 
-unsafe impl TryCast<!> for ! {
-    #[inline(always)]
-    fn try_cast(self) -> Result<Self, !> where Self: Sized {
+    fn try_coerce(self) -> Result<T, Self::Error> {
         match self {}
     }
 }
 
-unsafe impl TryCastMut<!> for ! {
-    #[inline(always)]
-    fn try_cast_mut(&mut self) -> Result<&mut Self, !> {
-        match *self {}
+pub unsafe trait Coerce<T> : Sized {
+    fn coerce_ptr(this: &Self) -> *const T;
+    fn coerce(self) -> T;
+}
+
+unsafe impl<U, T: TryCoerce<U>> Coerce<U> for T
+where T::Error: Into<!>
+{
+    fn coerce_ptr(this: &Self) -> *const U {
+        assert_eq!(Layout::new::<Self>(), Layout::new::<U>(),
+                   "{} can-not implement TryCoerce<{}>: layouts differ",
+                   type_name::<Self>(), type_name::<U>());
+
+        match Self::try_coerce_ptr(this) {
+            Ok(r_ptr) => r_ptr,
+            Err(never) => match Into::<!>::into(never) {},
+        }
+    }
+
+    fn coerce(self) -> U {
+        assert_eq!(Layout::new::<Self>(), Layout::new::<U>(),
+                   "{} can-not implement TryCoerce<{}>: layouts differ",
+                   type_name::<Self>(), type_name::<U>());
+
+        let r_ptr = Self::coerce_ptr(&self);
+
+        unsafe {
+            let r = r_ptr.read();
+            drop(self);
+            r
+        }
     }
 }
+
+macro_rules! unsafe_impl_coerce {
+    () => {};
+    ($t:ty => $u:ty) => {
+        unsafe impl TryCoerce<$u> for $t {
+            type Error = !;
+        }
+    };
+
+    ($t:ty => { $($u:ty),+ $(,)?}) => {
+        $(
+            unsafe_impl_coerce!($t => $u);
+        )+
+    };
+
+    ($t:ty => $u:tt; $($rest_t:ty => $rest_u:tt;)*) => {
+        unsafe_impl_coerce!($t => $u);
+        unsafe_impl_coerce!($($rest_t => $rest_u;)*);
+    };
+}
+
+unsafe_impl_coerce! {
+    () => ();
+    bool => {bool, u8};
+}
+
+assert_impl_all!(!: TryCoerce<!>, Coerce<!>);
+assert_impl_all!(bool: Coerce<bool>, Coerce<u8>);

@@ -27,6 +27,8 @@
 #![feature(never_type)]
 #![feature(backtrace)]
 
+#![feature(rustc_attrs)]
+
 #![allow(incomplete_features)]
 #![feature(const_generics)]
 
@@ -40,22 +42,21 @@ compile_error!("64-bit pointers required");
 #[cfg(not(target_endian = "little"))]
 compile_error!("little endian required");
 
+use thiserror::Error;
+
+// Utilities
+pub mod bytes;
 pub mod coerce;
 pub mod pointee;
 
-pub mod zone;
-pub mod blob;
-pub mod load;
-pub mod save;
-
-#[macro_use]
 pub mod marshal;
+pub mod zone;
 
-pub mod heap;
+pub mod impls;
 
 pub mod pile;
 
-//pub mod linkedlist;
+pub mod linkedlist;
 
 /// Prelude
 pub mod prelude {
@@ -68,16 +69,4 @@ pub mod prelude {
 
         refs::{Own, Ref, RefMut},
     };
-
-    /*
-    pub use crate::marshal::{
-        en::Save, de::Load,
-    };
-
-    pub use crate::refs::{
-        Own,
-        Ref,
-        RefMut,
-    };
-    */
 }

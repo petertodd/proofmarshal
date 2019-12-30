@@ -59,35 +59,34 @@
 //! phantom `&'s [u8]`.
 */
 
-use core::cmp;
-use core::convert::TryInto;
-use core::fmt;
-use core::marker::PhantomData;
-use core::mem;
-use core::num::NonZeroU64;
-use core::ptr::NonNull;
-
 use std::alloc::Layout;
+use std::cmp;
+use std::convert::TryInto;
+use std::fmt;
+use std::marker::PhantomData;
+use std::mem;
+use std::num::NonZeroU64;
+use std::ptr::NonNull;
 
+use thiserror::Error;
 use leint::Le;
 use nonzero::NonZero;
 
-use super::Pile;
+use crate::coerce::TryCoerce;
+use crate::marshal::PtrValidator;
+use crate::marshal::blob;
+use crate::marshal::decode::*;
 
-use crate::blob::*;
-use crate::load::*;
-use crate::save::*;
-use crate::marshal::*;
-use crate::zone::Zone;
+use super::Pile;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Offset<'pile, 'version> {
     marker: PhantomData<(
-        for<'a> fn(&'a Pile<'pile, 'version>) -> &'a (),
+        fn(&Pile<'pile, 'version>) -> &'pile (),
         &'version (),
     )>,
-    raw: Le<NonZeroU64>,
+    pub(super) raw: Le<NonZeroU64>,
 }
 
 impl fmt::Debug for Offset<'_,'_> {
@@ -98,18 +97,6 @@ impl fmt::Debug for Offset<'_,'_> {
 }
 
 unsafe impl NonZero for Offset<'_,'_> {}
-unsafe impl NonZero for OffsetMut<'_,'_> {}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct OffsetMut<'p,'v>(Offset<'p,'v>);
-
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum Kind<'p,'v> {
-    Offset(Offset<'p,'v>),
-    Ptr(NonNull<u16>),
-}
 
 impl<'p,'v> Offset<'p,'v> {
     pub const MAX: usize = (1 << 62) - 1;
@@ -146,31 +133,22 @@ impl From<Offset<'_, '_>> for usize {
     }
 }
 
-impl<'p, 'v> From<Offset<'p,'v>> for OffsetMut<'p,'v> {
-    #[inline]
-    fn from(offset: Offset<'p,'v>) -> Self {
-        Self(offset)
-    }
-}
-
 impl fmt::Pointer for Offset<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:x}", self.get())
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Error,Debug, PartialEq, Eq)]
+#[error("invalid Offset: {0}")]
 pub struct ValidateOffsetError(u64);
 
-impl ValidationError for ValidateOffsetError {
-}
-
-impl Persist for Offset<'_,'_> {
-    type Persist = Offset<'static, 'static>;
+impl blob::Validate for Offset<'static, 'static> {
     type Error = ValidateOffsetError;
 
-    #[inline]
-    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
+    fn validate<'a, V: blob::Validator>(blob: blob::Cursor<'a, Self, V>)
+        -> Result<blob::ValidBlob<'a, Self>, blob::Error<Self::Error, V::Error>>
+    {
         blob.validate_bytes(|blob| {
             let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
 
@@ -188,21 +166,22 @@ impl Persist for Offset<'_,'_> {
     }
 }
 
-unsafe impl<'a, Z> Validate<'a, Z> for Offset<'_, '_> {
+unsafe impl Persist for Offset<'_, '_> {
+    type Persist = Offset<'static, 'static>;
+    type Error = ValidateOffsetError;
+}
+
+unsafe impl<'a, Z> ValidateChildren<'a, Z> for Offset<'_, '_> {
     type State = ();
     fn validate_children(_: &Offset<'static, 'static>) -> () {}
 
-    fn poll<V: PtrValidator<Z>>(this: &'a Offset<'static, 'static>, _: &mut (), _: &V) -> Result<&'a Self, V::Error> {
-        Ok(unsafe { mem::transmute::<&Offset, &Offset>(this) })
+    fn poll<V: PtrValidator<Z>>(this: &Self::Persist, _: &mut (), _: &V) -> Result<(), V::Error> {
+        Ok(())
     }
 }
+impl<Z> Decode<Z> for Offset<'_,'_> {}
 
-impl<Z> Decode<Z> for Offset<'_, '_> {}
-
-impl<Z> Encoded<Z> for Offset<'_, '_> {
-    type Encoded = Self;
-}
-
+/*
 impl<Z: Zone> Encode<'_, Z> for Offset<'_, '_> {
     type State = ();
     fn save_children(&self) -> () {}
@@ -218,56 +197,35 @@ impl<Z: Zone> Encode<'_, Z> for Offset<'_, '_> {
 }
 
 impl Primitive for Offset<'static, 'static> {}
+*/
 
-
-impl<'s,'m> OffsetMut<'s,'m> {
-    #[inline]
-    pub unsafe fn from_ptr(ptr: NonNull<u16>) -> Self {
-        let raw = ptr.as_ptr() as usize as u64;
-
-        debug_assert_eq!(raw & 1, 0,
-                   "{:p} unaligned", ptr);
-
-        mem::transmute(ptr.as_ptr() as usize as u64)
-    }
-
-    #[inline]
-    pub fn kind(&self) -> Kind<'s,'m> {
-        if self.0.raw.get().get() & 1 == 1 {
-            Kind::Offset(self.0)
-        } else {
-            Kind::Ptr(unsafe {
-                let raw = self.0.raw.get().get();
-                NonNull::new_unchecked(raw as usize as *mut u16)
-            })
-        }
-    }
-
-    #[inline(always)]
-    pub fn get_offset(&self) -> Option<Offset<'s,'m>> {
-        match self.kind() {
-            Kind::Offset(offset) => Some(offset),
-            Kind::Ptr(_) => None,
-        }
-    }
-
-    #[inline(always)]
-    pub fn get_ptr(&self) -> Option<NonNull<u16>> {
-        match self.kind() {
-            Kind::Ptr(ptr) => Some(ptr),
-            Kind::Offset(_) => None,
-        }
-    }
+unsafe impl<'p, 'v> TryCoerce<Offset<'p,'v>> for Offset<'_, '_> {
+    type Error = !;
 }
 
-impl fmt::Debug for OffsetMut<'_,'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(&self.kind(), f)
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::TryPile;
 
-impl fmt::Pointer for OffsetMut<'_,'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
+    use crate::coerce::Coerce;
+    use crate::zone::FatPtr;
+
+    #[test]
+    fn coerce_lifetimes() {
+        fn do_coerce<'p,'v, T, U>(_: &'p Vec<u8>, ptr: FatPtr<T, TryPile<'p,'static>>) -> FatPtr<U, TryPile<'v, 'p>> {
+            ptr.coerce()
+        }
+
+        let ptr = FatPtr::<Box<u8>, TryPile> {
+            raw: Offset::<'_, 'static>::new(42).unwrap(),
+            metadata: ()
+        };
+
+        let anchor = vec![];
+
+        let ptr2: FatPtr<&Vec<u8>, TryPile<'static,'_>> = do_coerce(&anchor, ptr);
+
+        assert_eq!(ptr2.raw.get(), 42);
     }
 }

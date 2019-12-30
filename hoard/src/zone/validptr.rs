@@ -10,9 +10,12 @@ use core::marker::PhantomData;
 
 use nonzero::NonZero;
 
-use crate::blob::*;
-use crate::load::*;
-use crate::save::*;
+use crate::pointee::Pointee;
+
+use crate::marshal::PtrValidator;
+use crate::marshal::blob;
+use crate::marshal::decode::*;
+use crate::marshal::load::*;
 
 /// Wrapper around a `FatPtr` guaranteeing that the target of the pointer is valid.
 ///
@@ -55,6 +58,7 @@ impl<T: ?Sized + Pointee, Z: Zone> ValidPtr<T, Z> {
     }
 }
 
+/*
 // standard impls
 impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for ValidPtr<T, Z>
 where T: fmt::Debug
@@ -71,19 +75,29 @@ where Z::Ptr: fmt::Pointer
         fmt::Pointer::fmt(&self.0, f)
     }
 }
+*/
 
-impl<T: ?Sized + Persist, Z: Zone> Persist for ValidPtr<T, Z> {
-    type Persist = ValidPtr<T::Persist, Z::Persist>;
-    type Error = <FatPtr<T,Z> as Persist>::Error;
+impl<T: ?Sized + Pointee, Z: Zone> blob::Validate for ValidPtr<T, Z>
+where T::Metadata: blob::Validate
+{
+    type Error = <FatPtr<T,Z> as blob::Validate>::Error;
 
-    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
-        let mut blob = blob.validate_struct();
+    fn validate<'a, V: blob::Validator>(mut blob: blob::Cursor<'a, Self, V>)
+        -> Result<blob::ValidBlob<'a, Self>, blob::Error<Self::Error, V::Error>>
+    {
         blob.field::<FatPtr<T,Z>,_>(identity)?;
         unsafe { blob.assume_valid() }
     }
 }
 
-pub enum ValidateState<'a, T: ?Sized + Pointee, S> {
+
+unsafe impl<T: ?Sized + PersistPointee, Z: Zone> Persist for ValidPtr<T, Z> {
+    type Persist = ValidPtr<T::Persist, Z::Persist>;
+    type Error = <ValidPtr<T::Persist, Z::Persist> as blob::Validate>::Error;
+}
+
+#[derive(Debug)]
+pub enum ValidateState<'a, T: ?Sized, S> {
     Initial,
     Value {
         value: &'a T,
@@ -91,16 +105,17 @@ pub enum ValidateState<'a, T: ?Sized + Pointee, S> {
     },
 }
 
-unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> Validate<'a, Z> for ValidPtr<T, Z>
-where T: Validate<'a, Z>
+
+unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> ValidateChildren<'a, Z> for ValidPtr<T, Z>
+where T: ValidatePointeeChildren<'a, Z>
 {
     type State = ValidateState<'a, T::Persist, T::State>;
 
-    fn validate_children(_: &'a ValidPtr<T::Persist, Z::Persist>) -> Self::State {
+    fn validate_children(_: &'a Self::Persist) -> Self::State {
         ValidateState::Initial
     }
 
-    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<&'a Self, V::Error> {
+    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<(), V::Error> {
         loop {
             *state = match state {
                 ValidateState::Initial => {
@@ -111,13 +126,13 @@ where T: Validate<'a, Z>
                                 value,
                             }
                         },
-                        None => break Ok(unsafe { mem::transmute(this) }),
+                        None => break Ok(()),
                     }
                 },
                 ValidateState::Value { value, state } => {
                     T::poll(value, state, validator)?;
 
-                    break Ok(unsafe { mem::transmute(this) })
+                    break Ok(())
                 },
             }
         }
@@ -127,6 +142,7 @@ where T: Validate<'a, Z>
 impl<Z: Zone, T: ?Sized + Load<Z>> Decode<Z> for ValidPtr<T,Z> {
 }
 
+/*
 /// State used when saving a `ValidPtr`.
 #[derive(Debug)]
 pub enum SaveState<'a, T: ?Sized + Save<'a, Y>, Z: Zone, Y: Zone> {
@@ -206,3 +222,4 @@ mod tests {
     fn test() {
     }
 }
+*/

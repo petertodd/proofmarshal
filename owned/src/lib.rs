@@ -8,28 +8,25 @@ use core::ptr;
 mod take;
 pub use self::take::Take;
 
-mod refs;
-pub use self::refs::Ref;
-
 /// The owned form of a type.
-pub unsafe trait Owned {
+pub unsafe trait IntoOwned {
     type Owned : Borrow<Self> + Take<Self>;
 
-    unsafe fn to_owned(this: &ManuallyDrop<Self>) -> Self::Owned;
+    unsafe fn into_owned_unchecked(this: &mut ManuallyDrop<Self>) -> Self::Owned;
 }
 
-unsafe impl<T> Owned for T {
+unsafe impl<T> IntoOwned for T {
     type Owned = T;
 
-    unsafe fn to_owned(this: &ManuallyDrop<Self>) -> Self::Owned {
+    unsafe fn into_owned_unchecked(this: &mut ManuallyDrop<Self>) -> Self::Owned {
         (this as *const _ as *const Self).read()
     }
 }
 
-unsafe impl<T> Owned for [T] {
+unsafe impl<T> IntoOwned for [T] {
     type Owned = Vec<T>;
 
-    unsafe fn to_owned(this: &ManuallyDrop<[T]>) -> Self::Owned {
+    unsafe fn into_owned_unchecked(this: &mut ManuallyDrop<[T]>) -> Self::Owned {
         let len = this.len();
 
         let mut r = Vec::<T>::with_capacity(len);

@@ -7,31 +7,34 @@ use core::fmt;
 use core::ops;
 
 use nonzero::NonZero;
-use owned::{Take, Owned};
+use owned::{Take, IntoOwned};
 
-use crate::{
-    coerce,
-    pointee::Pointee,
-    load::{Load, Persist},
-    marshal::Primitive,
-};
+use crate::pointee::Pointee;
+use crate::marshal::blob::Validate;
+use crate::marshal::load::Load;
 
 pub mod refs;
 use self::refs::*;
 
-mod error;
-pub use self::error::{DerefError, PtrError};
+pub mod fatptr;
+pub use self::fatptr::FatPtr;
 
-pub trait Zone : Sized {
+pub mod validptr;
+pub use self::validptr::ValidPtr;
+
+pub mod ownedptr;
+pub use self::ownedptr::OwnedPtr;
+
+pub mod never;
+
+pub trait Zone : Sized + fmt::Debug {
     type Ptr : NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
-    type Persist : 'static + Zone<Ptr=Self::PersistPtr, Error=Self::Error>;
-    type PersistPtr : 'static + Primitive + NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
+    type Persist : 'static + Zone<Ptr=Self::PersistPtr, PersistPtr=Self::PersistPtr>;
+    type PersistPtr : 'static + Validate + NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
 
-    type Allocator : Alloc<Zone=Self>;
+    type Error : std::error::Error;
 
-    type Error : fmt::Debug;
-
-    fn allocator() -> Self::Allocator
+    fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> OwnedPtr<T, Self>
         where Self: Default
     {
         unimplemented!("{} implements Default", type_name::<Self>())
@@ -61,33 +64,31 @@ pub trait Zone : Sized {
         f: impl FnOnce(Result<&mut ManuallyDrop<T>, FatPtr<T, Self::Persist>>) -> R,
     ) -> R;
 
-    fn try_take_dirty<T: ?Sized + Pointee + Owned>(owned: OwnedPtr<T, Self>) -> Result<T::Owned, FatPtr<T, Self::Persist>> {
+    fn try_take_dirty<T: ?Sized + Pointee + IntoOwned>(owned: OwnedPtr<T, Self>) -> Result<T::Owned, FatPtr<T, Self::Persist>> {
         Self::try_take_dirty_unsized(owned, |src| {
             match src {
                 Err(fatptr) => Err(fatptr),
-                Ok(unsized_value) => unsafe { Ok(T::to_owned(unsized_value)) },
+                Ok(unsized_value) => unsafe { Ok(T::into_owned_unchecked(unsized_value)) },
             }
         })
     }
 }
 
-pub trait Alloc : Sized {
-    type Zone : Zone;
-
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> OwnedPtr<T, Self::Zone>;
+pub trait Alloc : Zone {
+    fn alloc<T: ?Sized + Pointee>(&self, src: impl Take<T>) -> OwnedPtr<T, Self>;
 }
 
 pub trait TryGet : Zone {
     fn try_get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self>)
-        -> Result<Ref<'a, T, Self>, DerefError<T, Self>>;
+        -> Result<Ref<'a, T, Self>, Self::Error>;
 
     fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>)
-        -> Result<Own<T::Owned, Self>, DerefError<T, Self>>;
+        -> Result<Own<T::Owned, Self>, Self::Error>;
 }
 
 pub trait TryGetMut : TryGet {
     fn try_get_mut<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut ValidPtr<T, Self>)
-        -> Result<RefMut<'a, T, Self>, DerefError<T, Self>>;
+        -> Result<RefMut<'a, T, Self>, Self::Error>;
 }
 
 pub trait Get : Zone {
@@ -95,17 +96,21 @@ pub trait Get : Zone {
     fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>) -> Own<T::Owned, Self>;
 }
 
-impl<Z: Get<Error=!>> TryGet for Z {
-    fn try_get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self>)
-        -> Result<Ref<'a, T, Self>, DerefError<T, Self>>
-    {
-        Ok(self.get(ptr))
+impl<Z: TryGet> Get for Z
+where Z::Error: Into<!>
+{
+    fn get<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a ValidPtr<T, Self>) -> Ref<'a, T, Self> {
+        match self.try_get(ptr) {
+            Ok(r) => r,
+            Err(e) => match Into::<!>::into(e) {},
+        }
     }
 
-    fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>)
-        -> Result<Own<T::Owned, Self>, DerefError<T, Self>>
-    {
-        Ok(self.take(ptr))
+    fn take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>) -> Own<T::Owned, Self> {
+        match self.try_take(ptr) {
+            Ok(r) => r,
+            Err(e) => match Into::<!>::into(e) {},
+        }
     }
 }
 
@@ -113,25 +118,16 @@ pub trait GetMut : Get {
     fn get_mut<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut ValidPtr<T, Self>) -> RefMut<'a, T, Self>;
 }
 
-impl<Z: GetMut<Error=!>> TryGetMut for Z {
-    fn try_get_mut<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut ValidPtr<T, Self>)
-        -> Result<RefMut<'a, T, Self>, DerefError<T, Self>>
-    {
-        Ok(self.get_mut(ptr))
+impl<Z: TryGetMut> GetMut for Z
+where Z::Error: Into<!>
+{
+    fn get_mut<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut ValidPtr<T, Self>) -> RefMut<'a, T, Self> {
+        match self.try_get_mut(ptr) {
+            Ok(r) => r,
+            Err(e) => match Into::<!>::into(e) {},
+        }
     }
 }
-
-
-pub mod fatptr;
-pub use self::fatptr::FatPtr;
-
-pub mod validptr;
-pub use self::validptr::ValidPtr;
-
-pub mod ownedptr;
-pub use self::ownedptr::OwnedPtr;
-
-pub mod never;
 
 /*
 /// Generic pointer.

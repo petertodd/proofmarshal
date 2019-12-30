@@ -1,109 +1,195 @@
+use core::any::Any;
+use core::fmt;
+use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use std::backtrace::Backtrace;
+use thiserror::Error;
 
 use super::*;
 
-use crate::load::*;
-use crate::save::*;
+use crate::pointee::{Metadata, MetadataKind};
+use crate::marshal::load::PersistPointee;
 
-/*
-/// An attempt to dereference a pile offset failed.
-#[derive(Debug, PartialEq, Eq)]
-pub struct OffsetError<T: ?Sized + Pointee, Z> {
-    pub pile: Z,
-    pub ptr: FatPtr<T, P>,
-}
+#[derive(Debug, Error)]
+#[error("pile dereference failed: {0:?}")]
+pub struct Error<'p, 'v>(Box<Inner<'p,'v>>);
 
-impl<T: ?Sized + Pointee> {
-    pub fn new<T: ?Sized + Pointee>(pile: P, ptr: FatPtr<T, P>) -> Self {
-        Self { pile, ptr }
-    }
+#[derive(Debug)]
+struct Inner<'p, 'v> {
+    zone: TryPile<'p, 'v>,
+    offset: Offset<'static, 'static>,
+    metadata: MetadataKind,
+
+    kind: ErrorKind,
 }
 
 #[derive(Debug)]
-pub enum DerefError<'p, 'v, E = Box<dyn ValidationError>> {
-    Offset(OffsetError<'p, 'v>),
-    Value {
-        pile: Pile<'p, 'v>,
-        offset: Offset<'p, 'v>,
-        err: E,
-    },
-    Padding {
-        pile: Pile<'p, 'v>,
-        offset: Offset<'p, 'v>,
-    }
+pub enum ErrorKind {
+    Offset,
+    Metadata(Box<dyn std::error::Error + 'static + Send + Sync>),
+    Value(Box<dyn std::error::Error + 'static + Send + Sync>),
 }
 
-pub enum ValidatorError<'p, 'v> {
-    Offset {
-        offset: Offset<'p,'v>,
-    },
-    Value {
-        offset: Offset<'p, 'v>,
-        err: Box<dyn ValidationError>,
-    },
-    Padding {
-        offset: Offset<'p, 'v>,
-    },
+impl<'p,'v> Error<'p, 'v> {
+    #[cold]
+    pub fn new<Z, T: ?Sized + Pointee>(zone: &Z, ptr: &FatPtr<T, Z::Persist>, kind: ErrorKind) -> Self
+        where Z: PileZone<'p, 'v>,
+    {
+        Self(Box::new(Inner {
+            zone: zone.get_try_pile(),
+            offset: ptr.raw,
+            metadata: ptr.metadata.kind(),
+            kind,
+        }))
+    }
 }
 
 /*
-impl<'p,'v, E> From<OffsetError<'p, 'v>> for DerefError<'p,'v, E> {
-    fn from(err: OffsetError<'p, 'v>) -> Self {
-        DerefError::Offset(err)
-    }
-}
-*/
+/// Returned when attempting to dereference a `Zone` pointer fails.
+pub enum DerefError<T: ?Sized + PersistPointee, Z: Zone> {
+    /// The pointer is invalid.
+    ///
+    /// If this is returned, the `Zone` couldn't even retrieve a `Blob`, and validation was never
+    /// attempted.
+    Ptr(PtrError<T, Z>),
 
-impl From<DerefError<'_, '_>> for DerefErrorPayload {
-    fn from(err: DerefError) -> DerefErrorPayload {
-        match err {
-            DerefError::Offset(err) => err.into(),
-            DerefError::Value { pile, offset, err } => {
-                Self::Value {
-                    mapping: NonNull::from(pile.slice()).cast(),
-                    offset: offset.cast(),
-                    err,
-                }
-            },
-            DerefError::Padding { pile, offset } => {
-                Self::Padding {
-                    mapping: NonNull::from(pile.slice()).cast(),
-                    offset: offset.cast(),
-                }
-            },
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum DerefErrorPayload {
-    Offset {
-        mapping: NonNull<NonNull<[u8]>>,
-        offset: Offset<'static, 'static>,
-    },
+    /// The value is invalid.
+    ///
+    /// The `Zone` could retrieve a `Blob` of the right size for this type. But validation of that
+    /// `Blob` failed.
     Value {
-        mapping: NonNull<NonNull<[u8]>>,
-        offset: Offset<'static, 'static>,
-        err: Box<dyn ValidationError>,
-    },
-    Padding {
-        mapping: NonNull<NonNull<[u8]>>,
-        offset: Offset<'static, 'static>,
+        ptr: Z::ErrorPtr,
+        metadata: T::Metadata,
+        err: <T as PersistPointee>::Error,
     },
 }
 
-unsafe impl Send for DerefErrorPayload {}
-
-/*
-impl From<OffsetError<'_, '_>> for DerefErrorPayload {
-    fn from(err: OffsetError<'_, '_>) -> Self {
-        DerefErrorPayload::Offset {
-            mapping: NonNull::from(err.pile.slice()).cast(),
-            offset: err.offset.cast(),
-        }
+/// Returned when a pointer is invalid.
+pub enum PtrError<T: ?Sized + Pointee, Z: Zone> {
+    Zone {
+        ptr: Z::ErrorPtr,
+        metadata: T::Metadata,
+    },
+    Layout {
+        ptr: Z::ErrorPtr,
+        metadata: T::Metadata,
+        err: T::LayoutError,
     }
 }
-*/
+
+impl<T: ?Sized + PersistPointee, Z: Zone> From<PtrError<T,Z>> for DerefError<T,Z> {
+    fn from(err: PtrError<T, Z>) -> Self {
+        DerefError::Ptr(err)
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> From<PtrError<T, Z>> for !
+where Z::Error: Into<!>
+{
+    fn from(err: PtrError<T,Z>) -> ! {
+        unreachable!()
+    }
+}
+
+impl<T: ?Sized + PersistPointee, Z: Zone> From<DerefError<T, Z>> for !
+where Z::Error: Into<!>
+{
+    fn from(err: DerefError<T,Z>) -> ! {
+        unreachable!()
+    }
+}
+
+pub type Maybe<T, Z> = Result<T, <Z as Zone>::Error>;
+
+pub trait ZoneError : Sized + fmt::Debug {
+    fn into_dyn(self) -> Box<dyn ZoneErrorDyn>;
+}
+
+impl ZoneError for ! {
+    fn into_dyn(self) -> Box<dyn ZoneErrorDyn> {
+        match self {}
+    }
+}
+
+pub trait FromDerefError<Z: Zone> : ZoneError {
+    fn from_deref_error<T: ?Sized + PersistPointee>(err: DerefError<T, Z>) -> Self;
+}
+
+impl<Z: Zone> FromDerefError<Z> for !
+where Z::Error: Into<!>
+{
+    fn from_deref_error<T: ?Sized + PersistPointee>(err: DerefError<T, Z>) -> Self {
+        Into::<!>::into(err)
+    }
+}
+
+pub trait ZoneErrorDyn : 'static + Any + fmt::Debug {
+}
+
+impl<E: 'static + Any + fmt::Debug> ZoneErrorDyn for E {
+}
+
+impl<E: ZoneError> From<E> for Box<dyn ZoneErrorDyn> {
+    fn from(err: E) -> Self {
+        err.into_dyn()
+    }
+}
+
+impl<T: ?Sized + PersistPointee, Z: Zone> From<DerefError<T,Z>> for Box<dyn ZoneErrorDyn> {
+    fn from(err: DerefError<T,Z>) -> Self {
+        Z::Error::from_deref_error(err).into()
+    }
+}
+
+impl<T: ?Sized + PersistPointee, Z: Zone> From<PtrError<T,Z>> for Box<dyn ZoneErrorDyn> {
+    fn from(err: PtrError<T,Z>) -> Self {
+        DerefError::from(err).into()
+    }
+}
+
+
+// Debug impls
+impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for PtrError<T, Z> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        /*
+        match self {
+            PtrError::Zone { zone, ptr, err } => {
+                f.debug_struct("Zone")
+                 .field("zone", zone)
+                 .field("ptr", ptr)
+                 .field("err", err)
+                 .finish()
+            },
+            PtrError::Layout { zone, ptr, err } => {
+                f.debug_struct("Layout")
+                 .field("zone", zone)
+                 .field("ptr", ptr)
+                 .field("err", err)
+                 .finish()
+            },
+        }
+        */ todo!()
+    }
+}
+
+impl<T: ?Sized + PersistPointee, Z: Zone> fmt::Debug for DerefError<T, Z>
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        /*
+        match self {
+            DerefError::Ptr(e) => {
+                f.debug_tuple("Ptr")
+                 .field(e)
+                 .finish()
+            },
+            DerefError::Value { zone, ptr, err } => {
+                f.debug_struct("Value")
+                 .field("zone", zone)
+                 .field("ptr", ptr)
+                 .field("err", err)
+                 .finish()
+            },
+        }*/ todo!()
+    }
+}
 */

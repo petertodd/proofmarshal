@@ -1,14 +1,109 @@
-use core::convert::identity;
-use core::marker::PhantomData;
-use core::mem::{self, ManuallyDrop};
-use core::ptr;
+use std::fmt;
 
 use crate::prelude::*;
-use crate::load::*;
-use crate::save::*;
-use crate::blob::*;
-use crate::zone::*;
+use crate::zone::FatPtr;
+use crate::marshal::blob;
+use crate::marshal::decode::*;
+use crate::marshal::PtrValidator;
 
+use thiserror::Error;
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct Cell<T, Z: Zone> {
+    next: Option<OwnedPtr<Self, Z>>,
+    value: T,
+}
+
+impl<T: 'static, Z: 'static + Zone> blob::Validate for Cell<T, Z>
+where T: blob::Validate
+{
+    type Error = ValidateCellError<<Option<OwnedPtr<Self, Z>> as blob::Validate>::Error,
+                                   <T as blob::Validate>::Error>;
+
+    fn validate<'a, V>(mut blob: blob::Cursor<'a, Self, V>) -> Result<blob::ValidBlob<'a, Self>, blob::Error<Self::Error, V::Error>>
+        where V: blob::Validator
+    {
+        blob.field::<Option<OwnedPtr<Self, Z>>,_>(ValidateCellError::Next)?;
+        blob.field::<T,_>(ValidateCellError::Value)?;
+        unsafe { blob.assume_valid() }
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("cell")]
+pub enum ValidateCellError<Next: fmt::Debug, Value: fmt::Debug> {
+    Next(Next),
+    Value(Value),
+}
+
+unsafe impl<T, Z: Zone> Persist for Cell<T, Z>
+where T: Persist,
+{
+    type Persist = Cell<T::Persist, Z::Persist>;
+    type Error = <Self::Persist as blob::Validate>::Error;
+}
+
+#[derive(Debug)]
+pub struct CellValidator<'a, T: ValidateChildren<'a, Z>, Z: Zone> {
+    value: &'a T::Persist,
+    value_state: T::State,
+    next: Option<&'a OwnedPtr<Cell<T::Persist, Z::Persist>, Z::Persist>>,
+}
+
+unsafe impl<'a, T, Z: Zone> ValidateChildren<'a, Z> for Cell<T, Z>
+where T: ValidateChildren<'a, Z>,
+{
+    type State = Option<CellValidator<'a, T, Z>>;
+
+    fn validate_children(this: &'a Self::Persist) -> Self::State {
+        None
+    }
+
+    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<(), V::Error> {
+        loop { match state {
+            None => {
+                *state = Some(CellValidator {
+                    value: &this.value,
+                    value_state: T::validate_children(&this.value),
+                    next: this.next.as_ref(),
+                });
+            },
+            Some(state) => {
+                T::poll(&this.value, &mut state.value_state, validator)?;
+
+                if let Some(next_ptr) = state.next {
+                    if let Some(next_cell) = validator.validate_ptr::<Self>(next_ptr)? {
+                        state.value = &next_cell.value;
+                        state.value_state = T::validate_children(&state.value);
+                        state.next = next_cell.next.as_ref();
+                    } else {
+                        // While we're not at the end of the list, the validator doesn't need us to
+                        // validate the next cell, so we're done.
+                        break Ok(())
+                    }
+                } else {
+                    // There isn't another cell to validate, as we're at the end of the list
+                    break Ok(())
+                }
+            },
+        }}
+    }
+}
+
+impl<Z: Zone, T: Decode<Z>> Decode<Z> for Cell<T,Z> {
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test() {
+    }
+}
+
+/*
 #[derive(Debug)]
 #[repr(C)]
 pub struct LinkedList<T, Z: Zone> {
@@ -63,12 +158,6 @@ impl<T, Z: Zone> Default for LinkedList<T,Z> {
     }
 }
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct Cell<T, Z: Zone> {
-    value: T,
-    next: Option<OwnedPtr<Self, Z>>,
-}
 
 impl<T: Load<Z>, Z: Zone> Cell<T, Z> {
     pub fn get<'a>(self: Ref<'a, Self, Z>, mut n: usize) -> Option<&'a T>
@@ -340,3 +429,4 @@ mod tests {
         let _ = LinkedList::<u8, Pile>::default();
     }
 }
+*/

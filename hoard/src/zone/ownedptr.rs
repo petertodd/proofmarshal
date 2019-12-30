@@ -12,9 +12,10 @@ use core::ptr;
 
 use nonzero::NonZero;
 
-use crate::blob::*;
-use crate::load::*;
-use crate::save::*;
+use crate::marshal::blob::*;
+use crate::marshal::decode::*;
+use crate::marshal::load::*;
+use crate::marshal::PtrValidator;
 
 /// An owned pointer.
 ///
@@ -55,13 +56,11 @@ impl<T: ?Sized + Pointee, Z: Zone> BorrowMut<ValidPtr<T, Z>> for OwnedPtr<T, Z> 
 }
 
 impl<T: ?Sized + Pointee, Z: Zone> OwnedPtr<T, Z> {
-/*
     pub fn new(value: impl Take<T>) -> Self
-        where P: Default
+        where Z: Default
     {
-        P::allocator().alloc(value)
+        Z::alloc(value)
     }
-*/
 
     /// Creates a new `OwnedPtr` from a `ValidPtr`.
     ///
@@ -118,29 +117,37 @@ where T: fmt::Debug
 }
 
 
-impl<T: ?Sized + Persist, Z: Zone> Persist for OwnedPtr<T, Z> {
-    type Persist = OwnedPtr<T::Persist, Z::Persist>;
-    type Error = <ValidPtr<T,Z> as Persist>::Error;
+impl<T: ?Sized + Pointee, Z: Zone> Validate for OwnedPtr<T, Z>
+where T::Metadata: Validate,
+{
+    type Error = <ValidPtr<T, Z> as Validate>::Error;
 
-    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
-        let mut blob = blob.validate_struct();
-        blob.field::<ValidPtr<T,Z>,_>(identity)?;
+    fn validate<'a, V: Validator>(
+        mut blob: Cursor<'a, Self, V>,
+    ) -> Result<ValidBlob<'a, Self>, Error<Self::Error, V::Error>>
+    {
+        blob.field::<FatPtr<T,Z>,_>(identity)?;
         unsafe { blob.assume_valid() }
     }
 }
 
-unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> Validate<'a, Z> for OwnedPtr<T, Z>
-where T: Validate<'a, Z>
+unsafe impl<T: ?Sized + PersistPointee, Z: Zone> Persist for OwnedPtr<T, Z> {
+    type Persist = OwnedPtr<T::Persist, Z::Persist>;
+    type Error = <OwnedPtr<T::Persist, Z::Persist> as Validate>::Error;
+}
+
+unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> ValidateChildren<'a, Z> for OwnedPtr<T, Z>
+where T: ValidatePointeeChildren<'a, Z>
 {
     type State = super::validptr::ValidateState<'a, T::Persist, T::State>;
 
     fn validate_children(this: &'a OwnedPtr<T::Persist, Z::Persist>) -> Self::State {
-        <ValidPtr<T,Z> as Validate<'a, Z>>::validate_children(this)
+        <ValidPtr<T,Z> as ValidateChildren<'a, Z>>::validate_children(this)
     }
 
-    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<&'a Self, V::Error> {
-        <ValidPtr<T,Z> as Validate<'a, Z>>::poll(this, state, validator)?;
-        Ok(unsafe { mem::transmute(this) })
+    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<(), V::Error> {
+        <ValidPtr<T,Z> as ValidateChildren<'a, Z>>::poll(this, state, validator)?;
+        Ok(())
     }
 }
 

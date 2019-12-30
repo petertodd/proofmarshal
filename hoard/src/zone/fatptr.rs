@@ -1,17 +1,23 @@
 //! Raw, *unvalidated*, zone pointers.
 
-use core::cmp;
-use core::fmt;
-use core::hash;
-use core::mem;
+use std::alloc::Layout;
+use std::any::type_name;
+use std::cmp;
+use std::fmt;
+use std::hash;
+use std::mem;
 
+use thiserror::Error;
 use nonzero::NonZero;
 
-use super::*;
+use crate::coerce::TryCoerce;
+use crate::pointee::Pointee;
 
-use crate::load::*;
-use crate::save::*;
-use crate::blob::*;
+use crate::marshal::PtrValidator;
+use crate::marshal::blob;
+use crate::marshal::decode::*;
+use crate::marshal::load::PersistPointee;
+use super::Zone;
 
 /// A zone pointer with metadata. *Not* necessarily valid.
 #[repr(C)]
@@ -25,34 +31,73 @@ pub struct FatPtr<T: ?Sized + Pointee, Z: Zone> {
 
 unsafe impl<T: ?Sized + Pointee, Z: Zone> NonZero for FatPtr<T, Z> {}
 
+unsafe impl<T1, T2, Z1, Z2> TryCoerce<FatPtr<T2, Z2>> for FatPtr<T1, Z1>
+where T1: ?Sized + Pointee,
+      T2: ?Sized + Pointee<Metadata=T1::Metadata>,
+      Z1: Zone, Z2: Zone,
+      Z1::Ptr: TryCoerce<Z2::Ptr>,
+{
+    type Error = <Z1::Ptr as TryCoerce<Z2::Ptr>>::Error;
+
+    fn try_coerce_ptr(this: &Self) -> Result<*const FatPtr<T2, Z2>, Self::Error> {
+        Z1::Ptr::try_coerce_ptr(&this.raw)?;
+
+        assert_eq!(Layout::new::<Self>(), Layout::new::<FatPtr<T2, Z2>>());
+        Ok(this as *const _ as *const _)
+    }
+}
+
+impl<T: ?Sized + Pointee, Z: Zone> FatPtr<T, Z> {
+    pub fn cast<Y: Zone>(self) -> FatPtr<T, Y>
+        where Z::Ptr: Into<Y::Ptr>
+    {
+        FatPtr {
+            raw: self.raw.into(),
+            metadata: self.metadata,
+        }
+    }
+}
+
 /// Returned when validation of a `FatPtr` blob fails.
-#[derive(Debug, PartialEq, Eq)]
-pub enum ValidateFatPtrError<T, P> {
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum ValidateFatPtrError<T: fmt::Debug, P: fmt::Debug> {
+    #[error("invalid pointer: {0:?}")]
     Ptr(P),
+
+    #[error("invalid metadata: {0:?}")]
     Metadata(T),
 }
 
-impl<T: ?Sized + Persist, Z: Zone> Persist for FatPtr<T, Z> {
-    type Persist = FatPtr<T::Persist, Z::Persist>;
-    type Error = ValidateFatPtrError<<T::Metadata as Persist>::Error,
-                                     <Z::PersistPtr as Persist>::Error>;
+impl<T: ?Sized + Pointee, Z: Zone> blob::Validate for FatPtr<T, Z>
+where T::Metadata: blob::Validate,
+      Z::PersistPtr: blob::Validate,
+{
+    type Error = ValidateFatPtrError<<T::Metadata as blob::Validate>::Error,
+                                     <Z::PersistPtr as blob::Validate>::Error>;
 
-    fn validate_blob<B: BlobValidator<Self>>(blob: B) -> Result<B::Ok, B::Error> {
-        let mut blob = blob.validate_struct();
+    fn validate<V: blob::Validator>(mut blob: blob::Cursor<Self, V>)
+        -> Result<blob::ValidBlob<Self>, blob::Error<Self::Error, V::Error>>
+    {
         blob.field::<Z::PersistPtr, _>(ValidateFatPtrError::Ptr)?;
         blob.field::<T::Metadata, _>(ValidateFatPtrError::Metadata)?;
         unsafe { blob.assume_valid() }
     }
 }
 
-unsafe impl<'a, T: ?Sized + Persist, Z: Zone> Validate<'a, Z> for FatPtr<T,Z> {
+unsafe impl<T: ?Sized + PersistPointee, Z: Zone> Persist for FatPtr<T, Z> {
+    type Persist = FatPtr<T::Persist, Z::Persist>;
+    type Error = <FatPtr<T::Persist, Z::Persist> as blob::Validate>::Error;
+}
+
+unsafe impl<'a, T: ?Sized + PersistPointee, Z: Zone, Y> ValidateChildren<'a, Y> for FatPtr<T, Z> {
     type State = ();
     fn validate_children(this: &Self::Persist) -> () {}
-    fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, _: &mut (), _: &V) -> Result<&'a Self, V::Error> {
-        Ok(unsafe { mem::transmute(this) })
+    fn poll<V: PtrValidator<Y>>(_: &'a Self::Persist, _: &mut (), _: &V) -> Result<(), V::Error> {
+        Ok(())
     }
 }
-impl<T: ?Sized + Persist, Z: Zone> Decode<Z> for FatPtr<T,Z> {}
+impl<T: ?Sized + PersistPointee, Z: Zone, Y> Decode<Y> for FatPtr<T, Z> {}
+
 
 // standard impls
 
