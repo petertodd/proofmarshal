@@ -1,13 +1,4 @@
-use core::mem::{self, MaybeUninit};
-
-use crate::pointee::Pointee;
-use crate::zone::{Zone, ValidPtr, FatPtr};
-
-pub mod impls;
-
-mod writeblob;
-pub use self::writeblob::WriteBlob;
-
+/*
 pub trait Encoded<Z> : Pointee<Metadata=()> {
     type Encoded : Pointee<Metadata=()>;
 }
@@ -123,4 +114,5 @@ impl Dumper<!> for Vec<u8> {
         f: impl FnOnce(Self::WriteBlob) -> Result<Self::WriteBlobOk, Self::WriteBlobError>
     ) -> Result<(Self, Self::PersistPtr), Self::Error>;
 }
+*/
 */

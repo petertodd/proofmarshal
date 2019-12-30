@@ -1,4 +1,6 @@
-use core::num;
+use std::mem;
+use std::num;
+use std::slice;
 
 use thiserror::Error;
 
@@ -19,6 +21,15 @@ macro_rules! impl_all_valid {
         }
 
         crate::impl_decode_for_primitive!($t);
+        crate::impl_encode_for_primitive!($t, |this, dst| {
+            let src = unsafe { slice::from_raw_parts(
+                this as *const _ as *const u8,
+                mem::size_of::<$t>()
+            )};
+
+            dst.write_bytes(src)?
+               .finish()
+        });
     )+}
 }
 
@@ -71,6 +82,16 @@ macro_rules! impl_nonzero {
         }
 
         crate::impl_decode_for_primitive!($t);
+
+        crate::impl_encode_for_primitive!($t, |this, dst| {
+            let src = unsafe { slice::from_raw_parts(
+                this as *const _ as *const u8,
+                mem::size_of::<$t>()
+            )};
+
+            dst.write_bytes(src)?
+               .finish()
+        });
     )+}
 }
 

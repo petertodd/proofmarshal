@@ -1,5 +1,6 @@
 use std::any::type_name;
 use std::convert;
+use std::mem;
 
 use super::*;
 
@@ -10,8 +11,8 @@ use crate::marshal::blob::*;
 impl<T: 'static + NonZero + ValidateBlob> ValidateBlob for Option<T> {
     type Error = T::Error;
 
-    fn validate<'a, V: PaddingValidator>(mut blob: Cursor<'a, Self, V>)
-        -> Result<ValidBlob<'a, Self>, blob::Error<Self::Error, V::Error>>
+    fn validate<'a, V: PaddingValidator>(mut blob: BlobCursor<'a, Self, V>)
+        -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
     {
         if blob.iter().all(|b| *b == 0) {
             // None variant
@@ -53,6 +54,42 @@ impl<Z, T> Decode<Z> for Option<T>
 where T: NonZero + Decode<Z>,
       T::Persist: NonZero
 {}
+
+impl<Z, T: NonZero + Encoded<Z>> Encoded<Z> for Option<T>
+where T::Encoded: NonZero
+{
+    type Encoded = Option<T::Encoded>;
+}
+
+impl<'a, Z, T: NonZero + Encode<'a, Z>> Encode<'a, Z> for Option<T>
+where T::Encoded: NonZero
+{
+    type State = Option<T::State>;
+
+    fn save_children(&'a self) -> Self::State {
+        self.as_ref().map(T::save_children)
+    }
+
+    fn poll<D: Dumper<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Error> {
+        match (self, state) {
+            (Some(value), Some(state)) => value.poll(state, dumper),
+            (None, None) => Ok(dumper),
+            _ => panic!("invalid state"),
+        }
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+        match (self, state) {
+            (Some(value), Some(state)) => value.encode_blob(state, dst),
+            (None, None) => {
+                let zeros = [0u8; mem::size_of::<Self::Encoded>()];
+                dst.write_bytes(&zeros)?
+                   .finish()
+            },
+            _ => panic!("invalid state"),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

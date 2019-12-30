@@ -5,8 +5,6 @@ use std::ptr;
 
 use super::*;
 
-use crate::marshal::Primitive;
-
 pub trait WriteBlob : Sized {
     type Ok;
     type Error;
@@ -14,6 +12,7 @@ pub trait WriteBlob : Sized {
     fn write_bytes(self, src: &[u8]) -> Result<Self, Self::Error>;
     fn finish(self) -> Result<Self::Ok, Self::Error>;
 
+    /*
     fn write<'a, Z: Zone, T: Encode<'a, Z>>(self, value: &T, state: &T::State) -> Result<Self, Self::Error> {
         value.encode_blob(
             state,
@@ -25,6 +24,7 @@ pub trait WriteBlob : Sized {
         let state = value.save_children();
         self.write(value, &state)
     }
+    */
 
     /// Writes padding bytes.
     fn write_padding(mut self, len: usize) -> Result<Self, Self::Error> {

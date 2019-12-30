@@ -16,6 +16,9 @@ use thiserror::Error;
 pub mod padding;
 pub use self::padding::PaddingValidator;
 
+mod writeblob;
+pub use self::writeblob::WriteBlob;
+
 use crate::bytes::Bytes;
 
 /*
