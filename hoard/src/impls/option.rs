@@ -7,10 +7,10 @@ use nonzero::NonZero;
 
 use crate::marshal::blob::*;
 
-impl<T: 'static + NonZero + Validate> Validate for Option<T> {
+impl<T: 'static + NonZero + ValidateBlob> ValidateBlob for Option<T> {
     type Error = T::Error;
 
-    fn validate<'a, V: Validator>(mut blob: Cursor<'a, Self, V>)
+    fn validate<'a, V: PaddingValidator>(mut blob: Cursor<'a, Self, V>)
         -> Result<ValidBlob<'a, Self>, blob::Error<Self::Error, V::Error>>
     {
         if blob.iter().all(|b| *b == 0) {
@@ -66,13 +66,13 @@ mod tests {
     #[test]
     fn test_validate() {
         let blob = Blob::<Option<NonZeroU8>>::try_from(&[0][..]).unwrap();
-        let valid = Validate::validate(blob.into_cursor()).unwrap().to_ref();
+        let valid = ValidateBlob::validate(blob.into_cursor()).unwrap().to_ref();
         assert!(valid.is_none());
 
         for i in 1 .. 255 {
             let buf = [i];
             let blob = Blob::<Option<NonZeroU8>>::try_from(&buf[..]).unwrap();
-            let valid = Validate::validate(blob.into_cursor()).unwrap().to_ref();
+            let valid = ValidateBlob::validate(blob.into_cursor()).unwrap().to_ref();
             assert_eq!(*valid, Some(NonZeroU8::new(i).unwrap()));
         }
     }

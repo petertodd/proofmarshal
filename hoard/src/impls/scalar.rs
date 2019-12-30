@@ -8,11 +8,11 @@ use super::*;
 
 macro_rules! impl_all_valid {
     ($($t:ty,)+) => {$(
-        impl blob::Validate for $t {
+        impl ValidateBlob for $t {
             type Error = !;
-            fn validate<'a, V>(blob: blob::Cursor<'a, Self, V>)
-                -> Result<blob::ValidBlob<'a, Self>, blob::Error<Self::Error, V::Error>>
-                where V: blob::Validator
+            fn validate<'a, V>(blob: BlobCursor<'a, Self, V>)
+                -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
+                where V: PaddingValidator
             {
                 unsafe { blob.assume_valid() }
             }
@@ -33,14 +33,14 @@ impl_all_valid! {
 #[error("invalid bool blob")]
 pub struct ValidateBoolError;
 
-impl blob::Validate for bool {
+impl ValidateBlob for bool {
     type Error = ValidateBoolError;
-    fn validate<'a, V>(blob: blob::Cursor<'a, Self, V>) -> Result<blob::ValidBlob<'a, Self>, blob::Error<Self::Error, V::Error>>
-        where V: blob::Validator
+    fn validate<'a, V>(blob: BlobCursor<'a, Self, V>) -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
+        where V: PaddingValidator
     {
         match blob[0] {
             0 | 1 => unsafe { blob.assume_valid() },
-            _ => Err(blob::Error::Error(ValidateBoolError)),
+            _ => Err(BlobError::Error(ValidateBoolError)),
         }
     }
 }
@@ -54,11 +54,11 @@ pub struct ValidateNonZeroIntError;
 
 macro_rules! impl_nonzero {
     ($($t:ty,)+) => {$(
-        impl blob::Validate for $t {
+        impl ValidateBlob for $t {
             type Error = ValidateNonZeroIntError;
-            fn validate<'a, V>(blob: blob::Cursor<'a, Self, V>)
-                -> Result<blob::ValidBlob<'a, Self>, blob::Error<Self::Error, V::Error>>
-                where V: blob::Validator
+            fn validate<'a, V>(blob: BlobCursor<'a, Self, V>)
+                -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
+                where V: PaddingValidator
             {
                 blob.validate_bytes(|blob| {
                     if blob.iter().all(|b| *b == 0) {

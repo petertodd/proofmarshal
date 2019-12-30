@@ -13,7 +13,7 @@ use nonzero::NonZero;
 use crate::pointee::Pointee;
 
 use crate::marshal::PtrValidator;
-use crate::marshal::blob;
+use crate::marshal::blob::*;
 use crate::marshal::decode::*;
 use crate::marshal::load::*;
 
@@ -77,13 +77,13 @@ where Z::Ptr: fmt::Pointer
 }
 */
 
-impl<T: ?Sized + Pointee, Z: Zone> blob::Validate for ValidPtr<T, Z>
-where T::Metadata: blob::Validate
+impl<T: ?Sized + Pointee, Z: Zone> ValidateBlob for ValidPtr<T, Z>
+where T::Metadata: ValidateBlob
 {
-    type Error = <FatPtr<T,Z> as blob::Validate>::Error;
+    type Error = <FatPtr<T,Z> as ValidateBlob>::Error;
 
-    fn validate<'a, V: blob::Validator>(mut blob: blob::Cursor<'a, Self, V>)
-        -> Result<blob::ValidBlob<'a, Self>, blob::Error<Self::Error, V::Error>>
+    fn validate<'a, V: PaddingValidator>(mut blob: BlobCursor<'a, Self, V>)
+        -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
     {
         blob.field::<FatPtr<T,Z>,_>(identity)?;
         unsafe { blob.assume_valid() }
@@ -93,7 +93,7 @@ where T::Metadata: blob::Validate
 
 unsafe impl<T: ?Sized + PersistPointee, Z: Zone> Persist for ValidPtr<T, Z> {
     type Persist = ValidPtr<T::Persist, Z::Persist>;
-    type Error = <ValidPtr<T::Persist, Z::Persist> as blob::Validate>::Error;
+    type Error = <ValidPtr<T::Persist, Z::Persist> as ValidateBlob>::Error;
 }
 
 #[derive(Debug)]

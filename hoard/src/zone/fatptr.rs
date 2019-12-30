@@ -14,7 +14,7 @@ use crate::coerce::TryCoerce;
 use crate::pointee::Pointee;
 
 use crate::marshal::PtrValidator;
-use crate::marshal::blob;
+use crate::marshal::blob::*;
 use crate::marshal::decode::*;
 use crate::marshal::load::PersistPointee;
 use super::Zone;
@@ -68,15 +68,15 @@ pub enum ValidateFatPtrError<T: fmt::Debug, P: fmt::Debug> {
     Metadata(T),
 }
 
-impl<T: ?Sized + Pointee, Z: Zone> blob::Validate for FatPtr<T, Z>
-where T::Metadata: blob::Validate,
-      Z::PersistPtr: blob::Validate,
+impl<T: ?Sized + Pointee, Z: Zone> ValidateBlob for FatPtr<T, Z>
+where T::Metadata: ValidateBlob,
+      Z::PersistPtr: ValidateBlob,
 {
-    type Error = ValidateFatPtrError<<T::Metadata as blob::Validate>::Error,
-                                     <Z::PersistPtr as blob::Validate>::Error>;
+    type Error = ValidateFatPtrError<<T::Metadata as ValidateBlob>::Error,
+                                     <Z::PersistPtr as ValidateBlob>::Error>;
 
-    fn validate<V: blob::Validator>(mut blob: blob::Cursor<Self, V>)
-        -> Result<blob::ValidBlob<Self>, blob::Error<Self::Error, V::Error>>
+    fn validate<V: PaddingValidator>(mut blob: BlobCursor<Self, V>)
+        -> Result<ValidBlob<Self>, BlobError<Self::Error, V::Error>>
     {
         blob.field::<Z::PersistPtr, _>(ValidateFatPtrError::Ptr)?;
         blob.field::<T::Metadata, _>(ValidateFatPtrError::Metadata)?;
@@ -86,7 +86,7 @@ where T::Metadata: blob::Validate,
 
 unsafe impl<T: ?Sized + PersistPointee, Z: Zone> Persist for FatPtr<T, Z> {
     type Persist = FatPtr<T::Persist, Z::Persist>;
-    type Error = <FatPtr<T::Persist, Z::Persist> as blob::Validate>::Error;
+    type Error = <FatPtr<T::Persist, Z::Persist> as ValidateBlob>::Error;
 }
 
 unsafe impl<'a, T: ?Sized + PersistPointee, Z: Zone, Y> ValidateChildren<'a, Y> for FatPtr<T, Z> {

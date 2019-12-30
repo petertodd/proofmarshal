@@ -117,14 +117,14 @@ where T: fmt::Debug
 }
 
 
-impl<T: ?Sized + Pointee, Z: Zone> Validate for OwnedPtr<T, Z>
-where T::Metadata: Validate,
+impl<T: ?Sized + Pointee, Z: Zone> ValidateBlob for OwnedPtr<T, Z>
+where T::Metadata: ValidateBlob,
 {
-    type Error = <ValidPtr<T, Z> as Validate>::Error;
+    type Error = <ValidPtr<T, Z> as ValidateBlob>::Error;
 
-    fn validate<'a, V: Validator>(
-        mut blob: Cursor<'a, Self, V>,
-    ) -> Result<ValidBlob<'a, Self>, Error<Self::Error, V::Error>>
+    fn validate<'a, V: PaddingValidator>(
+        mut blob: BlobCursor<'a, Self, V>,
+    ) -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
     {
         blob.field::<FatPtr<T,Z>,_>(identity)?;
         unsafe { blob.assume_valid() }
@@ -133,7 +133,7 @@ where T::Metadata: Validate,
 
 unsafe impl<T: ?Sized + PersistPointee, Z: Zone> Persist for OwnedPtr<T, Z> {
     type Persist = OwnedPtr<T::Persist, Z::Persist>;
-    type Error = <OwnedPtr<T::Persist, Z::Persist> as Validate>::Error;
+    type Error = <OwnedPtr<T::Persist, Z::Persist> as ValidateBlob>::Error;
 }
 
 unsafe impl<'a, Z: Zone, T: ?Sized + Pointee> ValidateChildren<'a, Z> for OwnedPtr<T, Z>

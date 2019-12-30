@@ -10,7 +10,7 @@ use nonzero::NonZero;
 use owned::{Take, IntoOwned};
 
 use crate::pointee::Pointee;
-use crate::marshal::blob::Validate;
+use crate::marshal::blob::ValidateBlob;
 use crate::marshal::load::Load;
 
 pub mod refs;
@@ -30,7 +30,7 @@ pub mod never;
 pub trait Zone : Sized + fmt::Debug {
     type Ptr : NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
     type Persist : 'static + Zone<Ptr=Self::PersistPtr, PersistPtr=Self::PersistPtr>;
-    type PersistPtr : 'static + Validate + NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
+    type PersistPtr : 'static + ValidateBlob + NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
 
     type Error : std::error::Error;
 

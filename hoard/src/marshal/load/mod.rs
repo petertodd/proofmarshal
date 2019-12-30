@@ -7,16 +7,16 @@ use owned::IntoOwned;
 
 use crate::pointee::Pointee;
 
-use super::blob;
+use super::blob::*;
 use super::decode::*;
 use super::PtrValidator;
 
 /// `Persist`, but for unsized types.
 ///
 /// Automatically implemented for all `T: Persist`.
-pub unsafe trait PersistPointee : Pointee<Metadata: blob::Validate> + IntoOwned {
+pub unsafe trait PersistPointee : Pointee<Metadata: ValidateBlob> + IntoOwned {
     type Persist : 'static + ?Sized + Pointee<Metadata=Self::Metadata, LayoutError=Self::LayoutError>
-                                    + blob::Validate<Error=<Self as PersistPointee>::Error>;
+                                    + ValidateBlob<Error=<Self as PersistPointee>::Error>;
 
     type Error : 'static + std::error::Error + Send + Sync;
 

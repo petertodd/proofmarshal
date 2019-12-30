@@ -1,6 +1,6 @@
-//! Blobs and blob validation.
+//! Padding validation
 
-pub unsafe trait Validator : Copy {
+pub unsafe trait PaddingValidator : Copy {
     type Error;
     fn validate_padding(&self, buf: &[u8]) -> Result<(), Self::Error>;
 }
@@ -11,7 +11,7 @@ pub struct CheckPadding;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IgnorePadding;
 
-unsafe impl Validator for IgnorePadding {
+unsafe impl PaddingValidator for IgnorePadding {
     type Error = !;
 
     #[inline(always)]
@@ -24,7 +24,7 @@ unsafe impl Validator for IgnorePadding {
 #[non_exhaustive]
 pub struct PaddingError;
 
-unsafe impl Validator for CheckPadding {
+unsafe impl PaddingValidator for CheckPadding {
     type Error = PaddingError;
 
     #[inline(always)]
@@ -36,7 +36,7 @@ unsafe impl Validator for CheckPadding {
     }
 }
 
-unsafe impl<T: Validator> Validator for &'_ T {
+unsafe impl<T: PaddingValidator> PaddingValidator for &'_ T {
     type Error = T::Error;
 
     #[inline(always)]

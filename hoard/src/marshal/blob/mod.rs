@@ -14,7 +14,7 @@ use std::slice;
 use thiserror::Error;
 
 pub mod padding;
-pub use self::padding::Validator;
+pub use self::padding::PaddingValidator;
 
 use crate::bytes::Bytes;
 
@@ -74,12 +74,12 @@ impl<'a, T: ?Sized> Blob<'a, T> {
         ValidBlob(self)
     }
 
-    pub fn into_cursor(self) -> Cursor<'a, T, padding::CheckPadding> {
-        Cursor::new(self, padding::CheckPadding)
+    pub fn into_cursor(self) -> BlobCursor<'a, T, padding::CheckPadding> {
+        BlobCursor::new(self, padding::CheckPadding)
     }
 
-    pub fn into_cursor_ignore_padding(self) -> Cursor<'a, T, padding::IgnorePadding> {
-        Cursor::new(self, padding::IgnorePadding)
+    pub fn into_cursor_ignore_padding(self) -> BlobCursor<'a, T, padding::IgnorePadding> {
+        BlobCursor::new(self, padding::IgnorePadding)
     }
 }
 
@@ -104,33 +104,33 @@ impl<'a, T> From<&'a Bytes<T>> for Blob<'a, T> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Error<E, P> {
+pub enum BlobError<E, P> {
     Error(E),
     Padding(P),
 }
 
-impl<E, P> From<E> for Error<E, P> {
+impl<E, P> From<E> for BlobError<E, P> {
     fn from(err: E) -> Self {
-        Error::Error(err)
+        BlobError::Error(err)
     }
 }
 
-impl<E,P> Error<E,P> {
-    pub fn map<F>(self, f: impl FnOnce(E) -> F) -> Error<F, P> {
+impl<E,P> BlobError<E,P> {
+    pub fn map<F>(self, f: impl FnOnce(E) -> F) -> BlobError<F, P> {
         match self {
-            Error::Padding(p) => Error::Padding(p),
-            Error::Error(e) => Error::Error(f(e)),
+            BlobError::Padding(p) => BlobError::Padding(p),
+            BlobError::Error(e) => BlobError::Error(f(e)),
         }
     }
 }
 
-pub struct Cursor<'a, T: ?Sized, P> {
+pub struct BlobCursor<'a, T: ?Sized, P> {
     padding_validator: P,
     blob: Blob<'a, T>,
     offset: usize,
 }
 
-impl<'a, T, P> ops::Deref for Cursor<'a, T, P> {
+impl<'a, T, P> ops::Deref for BlobCursor<'a, T, P> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -138,20 +138,20 @@ impl<'a, T, P> ops::Deref for Cursor<'a, T, P> {
     }
 }
 
-impl<'a, T: ?Sized, P> Cursor<'a, T, P> {
+impl<'a, T: ?Sized, P> BlobCursor<'a, T, P> {
     fn new(blob: Blob<'a, T>, padding_validator: P) -> Self {
         Self { padding_validator, blob, offset: 0 }
     }
 }
 
-pub trait Validate {
+pub trait ValidateBlob {
     type Error : 'static + std::error::Error + Send + Sync;
-    fn validate<'a, V>(blob: Cursor<'a, Self, V>) -> Result<ValidBlob<'a, Self>, Error<Self::Error, V::Error>>
-        where V: Validator;
+    fn validate<'a, V>(blob: BlobCursor<'a, Self, V>) -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
+        where V: PaddingValidator;
 }
 
-impl<'a, T: Validate, V: Validator> Cursor<'a, T, V> {
-    pub fn field<U: Validate, F>(&mut self, f: F) -> Result<ValidBlob<'a, U>, Error<T::Error, V::Error>>
+impl<'a, T: ValidateBlob, V: PaddingValidator> BlobCursor<'a, T, V> {
+    pub fn field<U: ValidateBlob, F>(&mut self, f: F) -> Result<ValidBlob<'a, U>, BlobError<T::Error, V::Error>>
         where F: FnOnce(U::Error) -> T::Error
     {
         unsafe {
@@ -159,23 +159,23 @@ impl<'a, T: Validate, V: Validator> Cursor<'a, T, V> {
         }
     }
 
-    pub unsafe fn assume_valid(self) -> Result<ValidBlob<'a, T>, Error<T::Error, V::Error>> {
+    pub unsafe fn assume_valid(self) -> Result<ValidBlob<'a, T>, BlobError<T::Error, V::Error>> {
         Ok(self.blob.assume_valid())
     }
 
-    pub unsafe fn validate_padding(self) -> Result<ValidBlob<'a, T>, Error<T::Error, V::Error>> {
+    pub unsafe fn validate_padding(self) -> Result<ValidBlob<'a, T>, BlobError<T::Error, V::Error>> {
         todo!()
     }
 
     pub fn validate_bytes(self, f: impl FnOnce(Blob<'a, T>) -> Result<ValidBlob<'a, T>, T::Error>)
-        -> Result<ValidBlob<'a, T>, Error<T::Error, V::Error>>
+        -> Result<ValidBlob<'a, T>, BlobError<T::Error, V::Error>>
     {
-        f(self.blob).map_err(Error::Error)
+        f(self.blob).map_err(BlobError::Error)
     }
 }
 
-impl<'a, T: ?Sized + Validate, V: Validator> Cursor<'a, T, V> {
-    unsafe fn field_unchecked<U: Validate, F>(&mut self, size: usize, f: F) -> Result<ValidBlob<'a, U>, Error<T::Error, V::Error>>
+impl<'a, T: ?Sized + ValidateBlob, V: PaddingValidator> BlobCursor<'a, T, V> {
+    unsafe fn field_unchecked<U: ValidateBlob, F>(&mut self, size: usize, f: F) -> Result<ValidBlob<'a, U>, BlobError<T::Error, V::Error>>
         where F: FnOnce(U::Error) -> T::Error
     {
         assert_eq!(mem::align_of::<U>(), 1);
@@ -186,12 +186,12 @@ impl<'a, T: ?Sized + Validate, V: Validator> Cursor<'a, T, V> {
         self.offset += mem::size_of::<U>();
         assert!(self.offset <= size, "overflow");
 
-        let field = Cursor::new(Blob::from_ptr(field_ptr), self.padding_validator);
+        let field = BlobCursor::new(Blob::from_ptr(field_ptr), self.padding_validator);
 
         match U::validate(field) {
             Ok(blob) => Ok(blob),
-            Err(Error::Padding(p)) => Err(Error::Padding(p)),
-            Err(Error::Error(u)) => Err(Error::Error(f(u))),
+            Err(BlobError::Padding(p)) => Err(BlobError::Padding(p)),
+            Err(BlobError::Error(u)) => Err(BlobError::Error(f(u))),
         }
     }
 }

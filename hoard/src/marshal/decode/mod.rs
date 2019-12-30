@@ -9,7 +9,7 @@ use crate::pointee::Pointee;
 use super::PtrValidator;
 
 pub unsafe trait Persist : Sized {
-    type Persist : 'static + blob::Validate<Error=<Self as Persist>::Error>;
+    type Persist : 'static + blob::ValidateBlob<Error=<Self as Persist>::Error>;
     type Error : 'static + std::error::Error + Send + Sync;
 
     unsafe fn assume_valid(this: &Self::Persist) -> Self {
@@ -47,7 +47,7 @@ macro_rules! impl_decode_for_primitive {
     ($t:ty) => {
         unsafe impl crate::marshal::decode::Persist for $t {
             type Persist = Self;
-            type Error = <Self as crate::marshal::blob::Validate>::Error;
+            type Error = <Self as crate::marshal::blob::ValidateBlob>::Error;
         }
 
         unsafe impl<'a, Z> crate::marshal::decode::ValidateChildren<'a, Z> for $t {
