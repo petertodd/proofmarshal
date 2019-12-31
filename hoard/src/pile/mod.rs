@@ -672,7 +672,7 @@ where Z: PileZone<'p, 'v>
         self.buf.reserve(size);
 
         let dst = unsafe { slice::from_raw_parts_mut(
-            self.buf.as_mut_ptr().offset(self.buf.len() as isize) as *mut MaybeUninit<u8>,
+            self.buf.as_mut_ptr().add(self.buf.len()) as *mut MaybeUninit<u8>,
             size
         )};
         f(io::Cursor::new(dst)).unwrap();

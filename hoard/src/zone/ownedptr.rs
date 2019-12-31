@@ -94,7 +94,12 @@ impl<T: ?Sized + Pointee, Z: Zone> Drop for OwnedPtr<T, Z> {
             let this = ptr::read(self);
             Z::try_take_dirty_unsized(this, |this| {
                 match this {
-                    Ok(value) => ptr::drop_in_place(value),
+                    Ok(value) => {
+                        // value is a &mut ManuallyDrop<T>, so we need to coerce it first or
+                        // drop_in_place won't actually do anything
+                        let value: &mut T = value;
+                        ptr::drop_in_place(value)
+                    }
                     Err(_persist_ptr) => (),
                 }
             })

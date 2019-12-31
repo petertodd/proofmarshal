@@ -1,6 +1,7 @@
 use std::convert;
 use std::fmt;
-use std::mem;
+use std::mem::{self, ManuallyDrop};
+use std::ptr;
 
 use crate::prelude::*;
 use crate::zone::FatPtr;
@@ -101,9 +102,26 @@ pub struct Cell<T, Z: Zone> {
     next: Option<OwnedPtr<Self, Z>>,
 }
 
+impl<T, Z: Zone> Drop for Cell<T,Z> {
+    fn drop(&mut self) {
+        // Need to implement drop ourselves because Rust's default drop will blow the stack.
+        let mut next = self.next.take();
+        while let Some(next_ptr) = next.take() {
+            if let Ok((_, new_next)) = Z::try_take_dirty(next_ptr).map(Cell::into_raw_parts) {
+                next = new_next;
+            }
+        }
+    }
+}
+
 impl<T, Z: Zone> Cell<T, Z> {
     pub fn new(value: T, next: Option<OwnedPtr<Self, Z>>) -> Self {
         Self { value, next }
+    }
+
+    pub fn into_raw_parts(self) -> (T, Option<OwnedPtr<Self, Z>>) {
+        let this = ManuallyDrop::new(self);
+        unsafe { (ptr::read(&this.value), ptr::read(&this.next)) }
     }
 }
 
@@ -292,8 +310,14 @@ pub fn test_encode<'p,'v>(
     pile.encode_dirty(list)
 }
 
+pub fn test_drop<'p,'v>(
+    _list: LinkedList::<LinkedList<u8, TryPileMut<'p,'v>>, TryPileMut<'p,'v>>
+)
+{
+}
+
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::pile::*;
 
@@ -316,6 +340,18 @@ mod tests {
                      // tip
                      55,0,0,0,0,0,0,0,
                    ][..]);
+    }
+
+    #[test]
+    pub fn big_linkedlist_u64_encode() {
+        let pile = &TryPileMut::default();
+        let mut l = LinkedList::<Le<u64>, TryPileMut>::new();
+
+        for i in 0 .. 100_000 {
+            l.push_front(i.into(), pile);
+        }
+
+        assert_eq!(pile.encode_dirty(&l).len(), 8 + 1_600_000);
     }
 
     #[test]

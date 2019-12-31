@@ -50,11 +50,10 @@ pub trait Zone : Sized + fmt::Debug {
         where T: fmt::Debug,
               P: Borrow<ValidPtr<T, Self>>,
     {
-        let ptr = ptr.borrow();
-        f.debug_struct(type_name::<P>())
-            .field("raw", &ptr.raw)
-            .field("metadata", &ptr.metadata)
-            .finish()
+        match Self::try_get_dirty(ptr.borrow()) {
+            Ok(r) => r.fmt(f),
+            Err(fatptr) => fmt::Debug::fmt(&fatptr, f),
+        }
     }
 
 
