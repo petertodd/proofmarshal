@@ -30,6 +30,8 @@ macro_rules! impl_all_valid {
             dst.write_bytes(src)?
                .finish()
         });
+
+        impl Primitive for $t {}
     )+}
 }
 
@@ -92,6 +94,8 @@ macro_rules! impl_nonzero {
             dst.write_bytes(src)?
                .finish()
         });
+
+        impl Primitive for $t {}
     )+}
 }
 

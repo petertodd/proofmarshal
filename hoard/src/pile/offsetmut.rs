@@ -68,8 +68,11 @@ unsafe impl Persist for OffsetMut<'_, '_> {
 
 unsafe impl<'a, Z> ValidateChildren<'a, Z> for OffsetMut<'_, '_> {
     type State = ();
+
+    #[inline(always)]
     fn validate_children(_: &Offset<'static, 'static>) -> () {}
 
+    #[inline(always)]
     fn poll<V: PtrValidator<Z>>(this: &Self::Persist, _: &mut (), _: &V) -> Result<(), V::Error> {
         Ok(())
     }
@@ -133,6 +136,7 @@ impl<'p,'v> OffsetMut<'p,'v> {
                 }
 
                 impl Drop for DeallocOnDrop {
+                    #[inline(always)]
                     fn drop(&mut self) {
                         if self.layout.size() > 0 {
                             unsafe { std::alloc::dealloc(self.ptr, self.layout) }

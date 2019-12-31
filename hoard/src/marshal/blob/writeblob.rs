@@ -3,7 +3,8 @@ use std::io::Cursor;
 use std::mem::{self, MaybeUninit};
 use std::ptr;
 
-use super::*;
+use crate::zone::Zone;
+use super::{*, super::encode::Encode};
 
 pub trait WriteBlob : Sized {
     type Ok;
@@ -12,21 +13,22 @@ pub trait WriteBlob : Sized {
     fn write_bytes(self, src: &[u8]) -> Result<Self, Self::Error>;
     fn finish(self) -> Result<Self::Ok, Self::Error>;
 
-    /*
-    fn write<'a, Z: Zone, T: Encode<'a, Z>>(self, value: &T, state: &T::State) -> Result<Self, Self::Error> {
+    #[inline(always)]
+    fn write<'a, Y, T: Encode<'a, Y>>(self, value: &T, state: &T::State) -> Result<Self, Self::Error> {
         value.encode_blob(
             state,
             FieldWriter::new(self, mem::size_of::<T::Encoded>()),
         )
     }
 
-    fn write_primitive<T: Primitive>(self, value: &T) -> Result<Self, Self::Error> {
-        let state = value.save_children();
+    #[inline(always)]
+    fn write_primitive<'a, T: Encode<'a, !>>(self, value: &'a T) -> Result<Self, Self::Error> {
+        let state = value.make_encode_state();
         self.write(value, &state)
     }
-    */
 
     /// Writes padding bytes.
+    #[inline(always)]
     fn write_padding(mut self, len: usize) -> Result<Self, Self::Error> {
         for i in 0 .. len {
             self = self.write_bytes(&[0])?;

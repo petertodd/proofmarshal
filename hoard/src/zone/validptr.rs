@@ -1,21 +1,24 @@
 use super::*;
 
-use core::convert::identity;
-use core::cmp;
-use core::fmt;
-use core::hash;
-use core::mem;
-use core::ops;
-use core::marker::PhantomData;
+use std::any::type_name;
+use std::cmp;
+use std::convert::identity;
+use std::fmt;
+use std::hash;
+use std::marker::PhantomData;
+use std::mem;
+use std::ops;
 
 use nonzero::NonZero;
 
 use crate::pointee::Pointee;
 
-use crate::marshal::PtrValidator;
+use crate::marshal::{PtrValidator, Dumper};
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;
+use crate::marshal::encode::*;
 use crate::marshal::load::*;
+use crate::marshal::save::*;
 
 /// Wrapper around a `FatPtr` guaranteeing that the target of the pointer is valid.
 ///
@@ -58,13 +61,13 @@ impl<T: ?Sized + Pointee, Z: Zone> ValidPtr<T, Z> {
     }
 }
 
-/*
 // standard impls
 impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for ValidPtr<T, Z>
 where T: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Z::fmt_debug_valid_ptr(self, f)
+        //Z::fmt_debug_valid_ptr(self, f)
+        todo!()
     }
 }
 
@@ -75,7 +78,6 @@ where Z::Ptr: fmt::Pointer
         fmt::Pointer::fmt(&self.0, f)
     }
 }
-*/
 
 impl<T: ?Sized + Pointee, Z: Zone> ValidateBlob for ValidPtr<T, Z>
 where T::Metadata: ValidateBlob
@@ -142,10 +144,14 @@ where T: ValidatePointeeChildren<'a, Z>
 impl<Z: Zone, T: ?Sized + Load<Z>> Decode<Z> for ValidPtr<T,Z> {
 }
 
-/*
-/// State used when saving a `ValidPtr`.
+impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> Encoded<Y> for ValidPtr<T,Z>
+where T: Saved<Y>
+{
+    type Encoded = ValidPtr<T::Saved, Y>;
+}
+
 #[derive(Debug)]
-pub enum SaveState<'a, T: ?Sized + Save<'a, Y>, Z: Zone, Y: Zone> {
+pub enum EncodeState<'a, T: ?Sized + Save<'a, Y>, Z: Zone, Y: Zone> {
     /// Initial state; `encode_poll()` has not been called.
     Initial(&'a ValidPtr<T, Z>),
 
@@ -157,59 +163,48 @@ pub enum SaveState<'a, T: ?Sized + Save<'a, Y>, Z: Zone, Y: Zone> {
 
     /// We've finished encoding the value (or never needed too) and now have a pointer that needs
     /// encoding.
-    Done(FatPtr<T::Saved, Y::Persist>),
+    Done(Y::PersistPtr),
 }
 
-impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> Encoded<Y> for ValidPtr<T,Z>
-where T: Saved<Y>
-{
-    type Encoded = ValidPtr<T::Saved, Y>;
-}
-
-impl<'a, T: 'a + ?Sized + Pointee, Z: 'a + Zone, Y: Zone> Encode<'a, Y> for ValidPtr<T, Z>
+impl<'a, T: 'a + ?Sized + Pointee, Z: 'a + Zone, Y: Zone> Encode<'a, Y> for ValidPtr<T,Z>
 where T: Save<'a, Y>,
       Z: SavePtr<Y>,
 {
-    type State = SaveState<'a, T, Z, Y>;
+    type State = EncodeState<'a, T, Z, Y>;
 
-    fn save_children(&'a self) -> Self::State {
-        SaveState::Initial(self)
+    fn make_encode_state(&'a self) -> Self::State {
+        EncodeState::Initial(self)
     }
 
-    fn poll<D: Dumper<Y>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Error> {
+    fn encode_poll<D: Dumper<Y>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Error> {
         loop {
             *state = match state {
-                SaveState::Initial(this) => {
+                EncodeState::Initial(this) => {
                     match Z::try_save_ptr(this, &dumper) {
-                        Ok(raw) => SaveState::Done(
-                                        FatPtr {
-                                            metadata: this.metadata,
-                                            raw,
-                                        }
-                                   ),
-                        Err(value) => SaveState::Value { state: value.save_children(), value },
+                        Ok(raw) => EncodeState::Done(raw),
+                        Err(value) => EncodeState::Value { state: value.make_save_state(), value },
                     }
                 },
-                SaveState::Value { value, state } => {
-                    dumper = value.poll(state, dumper)?;
-
-                    let (d, ptr) = value.save_blob(state, dumper)?;
+                EncodeState::Value { value, state } => {
+                    let (d, blob_ptr) = value.save_poll(state, dumper)?;
                     dumper = d;
-
-                    SaveState::Done(ptr)
+                    EncodeState::Done(D::blob_ptr_to_zone_ptr(blob_ptr))
                 },
-                SaveState::Done(_) => break Ok(dumper),
+                EncodeState::Done(_) => {
+                    break Ok(dumper)
+                }
             }
         }
     }
 
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        if let SaveState::Done(ptr) = state {
-            dst.write_primitive(&ptr.raw)?
-               .write_primitive(&ptr.metadata)?
+        if let EncodeState::Done(raw) = state {
+            dst.write_primitive(raw)?
+               .write_primitive(&self.metadata)?
                .finish()
         } else {
-            panic!("encode_blob() called before child encoding finished")
+            panic!("<{} as Encode<{}>>::encode_blob() called before child encoding finished",
+                   type_name::<Self>(), type_name::<Y>())
         }
     }
 }
@@ -222,4 +217,3 @@ mod tests {
     fn test() {
     }
 }
-*/

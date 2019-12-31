@@ -7,8 +7,8 @@ use crate::pointee::Pointee;
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;
 use crate::marshal::encode::*;
-use crate::marshal::{PtrValidator, Dumper};
+use crate::marshal::{PtrValidator, Dumper, Primitive};
 
 pub mod scalar;
 pub mod option;
-//pub mod array;
+pub mod array;

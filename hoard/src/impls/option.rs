@@ -66,30 +66,35 @@ where T::Encoded: NonZero
 {
     type State = Option<T::State>;
 
-    fn save_children(&'a self) -> Self::State {
-        self.as_ref().map(T::save_children)
+    fn make_encode_state(&'a self) -> Self::State {
+        self.as_ref().map(T::make_encode_state)
     }
 
-    fn poll<D: Dumper<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Error> {
+    fn encode_poll<D: Dumper<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Error> {
         match (self, state) {
-            (Some(value), Some(state)) => value.poll(state, dumper),
+            (Some(value), Some(state)) => value.encode_poll(state, dumper),
             (None, None) => Ok(dumper),
             _ => panic!("invalid state"),
         }
     }
 
-    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, mut dst: W) -> Result<W::Ok, W::Error> {
         match (self, state) {
             (Some(value), Some(state)) => value.encode_blob(state, dst),
             (None, None) => {
-                let zeros = [0u8; mem::size_of::<Self::Encoded>()];
-                dst.write_bytes(&zeros)?
-                   .finish()
+                for _ in 0 .. mem::size_of::<Self::Encoded>() {
+                    dst = dst.write_bytes(&[0])?;
+                }
+                dst.finish()
             },
             _ => panic!("invalid state"),
         }
     }
 }
+
+impl<T: NonZero + Primitive> Primitive for Option<T>
+where T::Persist: NonZero,
+{}
 
 #[cfg(test)]
 mod tests {

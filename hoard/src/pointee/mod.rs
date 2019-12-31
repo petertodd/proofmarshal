@@ -13,7 +13,7 @@ use leint::Le;
 mod maybedropped;
 pub use self::maybedropped::MaybeDropped;
 
-pub trait Metadata : 'static + fmt::Debug + Send + Sync {
+pub trait Metadata : 'static + crate::marshal::Primitive + fmt::Debug + Send + Sync {
     fn kind(&self) -> MetadataKind;
 }
 
@@ -24,6 +24,7 @@ pub enum MetadataKind {
 }
 
 impl Metadata for () {
+    #[inline(always)]
     fn kind(&self) -> MetadataKind {
         MetadataKind::Sized
     }

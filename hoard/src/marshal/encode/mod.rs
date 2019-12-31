@@ -10,9 +10,9 @@ pub trait Encoded<Z> : Sized + Pointee<Metadata=()> {
 pub trait Encode<'a, Z> : Encoded<Z> {
     type State;
 
-    fn save_children(&'a self) -> Self::State;
+    fn make_encode_state(&'a self) -> Self::State;
 
-    fn poll<D>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Error>
+    fn encode_poll<D>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Error>
         where D: Dumper<Z>;
 
     fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error>;
@@ -36,10 +36,10 @@ macro_rules! impl_encode_for_primitive {
             type State = ();
 
             #[inline(always)]
-            fn save_children(&self) -> () {}
+            fn make_encode_state(&self) -> () {}
 
             #[inline(always)]
-            fn poll<D: crate::marshal::Dumper<Z>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
+            fn encode_poll<D: crate::marshal::Dumper<Z>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
                 Ok(dumper)
             }
 

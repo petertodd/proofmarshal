@@ -55,9 +55,9 @@ pub mod zone;
 
 pub mod impls;
 
-//pub mod pile;
+pub mod pile;
 
-//pub mod linkedlist;
+pub mod linkedlist;
 
 /// Prelude
 pub mod prelude {

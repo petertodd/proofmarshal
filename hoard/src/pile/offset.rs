@@ -73,9 +73,10 @@ use leint::Le;
 use nonzero::NonZero;
 
 use crate::coerce::TryCoerce;
-use crate::marshal::PtrValidator;
-use crate::marshal::blob;
+use crate::marshal::*;
+use crate::marshal::blob::*;
 use crate::marshal::decode::*;
+use crate::marshal::encode::*;
 
 use super::Pile;
 
@@ -101,7 +102,7 @@ unsafe impl NonZero for Offset<'_,'_> {}
 impl<'p,'v> Offset<'p,'v> {
     pub const MAX: usize = (1 << 62) - 1;
 
-    #[inline]
+    #[inline(always)]
     pub fn new(offset: usize) -> Option<Self> {
         let offset = offset as u64;
         offset.checked_shl(1).map(|offset|
@@ -113,7 +114,7 @@ impl<'p,'v> Offset<'p,'v> {
     }
 
     /// Converts the `Offset` into an offset with a different lifetime.
-    #[inline]
+    #[inline(always)]
     pub fn cast<'p2,'v2>(&self) -> Offset<'p2, 'v2> {
         Offset {
             marker: PhantomData,
@@ -121,13 +122,14 @@ impl<'p,'v> Offset<'p,'v> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get(&self) -> usize {
         (self.raw.get().get() >> 1) as usize
     }
 }
 
 impl From<Offset<'_, '_>> for usize {
+    #[inline(always)]
     fn from(offset: Offset<'_,'_>) -> usize {
         offset.get()
     }
@@ -143,11 +145,12 @@ impl fmt::Pointer for Offset<'_, '_> {
 #[error("invalid Offset: {0}")]
 pub struct ValidateOffsetError(u64);
 
-impl blob::Validate for Offset<'static, 'static> {
+impl ValidateBlob for Offset<'static, 'static> {
     type Error = ValidateOffsetError;
 
-    fn validate<'a, V: blob::Validator>(blob: blob::Cursor<'a, Self, V>)
-        -> Result<blob::ValidBlob<'a, Self>, blob::Error<Self::Error, V::Error>>
+    #[inline(always)]
+    fn validate<'a, V: PaddingValidator>(blob: BlobCursor<'a, Self, V>)
+        -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
     {
         blob.validate_bytes(|blob| {
             let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
@@ -173,31 +176,39 @@ unsafe impl Persist for Offset<'_, '_> {
 
 unsafe impl<'a, Z> ValidateChildren<'a, Z> for Offset<'_, '_> {
     type State = ();
+
+    #[inline(always)]
     fn validate_children(_: &Offset<'static, 'static>) -> () {}
 
+    #[inline(always)]
     fn poll<V: PtrValidator<Z>>(this: &Self::Persist, _: &mut (), _: &V) -> Result<(), V::Error> {
         Ok(())
     }
 }
 impl<Z> Decode<Z> for Offset<'_,'_> {}
 
-/*
-impl<Z: Zone> Encode<'_, Z> for Offset<'_, '_> {
-    type State = ();
-    fn save_children(&self) -> () {}
+impl<'p,'v, Z> Encoded<Z> for Offset<'p, 'v> {
+    type Encoded = Self;
+}
 
-    fn poll<D: Dumper<Z>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
+impl<Z> Encode<'_, Z> for Offset<'_, '_> {
+    type State = ();
+
+    #[inline(always)]
+    fn make_encode_state(&self) -> () {}
+
+    #[inline(always)]
+    fn encode_poll<D: Dumper<Z>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
         Ok(dumper)
     }
 
+    #[inline(always)]
     fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
         dst.write_primitive(&self.raw)?
            .finish()
     }
 }
-
-impl Primitive for Offset<'static, 'static> {}
-*/
+impl Primitive for Offset<'_, '_> {}
 
 unsafe impl<'p, 'v> TryCoerce<Offset<'p,'v>> for Offset<'_, '_> {
     type Error = !;

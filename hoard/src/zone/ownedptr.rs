@@ -14,8 +14,10 @@ use nonzero::NonZero;
 
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;
+use crate::marshal::encode::*;
 use crate::marshal::load::*;
-use crate::marshal::PtrValidator;
+use crate::marshal::save::*;
+use crate::marshal::*;
 
 /// An owned pointer.
 ///
@@ -154,11 +156,32 @@ where T: ValidatePointeeChildren<'a, Z>
 impl<Z: Zone, T: ?Sized + Load<Z>> Decode<Z> for OwnedPtr<T,Z> {
 }
 
-/*
-impl<Y: Zone, Z: Zone, T: ?Sized + Saved<Y>> Encoded<Y> for OwnedPtr<T, Z> {
+impl<T: ?Sized + Pointee, Z: Zone, Y: Zone> Encoded<Y> for OwnedPtr<T,Z>
+where T: Saved<Y>
+{
     type Encoded = OwnedPtr<T::Saved, Y>;
 }
 
+impl<'a, T: 'a + ?Sized + Pointee, Z: 'a + Zone, Y: Zone> Encode<'a, Y> for OwnedPtr<T,Z>
+where T: Save<'a, Y>,
+      Z: SavePtr<Y>,
+{
+    type State = super::validptr::EncodeState<'a, T, Z, Y>;
+
+    fn make_encode_state(&'a self) -> Self::State {
+        self.inner.make_encode_state()
+    }
+
+    fn encode_poll<D: Dumper<Y>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Error> {
+        self.inner.encode_poll(state, dumper)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
+        self.inner.encode_blob(state, dst)
+    }
+}
+
+/*
 impl<'a, Y: Zone, Z: 'a + Zone + Encode<'a, Y>, T: 'a + ?Sized + Save<'a, Y>> Encode<'a, Y> for OwnedPtr<T, Z> {
     type State = <ValidPtr<T, Z> as Encode<'a, Y>>::State;
 

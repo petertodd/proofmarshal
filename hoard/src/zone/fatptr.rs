@@ -13,9 +13,10 @@ use nonzero::NonZero;
 use crate::coerce::TryCoerce;
 use crate::pointee::Pointee;
 
-use crate::marshal::PtrValidator;
+use crate::marshal::*;
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;
+use crate::marshal::encode::*;
 use crate::marshal::load::PersistPointee;
 use super::Zone;
 
@@ -98,6 +99,33 @@ unsafe impl<'a, T: ?Sized + PersistPointee, Z: Zone, Y> ValidateChildren<'a, Y> 
 }
 impl<T: ?Sized + PersistPointee, Z: Zone, Y> Decode<Y> for FatPtr<T, Z> {}
 
+impl<T: ?Sized + Pointee, Z: Zone, Y> Encoded<Y> for FatPtr<T,Z> {
+    type Encoded = Self;
+}
+
+impl<'a, T: ?Sized + Pointee, Z: Zone, Y> Encode<'a, Y> for FatPtr<T,Z>
+where Z::Ptr: Primitive
+{
+    type State = ();
+
+    #[inline(always)]
+    fn make_encode_state(&self) -> () {}
+
+    #[inline(always)]
+    fn encode_poll<D: Dumper<Y>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
+        Ok(dumper)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
+        dst.write_primitive(&self.raw)?
+           .write_primitive(&self.metadata)?
+           .finish()
+    }
+}
+
+impl<T: ?Sized + PersistPointee, Z: Zone> Primitive for FatPtr<T,Z>
+where Z::Ptr: Primitive
+{}
 
 // standard impls
 
