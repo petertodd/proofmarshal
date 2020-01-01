@@ -241,4 +241,15 @@ impl<'a, T> TryFrom<&'a [u8]> for Blob<'a, T> {
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
+    /// It *is* legal to have a Blob to the ! type, and doing things with that blob shouldn't cause
+    /// issues.
+    #[test]
+    fn never_blob() {
+        let never_blob = Blob::<!>::try_from(&[][..]).unwrap();
+        assert_eq!(&never_blob[..], &[]);
+        assert_eq!(format!("{:?}", never_blob),
+                   "hoard::marshal::blob::Blob<!> { ptr: 0x1 }");
+    }
 }

@@ -36,7 +36,7 @@ macro_rules! impl_all_valid {
 }
 
 impl_all_valid! {
-    !, (),
+    (),
     u8, Le<u16>, Le<u32>, Le<u64>, Le<u128>,
     i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
 }

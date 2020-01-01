@@ -118,4 +118,11 @@ mod tests {
             assert_eq!(*valid, Some(NonZeroU8::new(i).unwrap()));
         }
     }
+
+    #[test]
+    fn never_option() {
+        let blob = Blob::<Option<!>>::try_from(&[][..]).unwrap();
+        let valid = ValidateBlob::validate(blob.into_cursor()).unwrap().to_ref();
+        assert!(valid.is_none());
+    }
 }

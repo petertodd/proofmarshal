@@ -9,6 +9,7 @@ use crate::marshal::decode::*;
 use crate::marshal::encode::*;
 use crate::marshal::{PtrValidator, Dumper, Primitive};
 
+pub mod never;
 pub mod scalar;
 pub mod option;
 pub mod array;
