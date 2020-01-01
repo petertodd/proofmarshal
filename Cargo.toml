@@ -8,5 +8,8 @@ members = [
 	"sliceinit",
 
 	"hoard",
+	"hoard-derive",
+	"hoard-derive-tests",
+
 	"tests",
 ]
