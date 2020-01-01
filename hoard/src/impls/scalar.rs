@@ -59,6 +59,10 @@ impl ValidateBlob for bool {
 }
 
 crate::impl_decode_for_primitive!(bool);
+crate::impl_encode_for_primitive!(bool, |this, dst| {
+    dst.write_bytes(&[if *this { 1 } else { 0 }][..])?
+       .finish()
+});
 
 #[non_exhaustive]
 #[derive(Debug, Error)]
