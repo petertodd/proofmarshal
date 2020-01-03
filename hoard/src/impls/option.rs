@@ -4,8 +4,7 @@ use std::mem;
 
 use super::*;
 
-use nonzero::NonZero;
-
+use crate::marker::NonZero;
 use crate::marshal::blob::*;
 
 impl<T: 'static + NonZero + ValidateBlob> ValidateBlob for Option<T> {

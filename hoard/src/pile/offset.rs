@@ -70,9 +70,9 @@ use std::ptr::NonNull;
 
 use thiserror::Error;
 use leint::Le;
-use nonzero::NonZero;
 
 use crate::coerce::TryCoerce;
+use crate::marker::NonZero;
 use crate::marshal::*;
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;

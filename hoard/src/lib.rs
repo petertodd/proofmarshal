@@ -48,6 +48,7 @@ use thiserror::Error;
 pub mod bytes;
 pub mod coerce;
 pub mod pointee;
+pub mod marker;
 
 pub mod marshal;
 pub mod save;

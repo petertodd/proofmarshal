@@ -6,12 +6,12 @@ use core::mem::ManuallyDrop;
 use core::fmt;
 use core::ops;
 
-use nonzero::NonZero;
 use owned::{Take, IntoOwned};
 
-use crate::pointee::Pointee;
+use crate::marker::NonZero;
 use crate::marshal::blob::ValidateBlob;
 use crate::marshal::load::Load;
+use crate::pointee::Pointee;
 
 pub mod refs;
 use self::refs::*;

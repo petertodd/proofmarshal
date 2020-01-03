@@ -8,14 +8,14 @@ use core::ptr::NonNull;
 
 use thiserror::Error;
 
-use nonzero::NonZero;
 use owned::{Take, IntoOwned};
 
 use crate::coerce::TryCoerce;
-use crate::pointee::Pointee;
+use crate::marker::NonZero;
+use crate::marshal::PtrValidator;
 use crate::marshal::blob;
 use crate::marshal::decode::*;
-use crate::marshal::PtrValidator;
+use crate::pointee::Pointee;
 use crate::zone::*;
 
 use super::offset::*;

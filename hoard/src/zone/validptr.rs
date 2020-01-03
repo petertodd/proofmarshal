@@ -9,16 +9,16 @@ use std::marker::PhantomData;
 use std::mem;
 use std::ops;
 
-use nonzero::NonZero;
 
 use crate::pointee::Pointee;
 
-use crate::marshal::{PtrValidator, Dumper};
+use crate::marker::NonZero;
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;
 use crate::marshal::encode::*;
 use crate::marshal::load::*;
 use crate::marshal::save::*;
+use crate::marshal::{PtrValidator, Dumper};
 
 /// Wrapper around a `FatPtr` guaranteeing that the target of the pointer is valid.
 ///

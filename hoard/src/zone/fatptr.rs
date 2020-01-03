@@ -8,11 +8,11 @@ use std::hash;
 use std::mem;
 
 use thiserror::Error;
-use nonzero::NonZero;
 
 use crate::coerce::TryCoerce;
 use crate::pointee::Pointee;
 
+use crate::marker::NonZero;
 use crate::marshal::*;
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;

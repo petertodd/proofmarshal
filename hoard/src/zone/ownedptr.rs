@@ -10,14 +10,14 @@ use core::mem::{self, ManuallyDrop};
 use core::ops;
 use core::ptr;
 
-use nonzero::NonZero;
 
+use crate::marker::NonZero;
+use crate::marshal::*;
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;
 use crate::marshal::encode::*;
 use crate::marshal::load::*;
 use crate::marshal::save::*;
-use crate::marshal::*;
 
 /// An owned pointer.
 ///
