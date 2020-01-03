@@ -11,7 +11,6 @@ use thiserror::Error;
 use owned::{Take, IntoOwned};
 
 use crate::coerce::TryCoerce;
-use crate::marker::NonZero;
 use crate::marshal::PtrValidator;
 use crate::marshal::blob;
 use crate::marshal::decode::*;
@@ -23,7 +22,6 @@ use super::offset::*;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct OffsetMut<'p,'v>(Offset<'p,'v>);
-unsafe impl NonZero for OffsetMut<'_,'_> {}
 
 unsafe impl<'p, 'v> TryCoerce<OffsetMut<'p, 'v>> for Offset<'_, '_> {
     type Error = !;

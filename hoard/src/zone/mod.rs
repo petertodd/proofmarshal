@@ -8,7 +8,6 @@ use core::ops;
 
 use owned::{Take, IntoOwned};
 
-use crate::marker::NonZero;
 use crate::marshal::blob::ValidateBlob;
 use crate::marshal::load::Load;
 use crate::pointee::Pointee;
@@ -28,10 +27,10 @@ pub use self::ownedptr::OwnedPtr;
 pub mod never;
 
 pub trait Zone : Sized + fmt::Debug {
-    type Ptr : NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
+    type Ptr : Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
     type Persist : 'static + Zone<Ptr=Self::PersistPtr, PersistPtr=Self::PersistPtr>;
     type PersistPtr : 'static + crate::marshal::Primitive + ValidateBlob
-                      + NonZero + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
+                      + Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
 
     type Error : std::error::Error;
 

@@ -12,7 +12,6 @@ use std::ops;
 
 use crate::pointee::Pointee;
 
-use crate::marker::NonZero;
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;
 use crate::marshal::encode::*;
@@ -34,8 +33,6 @@ impl<T: ?Sized + Pointee, Z: Zone> ops::Deref for ValidPtr<T, Z> {
         &self.0
     }
 }
-
-unsafe impl<T: ?Sized + Pointee, Z: Zone> NonZero for ValidPtr<T, Z> {}
 
 impl<T: ?Sized + Pointee, Z: Zone> ValidPtr<T, Z> {
     /// Creates a new `ValidPtr` from a `FatPtr`.

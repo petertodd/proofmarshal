@@ -72,7 +72,6 @@ use thiserror::Error;
 use leint::Le;
 
 use crate::coerce::TryCoerce;
-use crate::marker::NonZero;
 use crate::marshal::*;
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;
@@ -96,8 +95,6 @@ impl fmt::Debug for Offset<'_,'_> {
         <usize as fmt::Debug>::fmt(&self.get(), f)
     }
 }
-
-unsafe impl NonZero for Offset<'_,'_> {}
 
 impl<'p,'v> Offset<'p,'v> {
     pub const MAX: usize = (1 << 62) - 1;

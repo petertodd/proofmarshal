@@ -12,7 +12,6 @@ use thiserror::Error;
 use crate::coerce::TryCoerce;
 use crate::pointee::Pointee;
 
-use crate::marker::NonZero;
 use crate::marshal::*;
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;
@@ -29,8 +28,6 @@ pub struct FatPtr<T: ?Sized + Pointee, Z: Zone> {
     /// Metadata associated with this pointer.
     pub metadata: T::Metadata,
 }
-
-unsafe impl<T: ?Sized + Pointee, Z: Zone> NonZero for FatPtr<T, Z> {}
 
 unsafe impl<T1, T2, Z1, Z2> TryCoerce<FatPtr<T2, Z2>> for FatPtr<T1, Z1>
 where T1: ?Sized + Pointee,

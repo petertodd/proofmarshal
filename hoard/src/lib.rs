@@ -48,7 +48,6 @@ use thiserror::Error;
 pub mod bytes;
 pub mod coerce;
 pub mod pointee;
-pub mod marker;
 
 pub mod marshal;
 pub mod save;
@@ -57,8 +56,6 @@ pub mod zone;
 pub mod impls;
 
 pub mod pile;
-
-pub mod linkedlist;
 
 /// Prelude
 pub mod prelude {

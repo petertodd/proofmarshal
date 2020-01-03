@@ -11,7 +11,6 @@ use core::ops;
 use core::ptr;
 
 
-use crate::marker::NonZero;
 use crate::marshal::*;
 use crate::marshal::blob::*;
 use crate::marshal::decode::*;
@@ -28,8 +27,6 @@ pub struct OwnedPtr<T: ?Sized + Pointee, Z: Zone> {
     marker: PhantomData<Box<T>>,
     inner: ManuallyDrop<ValidPtr<T, Z>>,
 }
-
-unsafe impl<T: ?Sized + Pointee, Z: Zone> NonZero for OwnedPtr<T, Z> {}
 
 impl<T: ?Sized + Pointee, Z: Zone> ops::Deref for OwnedPtr<T, Z> {
     type Target = ValidPtr<T, Z>;
