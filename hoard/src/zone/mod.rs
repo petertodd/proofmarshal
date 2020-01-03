@@ -25,6 +25,8 @@ pub mod ownedptr;
 pub use self::ownedptr::OwnedPtr;
 
 pub mod never;
+pub mod missing;
+pub use self::missing::Missing;
 
 pub trait Zone : Sized + fmt::Debug {
     type Ptr : Copy + Eq + Ord + fmt::Debug + core::hash::Hash + Send + Sync;
