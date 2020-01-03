@@ -11,5 +11,10 @@ members = [
 	"hoard-derive",
 	"hoard-derive-tests",
 
-	"tests",
+	"proofmarshal-core",
+	"proofmarshal-derive",
+ 	"proofmarshal-derive-tests",
+	"proofmarshal-collections",
+
+#	"tests",
 ]
