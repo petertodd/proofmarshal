@@ -1,5 +1,8 @@
 #![feature(never_type)]
 
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+
 use proofmarshal_core::*;
 
 pub mod merklesum;

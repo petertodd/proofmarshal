@@ -18,6 +18,7 @@ pub trait Verbatim {
     fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error>;
 }
 
+/*
 impl<T: Verbatim> Commit for T {
     fn commit(&self) -> Digest<Self> {
         let mut fixed_bytes = [0; 512];
@@ -36,6 +37,7 @@ impl<T: Verbatim> Commit for T {
         Digest::hash_verbatim_bytes(buf)
     }
 }
+*/
 
 pub trait WriteVerbatim : Sized {
     type Error;
@@ -49,7 +51,7 @@ pub trait WriteVerbatim : Sized {
         Ok(self)
     }
 
-    fn write<T: Verbatim>(self, value: &T) -> Result<Self, Self::Error> {
+    fn write<T: ?Sized + Verbatim>(self, value: &T) -> Result<Self, Self::Error> {
         value.encode_verbatim(self)
     }
 

@@ -6,6 +6,9 @@
 #![allow(incomplete_features)]
 #![feature(const_generics)]
 
+#![allow(unused_imports)]
+#![allow(dead_code)]
+
 pub mod commit;
 pub mod fact;
 

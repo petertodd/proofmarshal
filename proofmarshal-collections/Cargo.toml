@@ -9,6 +9,7 @@ hoard = { path = "../hoard" }
 proofmarshal-core = { path = "../proofmarshal-core" }
 proofmarshal-derive = { path = "../proofmarshal-derive" }
 
+owned = "0.1.0"
 thiserror = "1.0.9"
 static_assertions = "1.1.0"
 sha2 = "0.8.0"

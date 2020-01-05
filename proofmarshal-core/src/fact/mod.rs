@@ -1,8 +1,11 @@
 //! Fact validation.
 
 use hoard::prelude::*;
+use hoard::pointee::Pointee;
+use hoard::zone::Missing;
 
-use crate::commit::{Commit, Verbatim};
+use hoard::marshal::save::Saved;
+use crate::commit::{Digest, Commit, Verbatim};
 
 pub mod error;
 pub mod maybe;
@@ -11,8 +14,8 @@ pub use self::maybe::Maybe;
 /// A fact that can be derived from evidence.
 ///
 /// The derivation **must not fail**.
-pub trait Fact<Z> : 'static + Verbatim {
-    type Evidence : Commit;
+pub trait Fact<Z = Missing> {
+    type Evidence : Pointee;
 
     fn from_evidence(evidence: &Self::Evidence) -> Self;
 }
@@ -24,4 +27,12 @@ pub trait Prune {
 
     /// Discards pruned evidence, keeping only the evidence that has actually been accessed.
     fn fully_prune(&mut self);
+}
+
+impl<T, Z> Fact<Z> for Digest<T> {
+    type Evidence = !;
+
+    fn from_evidence(evidence: &Self::Evidence) -> Self {
+        todo!()
+    }
 }

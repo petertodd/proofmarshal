@@ -17,19 +17,108 @@ use crate::commit::{Commit, Digest, Verbatim, WriteVerbatim};
 /// The fact itself is always available, and can be accessed with the `trust()` method. The
 /// evidence (potentially) proving the fact to be true may or may not be available.
 #[repr(C)]
-pub struct Maybe<T: Fact<Z>, Z: Zone = !> {
-    state: UnsafeCell<NonZeroU8>,
-    digest: UnsafeCell<MaybeUninit<Digest>>,
+pub struct Maybe<T, Z: Zone, E: ?Sized + Pointee = <T as Fact<Z>>::Evidence> {
+    flags: AtomicU8,
     fact: UnsafeCell<MaybeUninit<T>>,
-    evidence: MaybeUninit<OwnedPtr<T::Evidence, Z>>,
+    evidence: MaybeUninit<OwnedPtr<E, Z>>,
+}
+
+bitflags::bitflags! {
+    pub struct Flags: u8 {
+        const HAVE_EVIDENCE = 0b001;
+        const HAVE_FACT     = 0b010;
+        const LOCKED        = 0b100;
+    }
+}
+
+impl From<Flags> for AtomicU8 {
+    fn from(flags: Flags) -> Self {
+        flags.bits.into()
+    }
+}
+
+impl<T, Z: Zone, E: ?Sized + Pointee> Drop for Maybe<T, Z, E> {
+    fn drop(&mut self) {
+        let flags = self.load_flags(Ordering::Relaxed);
+        assert!(!flags.contains(Flags::LOCKED));
+
+        if flags.contains(Flags::HAVE_EVIDENCE) {
+            unsafe { ptr::drop_in_place(self.evidence.as_mut_ptr()) };
+        }
+        if flags.contains(Flags::HAVE_FACT) {
+            unsafe { ptr::drop_in_place(self.fact.get().cast::<T>()) };
+        }
+    }
+}
+
+impl<Z: Zone, T, E: ?Sized + Pointee> Maybe<T, Z, E> {
+    fn load_flags(&self, ordering: Ordering) -> Flags {
+        let flags = self.flags.load(ordering);
+        match Flags::from_bits(flags) {
+            Some(flags) => {
+                flags
+            },
+            None => {
+                unreachable!("invalid flags: {:b}", flags)
+            }
+        }
+    }
+
+    pub fn from_fact(fact: T) -> Self {
+        Self {
+            flags: Flags::HAVE_FACT.into(),
+            fact: MaybeUninit::new(fact).into(),
+            evidence: MaybeUninit::uninit(),
+        }
+    }
+
+    pub fn from_evidence(evidence: OwnedPtr<E, Z>) -> Self {
+        Self {
+            flags: Flags::HAVE_EVIDENCE.into(),
+            fact: MaybeUninit::uninit().into(),
+            evidence: MaybeUninit::new(evidence),
+        }
+    }
+
+    pub unsafe fn new_unchecked(fact: T, evidence: OwnedPtr<E, Z>) -> Self {
+        Self {
+            flags: (Flags::HAVE_FACT | Flags::HAVE_EVIDENCE).into(),
+            fact: MaybeUninit::new(fact).into(),
+            evidence: MaybeUninit::new(evidence),
+        }
+    }
+
+    pub fn try_get_fact(&self) -> Result<&T, &OwnedPtr<E, Z>> {
+        let flags = self.load_flags(Ordering::Relaxed);
+        if flags.contains(Flags::HAVE_FACT) {
+            Ok(unsafe { &*self.fact.get().cast::<T>() })
+        } else if flags.contains(Flags::HAVE_EVIDENCE) {
+            Err(unsafe { &*self.evidence.as_ptr() })
+        } else {
+            unreachable!("missing both fact and evidence")
+        }
+    }
+
+    pub fn try_get_evidence(&self) -> Result<&OwnedPtr<E, Z>, &T> {
+        match self.try_get_fact() {
+            Ok(fact) => Err(fact),
+            Err(evidence) => Ok(evidence),
+        }
+    }
 }
 
 impl<Z: Zone, T: Fact<Z>> Maybe<T, Z> {
     /// Gets access to the proven fact, trusting that it's true.
     pub fn trust(&self) -> &T {
-        todo!()
+        match self.try_get_fact() {
+            Ok(fact) => fact,
+            Err(_evidence) => {
+                todo!()
+            }
+        }
     }
 
+    /*
     /// Tries to get access to the evidence.
     pub fn try_unprune(&self, zone: &Z) -> Result<&T::Evidence, Z::Error> {
         todo!()
@@ -39,75 +128,32 @@ impl<Z: Zone, T: Fact<Z>> Maybe<T, Z> {
     pub fn try_unprune_mut(&mut self, zone: &Z) -> Result<&mut T::Evidence, Z::Error> {
         todo!()
     }
+    */
 }
 
-impl<T: Fact<Z>, Z: Zone> Verbatim for Maybe<T, Z>
-where T: Verbatim
-{
-    const LEN: usize = T::LEN + <Digest as Verbatim>::LEN;
-
-    fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error> {
-        dst.write(Self::get_digest(self))?
-           .write(Self::get_fact(self))?
-           .finish()
-    }
-}
-
-impl<Z: Zone, T: Fact<Z>> fmt::Debug for Maybe<T, Z>
+impl<Z: Zone, T, E> fmt::Debug for Maybe<T, Z, E>
 where T: fmt::Debug,
-{
-    default fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let state = self.load_flags(Ordering::Relaxed);
-        f.debug_struct("Maybe")
-            .field("state", &state)
-            .field("digest", &Maybe::try_get_digest(self))
-            .field("fact", &Maybe::try_get_fact(self))
-            .field("evidence", &"<>")
-            .finish()
-    }
-}
-
-impl<Z: Zone, T: Fact<Z>> fmt::Debug for Maybe<T, Z>
-where T: fmt::Debug,
-      T::Evidence: fmt::Debug
+      E: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let state = self.load_flags(Ordering::Relaxed);
         f.debug_struct("Maybe")
             .field("state", &state)
-            .field("digest", &Maybe::try_get_digest(self))
-            .field("fact", &Maybe::try_get_fact(self))
-            .field("evidence", &Maybe::try_get_evidence(self))
+            .field("fact", &self.try_get_fact().ok())
+            .field("evidence", &self.try_get_evidence().ok())
             .finish()
     }
 }
 
-bitflags::bitflags! {
-    pub struct Flags: u8 {
-        const VALID        = 0b000001;
-        const PRUNED       = 0b000010;
+impl<Z: Zone, T: Fact<Z> + Verbatim> Verbatim for Maybe<T, Z> {
+    const LEN: usize = <T as Verbatim>::LEN;
 
-        const PRUNABLE     = 0b000100;
-        const DIRTY_FACT   = 0b001000;
-        const DIRTY_DIGEST = 0b010000;
-        const LOCKED       = 0b100000;
-
-        const VOLATILE = Self::PRUNABLE.bits | Self::DIRTY_FACT.bits | Self::DIRTY_DIGEST.bits | Self::LOCKED.bits;
+    fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error> {
+        self.trust().encode_verbatim(dst)
     }
 }
 
-impl From<Flags> for NonZeroU8 {
-    fn from(flags: Flags) -> Self {
-        NonZeroU8::new((flags | Flags::VALID).bits).unwrap()
-    }
-}
-
-impl From<Flags> for UnsafeCell<NonZeroU8> {
-    fn from(flags: Flags) -> Self {
-        UnsafeCell::new(flags.into())
-    }
-}
-
+/*
 impl<Z: Zone, T: Fact<Z>> Maybe<T, Z> {
     unsafe fn state_atomic(&self) -> &AtomicU8 {
         &*(&self.state as *const _ as *const _)
@@ -229,60 +275,17 @@ impl<Z: Zone, T: Fact<Z>> ops::Deref for Maybe<T, Z> {
         }
     }
 }
-
-impl<Z: Zone, T: Fact<Z>> Drop for Maybe<T, Z> {
-    fn drop(&mut self) {
-        let flags = self.load_flags(Ordering::Relaxed);
-
-        if !flags.contains(Flags::PRUNED) {
-            unsafe { ptr::drop_in_place(self.evidence.as_mut_ptr()) };
-        }
-        if !flags.contains(Flags::DIRTY_FACT) {
-            unsafe { ptr::drop_in_place(self.fact.get().cast::<T>()) };
-        }
-    }
-}
+*/
 
 #[cfg(test)]
 mod tests {
-    /*
     use super::*;
 
-    use hoard::pile::TryPileMut;
-
-    #[derive(Debug)]
-    struct MMRLen {
-        len: u64,
-    }
-
-    #[derive(Debug)]
-    struct MMR {
-        len: u64,
-    }
-
-    impl Commit for MMR {
-        type Committed = MMR;
-
-        fn commit(&self) -> Digest<MMR> {
-            todo!()
-        }
-    }
-
-    impl<Z> Fact<Z> for MMRLen {
-        type Evidence = MMR;
-
-        fn from_evidence(mmr: &MMR) -> Self {
-            Self { len: mmr.len }
-        }
-    }
+    use dropcheck::DropCheck;
 
     #[test]
-    fn test() {
-        let pile = TryPileMut::default();
-
-        let maybe = Maybe::<MMRLen, _>::new_in(MMR { len: 10 }, &pile);
-        assert_eq!(maybe.len, 10);
-        assert_eq!(maybe.len, 10);
+    fn test_fact_drop() {
+        let dropcheck = DropCheck::new();
+        Maybe::<_, !, !>::from_fact(dropcheck.token());
     }
-    */
 }

@@ -45,24 +45,24 @@ pub trait Decode<Z> : Sized + Persist + for<'a> ValidateChildren<'a, Z> {}
 #[macro_export]
 macro_rules! impl_decode_for_primitive {
     ($t:ty) => {
-        unsafe impl crate::marshal::decode::Persist for $t {
+        unsafe impl $crate::marshal::decode::Persist for $t {
             type Persist = Self;
-            type Error = <Self as crate::marshal::blob::ValidateBlob>::Error;
+            type Error = <Self as $crate::marshal::blob::ValidateBlob>::Error;
         }
 
-        unsafe impl<'a, Z> crate::marshal::decode::ValidateChildren<'a, Z> for $t {
+        unsafe impl<'a, Z> $crate::marshal::decode::ValidateChildren<'a, Z> for $t {
             type State = ();
 
             fn validate_children(_: &'a Self) -> Self::State {}
 
             fn poll<V>(_this: &'a Self, _: &mut (), _: &V) -> Result<(), V::Error>
-                where V: crate::marshal::PtrValidator<Z>
+                where V: $crate::marshal::PtrValidator<Z>
             {
                 Ok(())
             }
         }
 
-        impl<Z> crate::marshal::decode::Decode<Z> for $t {}
+        impl<Z> $crate::marshal::decode::Decode<Z> for $t {}
     }
 }
 

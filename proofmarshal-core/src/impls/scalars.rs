@@ -9,13 +9,16 @@ use hoard::prelude::Le;
 impl Verbatim for ! {
     const LEN: usize = 0;
 
+    #[inline(always)]
     fn encode_verbatim<W: WriteVerbatim>(&self, _dst: W) -> Result<W, W::Error> {
         match *self {}
     }
 }
 
 impl Prune for ! {
+    #[inline(always)]
     fn prune(&mut self) { match *self {} }
+    #[inline(always)]
     fn fully_prune(&mut self) { match *self {} }
 }
 
@@ -50,7 +53,10 @@ impl_verbatim! {
 macro_rules! impl_prune {
     ($($t:ty,)+) => {$(
         impl Prune for $t {
+            #[inline(always)]
             fn prune(&mut self) {}
+
+            #[inline(always)]
             fn fully_prune(&mut self) {}
         }
     )+}

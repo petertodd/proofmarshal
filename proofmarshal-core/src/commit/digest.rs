@@ -44,6 +44,8 @@ impl<T: ?Sized> From<[u8;32]> for Digest<T> {
 
 impl<T: ?Sized> Verbatim for Digest<T> {
     const LEN: usize = 32;
+
+    #[inline(always)]
     fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error> {
         dst.write_bytes(&self.buf)
     }
@@ -82,7 +84,7 @@ impl<T: ?Sized> Digest<T> {
         }
     }
 
-    pub fn hash_verbatim<U: Verbatim>(value: &U) -> Self {
+    pub fn hash_verbatim<U: ?Sized + Verbatim>(value: &U) -> Self {
         let mut fixed_bytes = [0; 512];
         let mut vec_buf;
 

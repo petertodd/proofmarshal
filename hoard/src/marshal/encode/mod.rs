@@ -28,28 +28,28 @@ pub trait EncodePrimitive : for<'a> Encode<'a, !, State=(), Encoded=Self> {
 #[macro_export]
 macro_rules! impl_encode_for_primitive {
     ($t:ty, |$this:ident, $dst:ident| $encode_body:tt) => {
-        impl<Z> crate::marshal::encode::Encoded<Z> for $t {
+        impl<Z> $crate::marshal::encode::Encoded<Z> for $t {
             type Encoded = $t;
         }
 
-        impl<Z> Encode<'_, Z> for $t {
+        impl<Z> $crate::marshal::encode::Encode<'_, Z> for $t {
             type State = ();
 
             #[inline(always)]
             fn make_encode_state(&self) -> () {}
 
             #[inline(always)]
-            fn encode_poll<D: crate::marshal::Dumper<Z>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
+            fn encode_poll<D: $crate::marshal::Dumper<Z>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
                 Ok(dumper)
             }
 
             #[inline(always)]
-            fn encode_blob<W: crate::marshal::blob::WriteBlob>(&self, _: &(), $dst: W) -> Result<W::Ok, W::Error> {
+            fn encode_blob<W: $crate::marshal::blob::WriteBlob>(&self, _: &(), $dst: W) -> Result<W::Ok, W::Error> {
                 let $this = self;
                 $encode_body
             }
         }
 
-        impl EncodePrimitive for $t {}
+        impl $crate::marshal::encode::EncodePrimitive for $t {}
     }
 }

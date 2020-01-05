@@ -63,8 +63,7 @@ impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for ValidPtr<T, Z>
 where T: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        //Z::fmt_debug_valid_ptr(self, f)
-        todo!()
+        Z::fmt_debug_valid_ptr(self, f)
     }
 }
 
