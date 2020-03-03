@@ -19,8 +19,6 @@
 
 #![feature(associated_type_bounds)]
 #![feature(alloc_layout_extra)]
-#![feature(slice_from_raw_parts)]
-#![feature(manually_drop_take)]
 #![feature(arbitrary_self_types)]
 #![feature(const_if_match)]
 #![feature(optin_builtin_traits)]
