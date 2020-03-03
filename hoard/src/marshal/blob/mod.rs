@@ -247,7 +247,8 @@ mod test {
     /// issues.
     #[test]
     fn never_blob() {
-        let never_blob = Blob::<!>::try_from(&[][..]).unwrap();
+        let empty: &[u8;0] = unsafe { &*NonNull::dangling().as_ptr() };
+        let never_blob = Blob::<!>::try_from(&empty[..]).unwrap();
         assert_eq!(&never_blob[..], &[]);
         assert_eq!(format!("{:?}", never_blob),
                    "hoard::marshal::blob::Blob<!> { ptr: 0x1 }");
