@@ -98,6 +98,10 @@ impl<'a, T: ?Sized> Blob<'a, T> {
     pub fn into_cursor_ignore_padding(self) -> BlobCursor<'a, T, padding::IgnorePadding> {
         BlobCursor::new(self, padding::IgnorePadding)
     }
+
+    pub unsafe fn cast_unchecked<U>(self) -> Blob<'a, U> {
+        Blob::from_ptr(self.ptr as *const U)
+    }
 }
 
 impl<'a, T> From<&'a Bytes<T>> for Blob<'a, T> {
