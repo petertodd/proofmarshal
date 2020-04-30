@@ -1,7 +1,8 @@
+use std::cmp;
 use std::convert::TryFrom;
+use std::fmt;
 use std::num::NonZeroU8;
 use std::ops;
-use std::cmp;
 
 use thiserror::Error;
 
@@ -13,8 +14,14 @@ use proofmarshal_core::commit::{Digest, Commit, Verbatim, WriteVerbatim};
 /// The height of a perfect binary tree.
 ///
 /// Valid range: `0 ..= 63`
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Height(u8);
+
+impl fmt::Debug for Height {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 #[error("out of range")]
@@ -24,8 +31,32 @@ pub struct TryFromIntError;
 /// The height of an inner node in a perfect binary tree.
 ///
 /// Valid range: `1 ..= 63`
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct NonZeroHeight(NonZeroU8);
+
+impl fmt::Debug for NonZeroHeight {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DynHeight([()]);
+
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DynNonZeroHeight([()]);
+
+impl fmt::Debug for DynHeight {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.len().fmt(f)
+    }
+}
+
+impl fmt::Debug for DynNonZeroHeight {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.len().fmt(f)
+    }
+}
 
 impl Verbatim for Height {
     const LEN: usize = 1;
@@ -282,10 +313,17 @@ pub unsafe trait GetHeight {
     fn get(&self) -> Height;
 }
 
-unsafe impl GetHeight for [()] {
+unsafe impl GetHeight for DynHeight {
     #[inline]
     fn get(&self) -> Height {
-        Height::try_from(self.len()).expect("invalid height")
+        Height::try_from(self.0.len()).expect("invalid height")
+    }
+}
+
+unsafe impl GetHeight for DynNonZeroHeight {
+    #[inline]
+    fn get(&self) -> Height {
+        NonZeroHeight::try_from(self.0.len()).expect("invalid height").into()
     }
 }
 

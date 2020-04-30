@@ -42,7 +42,10 @@ pub struct SumTree<T, S: Copy, Z: Zone, H: ?Sized + GetHeight = Height> {
     height: H,
 }
 
+pub type DynSumTree<T, S, Z> = SumTree<T, S, Z, DynHeight>;
+
 pub type Tree<T, Z, H> = SumTree<T, (), Z, H>;
+pub type DynTree<T, Z> = SumTree<T, (), Z, DynHeight>;
 
 #[repr(C)]
 pub struct Inner<T, S: Copy, Z: Zone, H: ?Sized + GetHeight = NonZeroHeight> {
@@ -51,21 +54,23 @@ pub struct Inner<T, S: Copy, Z: Zone, H: ?Sized + GetHeight = NonZeroHeight> {
     height: H,
 }
 
+pub type DynInner<T, S, Z> = Inner<T, S, Z, DynNonZeroHeight>;
+
 #[derive(Debug)]
 enum TipPtr<T, S: Copy, Z: Zone> {
-    Inner(ValidPtr<Inner<T, S, Z, [()]>, Z>),
+    Inner(ValidPtr<DynInner<T, S, Z>, Z>),
     Leaf(ValidPtr<T, Z>),
 }
 
 #[derive(Debug)]
 enum Tip<'a, T, S: Copy, Z: Zone> {
-    Inner(&'a Inner<T, S, Z, [()]>),
+    Inner(&'a DynInner<T, S, Z>),
     Leaf(&'a T),
 }
 
 #[derive(Debug)]
 enum TipMut<'a, T, S: Copy, Z: Zone> {
-    Inner(&'a mut Inner<T, S, Z, [()]>),
+    Inner(&'a mut DynInner<T, S, Z>),
     Leaf(&'a mut T),
 }
 
@@ -135,7 +140,7 @@ impl<T, S: MerkleSum<T>, Z: Zone> SumTree<T,S,Z> {
         let height = tip.height.into();
         let sum = tip.sum();
 
-        let tip: OwnedPtr<Inner<T,S,Z,[()]>, Z> = zone.alloc(tip);
+        let tip: OwnedPtr<DynInner<T,S,Z>, Z> = zone.alloc(tip);
 
         Ok(Self {
             flags: (Flags::DIGEST_DIRTY).into(),
@@ -199,7 +204,7 @@ where T: Decode<Z>,
             return None;
         }
 
-        let mut this: &'a SumTree<T, S, Z, [()]> = self.as_ref();
+        let mut this: &'a DynSumTree<T, S, Z> = self.as_ref();
         loop {
             match this.get_tip(zone) {
                 Tip::Leaf(leaf) => {
@@ -442,14 +447,14 @@ impl<T, S: Copy, Z: Zone, H: ?Sized + GetHeight> Inner<T, S, Z, H> {
         NonZeroHeight::try_from(self.height.get()).expect("inner node to have non-zero height")
     }
 
-    pub fn left(&self) -> &SumTree<T,S,Z,[()]> {
+    pub fn left(&self) -> &DynSumTree<T,S,Z> {
         unsafe {
             let next_height = self.height().decrement().into();
             mem::transmute(slice::from_raw_parts(&self.left, next_height))
         }
     }
 
-    pub fn left_mut(&mut self) -> &mut SumTree<T,S,Z,[()]> {
+    pub fn left_mut(&mut self) -> &mut DynSumTree<T,S,Z> {
         self.left.set_dirty();
         unsafe {
             let next_height = self.height().decrement().into();
@@ -457,14 +462,14 @@ impl<T, S: Copy, Z: Zone, H: ?Sized + GetHeight> Inner<T, S, Z, H> {
         }
     }
 
-    pub fn right(&self) -> &SumTree<T,S,Z,[()]> {
+    pub fn right(&self) -> &DynSumTree<T,S,Z> {
         unsafe {
             let next_height = self.height().decrement().into();
             mem::transmute(slice::from_raw_parts(&self.right, next_height))
         }
     }
 
-    pub fn right_mut(&mut self) -> &mut SumTree<T,S,Z,[()]> {
+    pub fn right_mut(&mut self) -> &mut DynSumTree<T,S,Z> {
         self.right.set_dirty();
         unsafe {
             let next_height = self.height().decrement().into();
@@ -473,39 +478,39 @@ impl<T, S: Copy, Z: Zone, H: ?Sized + GetHeight> Inner<T, S, Z, H> {
     }
 }
 
-impl<T, S: Copy, Z: Zone, H: GetHeight> Borrow<SumTree<T, S, Z, [()]>> for SumTree<T, S, Z, H> {
+impl<T, S: Copy, Z: Zone, H: GetHeight> Borrow<DynSumTree<T, S, Z>> for SumTree<T, S, Z, H> {
     #[inline(always)]
-    fn borrow(&self) -> &SumTree<T, S, Z, [()]> {
+    fn borrow(&self) -> &DynSumTree<T, S, Z> {
         self.as_ref()
     }
 }
 
-impl<T, S: Copy, Z: Zone, H: ?Sized + GetHeight> AsRef<SumTree<T, S, Z, [()]>> for SumTree<T, S, Z, H> {
+impl<T, S: Copy, Z: Zone, H: ?Sized + GetHeight> AsRef<DynSumTree<T, S, Z>> for SumTree<T, S, Z, H> {
     #[inline(always)]
-    fn as_ref(&self) -> &SumTree<T, S, Z, [()]> {
+    fn as_ref(&self) -> &DynSumTree<T, S, Z> {
         unsafe {
             mem::transmute(slice::from_raw_parts(self as *const _ as *const (), self.height.get().into()))
         }
     }
 }
 
-impl<T, S: Copy, Z: Zone, H: GetHeight> BorrowMut<SumTree<T, S, Z, [()]>> for SumTree<T, S, Z, H> {
+impl<T, S: Copy, Z: Zone, H: GetHeight> BorrowMut<DynSumTree<T, S, Z>> for SumTree<T, S, Z, H> {
     #[inline(always)]
-    fn borrow_mut(&mut self) -> &mut SumTree<T, S, Z, [()]> {
+    fn borrow_mut(&mut self) -> &mut DynSumTree<T, S, Z> {
         self.as_mut()
     }
 }
 
-impl<T, S: Copy, Z: Zone, H: GetHeight> AsMut<SumTree<T, S, Z, [()]>> for SumTree<T, S, Z, H> {
+impl<T, S: Copy, Z: Zone, H: GetHeight> AsMut<DynSumTree<T, S, Z>> for SumTree<T, S, Z, H> {
     #[inline(always)]
-    fn as_mut(&mut self) -> &mut SumTree<T, S, Z, [()]> {
+    fn as_mut(&mut self) -> &mut DynSumTree<T, S, Z> {
         unsafe {
             mem::transmute(slice::from_raw_parts_mut(self, self.height.get().into()))
         }
     }
 }
 
-unsafe impl<T, S: Copy, Z: Zone> IntoOwned for Inner<T, S, Z, [()]> {
+unsafe impl<T, S: Copy, Z: Zone> IntoOwned for DynInner<T, S, Z> {
     type Owned = Inner<T, S, Z, NonZeroHeight>;
 
     #[inline(always)]
@@ -514,7 +519,7 @@ unsafe impl<T, S: Copy, Z: Zone> IntoOwned for Inner<T, S, Z, [()]> {
     }
 }
 
-unsafe impl<T, S: Copy, Z: Zone> IntoOwned for SumTree<T, S, Z, [()]> {
+unsafe impl<T, S: Copy, Z: Zone> IntoOwned for DynSumTree<T, S, Z> {
     type Owned = SumTree<T, S, Z, Height>;
 
     #[inline(always)]
@@ -524,40 +529,40 @@ unsafe impl<T, S: Copy, Z: Zone> IntoOwned for SumTree<T, S, Z, [()]> {
 }
 
 
-impl<T, S: Copy, Z: Zone> Borrow<Inner<T, S, Z, [()]>> for Inner<T, S, Z, NonZeroHeight> {
+impl<T, S: Copy, Z: Zone> Borrow<DynInner<T, S, Z>> for Inner<T, S, Z, NonZeroHeight> {
     #[inline(always)]
-    fn borrow(&self) -> &Inner<T, S, Z, [()]> {
+    fn borrow(&self) -> &DynInner<T, S, Z> {
         unsafe {
             mem::transmute(slice::from_raw_parts(self, self.height.into()))
         }
     }
 }
 
-impl<T, S: Copy, Z: Zone> BorrowMut<Inner<T, S, Z, [()]>> for Inner<T, S, Z, NonZeroHeight> {
+impl<T, S: Copy, Z: Zone> BorrowMut<DynInner<T, S, Z>> for Inner<T, S, Z, NonZeroHeight> {
     #[inline(always)]
-    fn borrow_mut(&mut self) -> &mut Inner<T, S, Z, [()]> {
+    fn borrow_mut(&mut self) -> &mut DynInner<T, S, Z> {
         unsafe {
             mem::transmute(slice::from_raw_parts_mut(self, self.height.into()))
         }
     }
 }
 
-unsafe impl<T, S: Copy, Z: Zone> Take<Inner<T, S, Z, [()]>> for Inner<T, S, Z, NonZeroHeight> {
+unsafe impl<T, S: Copy, Z: Zone> Take<DynInner<T, S, Z>> for Inner<T, S, Z, NonZeroHeight> {
     #[inline(always)]
     fn take_unsized<F, R>(self, f: F) -> R
-        where F: FnOnce(&mut ManuallyDrop<Inner<T, S, Z, [()]>>) -> R
+        where F: FnOnce(&mut ManuallyDrop<DynInner<T, S, Z>>) -> R
     {
         let mut this = ManuallyDrop::new(self);
-        let this: &mut Inner<T, S, Z, [()]> = (&mut *this).borrow_mut();
+        let this: &mut DynInner<T, S, Z> = (&mut *this).borrow_mut();
         let this: &mut ManuallyDrop<_> = unsafe { &mut *(this as *mut _ as *mut _)};
         f(this)
     }
 }
 
-unsafe impl<T, S: Copy, Z: Zone, H: GetHeight> Take<SumTree<T, S, Z, [()]>> for SumTree<T, S, Z, H> {
+unsafe impl<T, S: Copy, Z: Zone, H: GetHeight> Take<DynSumTree<T, S, Z>> for SumTree<T, S, Z, H> {
     #[inline(always)]
     fn take_unsized<F, R>(self, f: F) -> R
-        where F: FnOnce(&mut ManuallyDrop<SumTree<T, S, Z, [()]>>) -> R
+        where F: FnOnce(&mut ManuallyDrop<DynSumTree<T, S, Z>>) -> R
     {
         /*
         let mut this = ManuallyDrop::new(self);
@@ -569,7 +574,7 @@ unsafe impl<T, S: Copy, Z: Zone, H: GetHeight> Take<SumTree<T, S, Z, [()]>> for 
 }
 
 
-unsafe impl<T, S: Copy, Z: Zone> Pointee for Inner<T, S, Z, [()]> {
+unsafe impl<T, S: Copy, Z: Zone> Pointee for DynInner<T, S, Z> {
     type Metadata = NonZeroHeight;
     type LayoutError = !;
 
@@ -580,7 +585,7 @@ unsafe impl<T, S: Copy, Z: Zone> Pointee for Inner<T, S, Z, [()]> {
 
     #[inline(always)]
     fn metadata_from_dropped(dropped: &MaybeDropped<Self>) -> NonZeroHeight {
-        let height = unsafe { dropped.get_unchecked().height.len() };
+        let height = unsafe { dropped.get_unchecked().height.get() };
         match NonZeroHeight::try_from(height) {
             Ok(height) => height,
             Err(err) => {
@@ -604,7 +609,7 @@ unsafe impl<T, S: Copy, Z: Zone> Pointee for Inner<T, S, Z, [()]> {
     }
 }
 
-unsafe impl<T, S: Copy, Z: Zone> Pointee for SumTree<T, S, Z, [()]> {
+unsafe impl<T, S: Copy, Z: Zone> Pointee for DynSumTree<T, S, Z> {
     type Metadata = Height;
     type LayoutError = !;
 
@@ -615,13 +620,7 @@ unsafe impl<T, S: Copy, Z: Zone> Pointee for SumTree<T, S, Z, [()]> {
 
     #[inline(always)]
     fn metadata_from_dropped(dropped: &MaybeDropped<Self>) -> Height {
-        let height = unsafe { dropped.get_unchecked().height.len() };
-        match Height::try_from(height) {
-            Ok(height) => height,
-            Err(err) => {
-                unreachable!("{:?}", err)
-            }
-        }
+        unsafe { dropped.get_unchecked().height.get() }
     }
 
     #[inline(always)]
@@ -740,7 +739,7 @@ where T: Persist,
     type Error = <Self::Persist as ValidateBlob>::Error;
 }
 
-impl<T, S: Copy, Z: Zone> ValidateBlob for Inner<T, S, Z, [()]>
+impl<T, S: Copy, Z: Zone> ValidateBlob for DynInner<T, S, Z>
 where S: ValidateBlob,
 {
     type Error = ValidateBlobInnerError<<SumTree<T, S, Z, ()> as ValidateBlob>::Error, !>;
@@ -755,11 +754,11 @@ where S: ValidateBlob,
     }
 }
 
-unsafe impl<T, S: Copy, Z: Zone> PersistPointee for Inner<T, S, Z, [()]>
+unsafe impl<T, S: Copy, Z: Zone> PersistPointee for DynInner<T, S, Z>
 where T: Persist,
       S: 'static + ValidateBlob,
 {
-    type Persist = Inner<T::Persist, S, Z::Persist, [()]>;
+    type Persist = DynInner<T::Persist, S, Z::Persist>;
     type Error = <Self::Persist as ValidateBlob>::Error;
 
     unsafe fn assume_valid(this: &Self::Persist) -> Self::Owned {
@@ -771,7 +770,7 @@ where T: Persist,
     }
 }
 
-unsafe impl<'a, T, S: Copy, Z: Zone> ValidatePointeeChildren<'a, Z> for Inner<T, S, Z, [()]>
+unsafe impl<'a, T, S: Copy, Z: Zone> ValidatePointeeChildren<'a, Z> for DynInner<T, S, Z>
 where T: ValidateChildren<'a, Z>,
       S: 'static + ValidateBlob,
 {
@@ -786,7 +785,7 @@ where T: ValidateChildren<'a, Z>,
     }
 }
 
-impl<T, S: Copy, Z: Zone> Load<Z> for Inner<T, S, Z, [()]>
+impl<T, S: Copy, Z: Zone> Load<Z> for DynInner<T, S, Z>
 where T: Decode<Z>,
       S: 'static + ValidateBlob,
 {
@@ -819,7 +818,7 @@ where S: ValidateBlob,
     }
 }
 
-impl<T, S: Copy, Z: Zone> ValidateBlob for SumTree<T, S, Z, [()]>
+impl<T, S: Copy, Z: Zone> ValidateBlob for DynSumTree<T, S, Z>
 where S: ValidateBlob,
 {
     type Error = ValidateBlobSumTreeError<S::Error, <Z::PersistPtr as ValidateBlob>::Error, !>;
@@ -840,11 +839,11 @@ where T: Persist,
     type Error = <Self::Persist as ValidateBlob>::Error;
 }
 
-unsafe impl<T, S: Copy, Z: Zone> PersistPointee for SumTree<T, S, Z, [()]>
+unsafe impl<T, S: Copy, Z: Zone> PersistPointee for DynSumTree<T, S, Z>
 where T: Persist,
       S: 'static + ValidateBlob,
 {
-    type Persist = SumTree<T::Persist, S, Z::Persist, [()]>;
+    type Persist = DynSumTree<T::Persist, S, Z::Persist>;
     type Error = <Self::Persist as ValidateBlob>::Error;
 
     unsafe fn assume_valid(this: &Self::Persist) -> SumTree<T, S, Z> {
@@ -858,11 +857,11 @@ where T: Persist,
 
 #[derive(Debug)]
 pub struct ValidateSumTreeState<'a, T, S: Copy, Z: Zone, TState> {
-    stack: Vec<&'a SumTree<T, S, Z, [()]>>,
+    stack: Vec<&'a DynSumTree<T, S, Z>>,
     leaf: Option<(&'a T, TState)>,
 }
 
-unsafe impl<'a, T, S: Copy, Z: Zone> ValidatePointeeChildren<'a, Z> for SumTree<T, S, Z, [()]>
+unsafe impl<'a, T, S: Copy, Z: Zone> ValidatePointeeChildren<'a, Z> for DynSumTree<T, S, Z>
 where T: ValidateChildren<'a, Z>,
       S: 'static + ValidateBlob,
 {
@@ -886,7 +885,7 @@ where T: ValidateChildren<'a, Z>,
             // it fails we have to try again with the same pointer.
             if let Some(tip) = state.stack.last() {
                 if let Ok(height) = NonZeroHeight::try_from(tip.height()) {
-                    if let Some(inner) = validator.validate_ptr::<Inner<T, S, Z, [()]>>(&tip.tip, height)? {
+                    if let Some(inner) = validator.validate_ptr::<DynInner<T, S, Z>>(&tip.tip, height)? {
                         state.stack.pop();
                         state.stack.push(inner.right());
                         state.stack.push(inner.left());
@@ -912,16 +911,16 @@ where T: ValidateChildren<'a, Z>,
     type State = ValidateSumTreeState<'a, T::Persist, S, Z::Persist, T::State>;
 
     fn validate_children(this: &'a Self::Persist) -> Self::State {
-        <SumTree<T, S, Z, [()]> as ValidatePointeeChildren<'a, Z>>::validate_children(this.as_ref())
+        <DynSumTree<T, S, Z> as ValidatePointeeChildren<'a, Z>>::validate_children(this.as_ref())
     }
 
     fn poll<V: PtrValidator<Z>>(this: &'a Self::Persist, state: &mut Self::State, validator: &V) -> Result<(), V::Error> {
-        <SumTree<T, S, Z, [()]> as ValidatePointeeChildren<'a, Z>>::poll(this.as_ref(), state, validator)
+        <DynSumTree<T, S, Z> as ValidatePointeeChildren<'a, Z>>::poll(this.as_ref(), state, validator)
     }
 }
 
 
-impl<T, S: Copy, Z: Zone> Load<Z> for SumTree<T, S, Z, [()]>
+impl<T, S: Copy, Z: Zone> Load<Z> for DynSumTree<T, S, Z>
 where T: Decode<Z>,
       S: 'static + ValidateBlob,
 {
@@ -933,11 +932,11 @@ where T: Decode<Z>,
 {
 }
 
-impl<T, S: Copy, Z: Zone, Y: Zone> Saved<Y> for SumTree<T, S, Z, [()]>
+impl<T, S: Copy, Z: Zone, Y: Zone> Saved<Y> for DynSumTree<T, S, Z>
 where T: Encoded<Y>,
       S: MerkleSum<T>,
 {
-    type Saved = SumTree<T::Encoded, S, Y, [()]>;
+    type Saved = DynSumTree<T::Encoded, S, Y>;
 }
 
 impl<T, S: Copy, Z: Zone, Y: Zone> Encoded<Y> for SumTree<T, S, Z>
@@ -953,27 +952,27 @@ pub struct SaveSumTreeState<'a, T: 'a + Encode<'a, Y>, S: Copy, Z: 'a + Zone, Y:
 }
 
 enum InnerState<'a, T: 'a, S: Copy, Z: 'a + Zone, Y: Zone> {
-    Ready(&'a SumTree<T, S, Z, [()]>),
+    Ready(&'a DynSumTree<T, S, Z>),
     DoneLeft {
-        tip: &'a SumTree<T, S, Z, [()]>,
+        tip: &'a DynSumTree<T, S, Z>,
         left_ptr: Y::PersistPtr,
     }
 }
 
 enum TipState<'a, T: Encode<'a, Y>, S: Copy, Z: 'a + Zone, Y: Zone> {
     /// Initial state where nothing has been saved.
-    Ready(&'a SumTree<T, S, Z, [()]>),
+    Ready(&'a DynSumTree<T, S, Z>),
 
     /// Leaf node, which needs saving.
     Leaf {
-        tip: &'a SumTree<T, S, Z, [()]>,
+        tip: &'a DynSumTree<T, S, Z>,
         leaf: &'a T,
         leaf_state: T::State,
     },
 
     /// Inner node whose children have been saved, but the node itself has not.
     Inner {
-        tip: &'a SumTree<T, S, Z, [()]>,
+        tip: &'a DynSumTree<T, S, Z>,
         inner: &'a Inner<T, S, Z, ()>,
         left_ptr: Y::PersistPtr,
         right_ptr: Y::PersistPtr,
@@ -981,12 +980,12 @@ enum TipState<'a, T: Encode<'a, Y>, S: Copy, Z: 'a + Zone, Y: Zone> {
 
     /// Tip body has been saved.
     Done {
-        tip: &'a SumTree<T, S, Z, [()]>,
+        tip: &'a DynSumTree<T, S, Z>,
         tip_ptr: Y::PersistPtr,
     },
 }
 
-impl<'a, T, S: Copy, Z: 'a + Zone, Y: Zone> Save<'a, Y> for SumTree<T, S, Z, [()]>
+impl<'a, T, S: Copy, Z: 'a + Zone, Y: Zone> Save<'a, Y> for DynSumTree<T, S, Z>
 where T: 'a + Commit + Encode<'a, Y>,
       S: Commit + MerkleSum<T>,
       Z: SavePtr<Y>,
@@ -1026,7 +1025,7 @@ where T: 'a + Commit + Encode<'a, Y>,
                                 Ok(tip_ptr) => TipState::Done { tip, tip_ptr },
                                 Err(inner) => {
                                     // SAFETY: we do in fact own this inner value
-                                    let inner: &'a Inner<T, S, Z, [()]> = unsafe { &*(inner as *const _) };
+                                    let inner: &'a DynInner<T, S, Z> = unsafe { &*(inner as *const _) };
 
                                     state.stack.push(InnerState::Ready(tip));
                                     TipState::Ready(inner.left())
