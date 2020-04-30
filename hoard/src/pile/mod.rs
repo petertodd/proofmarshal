@@ -435,6 +435,57 @@ impl<'p, 'v> TryGet for TryPile<'p, 'v> {
     }
 }
 
+impl<'p,'v> Zone for Pile<'p,'v> {
+    type Ptr = Offset<'p,'v>;
+    type Persist = Pile<'static, 'static>;
+    type PersistPtr = Offset<'static, 'static>;
+
+    type Error = !;
+
+    #[inline(always)]
+    fn duplicate(&self) -> Self {
+        *self
+    }
+
+    unsafe fn clone_ptr_unchecked<T>(ptr: &Offset<'p, 'v>) -> Offset<'p, 'v> {
+        *ptr
+    }
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
+        Err(FatPtr {
+            raw: ptr.raw.cast(),
+            metadata: ptr.metadata,
+        })
+    }
+
+    fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
+        owned: OwnedPtr<T, Self>,
+        f: impl FnOnce(Result<&mut ManuallyDrop<T>, FatPtr<T, Self::Persist>>) -> R,
+    ) -> R
+    {
+        let fat = owned.into_inner().into_inner();
+        f(Err(FatPtr {
+            raw: fat.raw.cast(),
+            metadata: fat.metadata,
+        }))
+    }
+}
+
+impl<'p, 'v> TryGet for Pile<'p, 'v> {
+    unsafe fn try_get_unchecked<'a, T>(&self, ptr: &'a Offset<'p, 'v>, metadata: T::Metadata)
+        -> Result<Ref<'a, T, Self>, Self::Error>
+        where T: ?Sized + PersistPointee
+    {
+        todo!()
+    }
+
+    unsafe fn try_take_unchecked<T: ?Sized + Load<Self>>(&self, ptr: Offset<'p, 'v>, metadata: T::Metadata)
+        -> Result<Own<T::Owned, Self>, Self::Error>
+    {
+        todo!()
+    }
+}
+
 pub fn test_trypile<'a,'p,'v>(pile: &TryPile<'p,'v>,
     ptr1: &[ValidPtr<[bool;2], TryPile<'p, 'v>>; 100],
     ptr2: &[ValidPtr<u8, TryPile<'p, 'v>>; 100],
@@ -455,6 +506,12 @@ pub fn test_trypile<'a,'p,'v>(pile: &TryPile<'p,'v>,
 impl<'p> Default for TryPileMut<'p, 'static> {
     fn default() -> Self {
         TryPileMut(TryPile::empty())
+    }
+}
+
+impl<'p> Default for PileMut<'p, 'static> {
+    fn default() -> Self {
+        PileMut(TryPileMut::default())
     }
 }
 
@@ -632,6 +689,93 @@ impl<'p, 'v> TryGetMut for TryPileMut<'p, 'v> {
         -> Result<RefMut<'a, T, Self>, Self::Error>
     {
         // try_get_mut_impl(self, ptr)
+        todo!()
+    }
+}
+
+impl<'p,'v> Zone for PileMut<'p,'v> {
+    type Ptr = OffsetMut<'p,'v>;
+    type Persist = Pile<'static, 'static>;
+    type PersistPtr = Offset<'static, 'static>;
+
+    type Error = !;
+
+    fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> OwnedPtr<T, Self> {
+        OffsetMut::alloc(src)
+    }
+
+    #[inline(always)]
+    fn duplicate(&self) -> Self {
+        Self(self.0)
+    }
+
+    unsafe fn clone_ptr_unchecked<T>(ptr: &Self::Ptr) -> Self::Ptr {
+        todo!()
+    }
+
+    fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
+        match ptr.raw.kind() {
+            offsetmut::Kind::Ptr(nonnull) => unsafe {
+                Ok(&*T::make_fat_ptr(nonnull.cast().as_ptr(), ptr.metadata))
+            },
+            offsetmut::Kind::Offset(raw) => {
+                let raw = raw.cast();
+                Err(FatPtr { raw, metadata: ptr.metadata })
+            },
+        }
+    }
+
+    fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
+        owned: OwnedPtr<T, Self>,
+        f: impl FnOnce(Result<&mut ManuallyDrop<T>, FatPtr<T, Self::Persist>>) -> R,
+    ) -> R
+    {
+        let metadata = owned.metadata;
+        OffsetMut::try_take_dirty_unsized(owned, |r|
+            f(match r {
+                Ok(t_ref) => Ok(t_ref),
+                Err(offset) => Err(FatPtr { raw: offset.cast(), metadata }),
+            })
+        )
+    }
+}
+
+impl<'p,'v> Alloc for PileMut<'p,'v> {
+    fn alloc<T: ?Sized + Pointee>(&self, src: impl Take<T>) -> OwnedPtr<T, Self> {
+        OffsetMut::alloc(src)
+    }
+}
+
+impl<'p, 'v> TryGet for PileMut<'p, 'v> {
+    unsafe fn try_get_unchecked<'a, T>(&self, ptr: &'a OffsetMut<'p, 'v>, metadata: T::Metadata)
+        -> Result<Ref<'a, T, Self>, Self::Error>
+        where T: ?Sized + PersistPointee
+    {
+        match ptr.kind() {
+            offsetmut::Kind::Offset(offset) => {
+                todo!()
+            },
+            offsetmut::Kind::Ptr(nonnull) => {
+                let r: &T = &*T::make_fat_ptr(nonnull.cast().as_ptr(), metadata);
+                Ok(Ref {
+                    this: r,
+                    zone: self.duplicate()
+                })
+            }
+        }
+    }
+
+    unsafe fn try_take_unchecked<T: ?Sized + Load<Self>>(&self, ptr: OffsetMut<'p, 'v>, metadata: T::Metadata)
+        -> Result<Own<T::Owned, Self>, Self::Error>
+    {
+        todo!()
+    }
+}
+
+impl<'p, 'v> TryGetMut for PileMut<'p, 'v> {
+    unsafe fn try_get_mut_unchecked<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut OffsetMut<'p,'v>, metadata: T::Metadata)
+        -> Result<RefMut<'a, T, Self>, Self::Error>
+    {
         todo!()
     }
 }
