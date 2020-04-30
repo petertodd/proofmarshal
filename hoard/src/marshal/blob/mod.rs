@@ -42,6 +42,20 @@ pub struct Blob<'a, T: ?Sized> {
 
 pub struct ValidBlob<'a, T: ?Sized>(Blob<'a, T>);
 
+impl<'a, T: ?Sized> Clone for Blob<'a, T> {
+    fn clone(&self) -> Self {
+        Blob {
+            marker: PhantomData,
+            ptr: self.ptr,
+        }
+    }
+}
+
+impl<'a, T: ?Sized> Clone for ValidBlob<'a, T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
 
 impl<T> ops::Deref for Blob<'_, T> {
     type Target = [u8];
@@ -133,6 +147,16 @@ pub struct BlobCursor<'a, T: ?Sized, P> {
     offset: usize,
 }
 
+impl<'a, T: ?Sized, P: Clone> Clone for BlobCursor<'a, T, P> {
+    fn clone(&self) -> Self {
+        Self {
+            padding_validator: self.padding_validator.clone(),
+            blob: self.blob.clone(),
+            offset: self.offset,
+        }
+    }
+}
+
 impl<'a, T, P> ops::Deref for BlobCursor<'a, T, P> {
     type Target = [u8];
 
@@ -144,6 +168,14 @@ impl<'a, T, P> ops::Deref for BlobCursor<'a, T, P> {
 impl<'a, T: ?Sized, P> BlobCursor<'a, T, P> {
     fn new(blob: Blob<'a, T>, padding_validator: P) -> Self {
         Self { padding_validator, blob, offset: 0 }
+    }
+
+    pub unsafe fn cast_unchecked<U>(self) -> BlobCursor<'a, U, P> {
+        BlobCursor {
+            padding_validator: self.padding_validator,
+            blob: self.blob.cast_unchecked(),
+            offset: self.offset
+        }
     }
 }
 
