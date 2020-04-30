@@ -198,10 +198,6 @@ impl<'a, T: ValidateBlob, V: PaddingValidator> BlobCursor<'a, T, V> {
         }
     }
 
-    pub unsafe fn assume_valid(self) -> Result<ValidBlob<'a, T>, BlobError<T::Error, V::Error>> {
-        Ok(self.blob.assume_valid())
-    }
-
     pub unsafe fn validate_padding(self) -> Result<ValidBlob<'a, T>, BlobError<T::Error, V::Error>> {
         todo!()
     }
@@ -210,6 +206,12 @@ impl<'a, T: ValidateBlob, V: PaddingValidator> BlobCursor<'a, T, V> {
         -> Result<ValidBlob<'a, T>, BlobError<T::Error, V::Error>>
     {
         f(self.blob).map_err(BlobError::Error)
+    }
+}
+
+impl<'a, T: ?Sized + ValidateBlob, V: PaddingValidator> BlobCursor<'a, T, V> {
+    pub unsafe fn assume_valid(self) -> Result<ValidBlob<'a, T>, BlobError<T::Error, V::Error>> {
+        Ok(self.blob.assume_valid())
     }
 }
 
