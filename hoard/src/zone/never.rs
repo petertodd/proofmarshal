@@ -13,8 +13,8 @@ impl Zone for ! {
         match *self {}
     }
 
-    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
-        match ptr.raw {}
+    unsafe fn clone_ptr_unchecked<T: Clone>(ptr: &!) -> ! {
+        match *ptr {}
     }
 
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
@@ -31,13 +31,13 @@ impl Zone for ! {
 }
 
 impl TryGet for ! {
-    fn try_get<'a, T: ?Sized + Load<Self>>(&self, _: &'a ValidPtr<T, Self>)
+    unsafe fn try_get_unchecked<'a, T: ?Sized + Load<Self>>(&self, _: &'a !, _: T::Metadata)
         -> Result<Ref<'a, T, Self>, Self::Error>
     {
         match *self {}
     }
 
-    fn try_take<T: ?Sized + Load<Self>>(&self, _: OwnedPtr<T, Self>)
+    unsafe fn try_take_unchecked<T: ?Sized + Load<Self>>(&self, _: !, _: T::Metadata)
         -> Result<Own<T::Owned, Self>, Self::Error>
     {
         match *self {}
@@ -45,7 +45,7 @@ impl TryGet for ! {
 }
 
 impl TryGetMut for ! {
-    fn try_get_mut<'a, T: ?Sized + Load<Self>>(&self, _: &'a mut ValidPtr<T, Self>)
+    unsafe fn try_get_mut_unchecked<'a, T: ?Sized + Load<Self>>(&self, _: &'a mut !, _: T::Metadata)
         -> Result<RefMut<'a, T, Self>, Self::Error>
     {
         match *self {}

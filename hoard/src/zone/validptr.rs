@@ -117,7 +117,7 @@ where T: ValidatePointeeChildren<'a, Z>
         loop {
             *state = match state {
                 ValidateState::Initial => {
-                    match validator.validate_ptr::<T>(this)? {
+                    match validator.validate_ptr::<T>(&this.raw, this.metadata)? {
                         Some(value) => {
                             ValidateState::Value {
                                 state: T::validate_children(value),

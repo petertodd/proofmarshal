@@ -351,7 +351,8 @@ where Z: PileZone<'p, 'v>
 
     fn validate_ptr<'a, T: ?Sized>(
         &self,
-        ptr: &'a FatPtr<T::Persist, Z::Persist>
+        ptr: &'a Z::PersistPtr,
+        metadata: T::Metadata,
     ) -> Result<Option<&'a T::Persist>, Self::Error>
         where T: ValidatePointeeChildren<'a, Z>
     {
@@ -378,8 +379,8 @@ impl<'p,'v> Zone for TryPile<'p,'v> {
         *self
     }
 
-    fn clone_ptr<T>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
-        unsafe { OwnedPtr::new_unchecked(ValidPtr::new_unchecked(**ptr)) }
+    unsafe fn clone_ptr_unchecked<T>(ptr: &Offset<'p, 'v>) -> Offset<'p, 'v> {
+        *ptr
     }
 
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
@@ -403,9 +404,11 @@ impl<'p,'v> Zone for TryPile<'p,'v> {
 }
 
 impl<'p, 'v> TryGet for TryPile<'p, 'v> {
-    fn try_get<'a, T>(&self, ptr: &'a ValidPtr<T, Self>) -> Result<Ref<'a, T, Self>, Self::Error>
+    unsafe fn try_get_unchecked<'a, T>(&self, ptr: &'a Offset<'p, 'v>, metadata: T::Metadata)
+        -> Result<Ref<'a, T, Self>, Self::Error>
         where T: ?Sized + PersistPointee
     {
+        /*
         let ptr: FatPtr<T, Self> = **ptr;
         let ptr: FatPtr<T, TryPile<'static, 'static>> = ptr.coerce();
         let r_persist = try_get_impl(self, &ptr)?;
@@ -413,11 +416,13 @@ impl<'p, 'v> TryGet for TryPile<'p, 'v> {
             this: unsafe { T::assume_valid_ref(r_persist) },
             zone: *self,
         })
+        */ todo!()
     }
 
-    fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>)
+    unsafe fn try_take_unchecked<T: ?Sized + Load<Self>>(&self, ptr: Offset<'p, 'v>, metadata: T::Metadata)
         -> Result<Own<T::Owned, Self>, Self::Error>
     {
+        /*
         let ptr: FatPtr<T, Self> = **ptr;
         let ptr: FatPtr<T, TryPile<'static, 'static>> = ptr.coerce();
         let r_persist = try_get_impl(self, &ptr)?;
@@ -426,6 +431,7 @@ impl<'p, 'v> TryGet for TryPile<'p, 'v> {
             this: unsafe { T::assume_valid(r_persist) },
             zone: *self,
         })
+        */ todo!()
     }
 }
 
@@ -478,7 +484,7 @@ impl<'p,'v> Zone for TryPileMut<'p,'v> {
         Self(self.0)
     }
 
-    fn clone_ptr<T>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
+    unsafe fn clone_ptr_unchecked<T>(ptr: &Self::Ptr) -> Self::Ptr {
         todo!()
     }
 
@@ -516,9 +522,11 @@ impl<'p,'v> Alloc for TryPileMut<'p,'v> {
 }
 
 impl<'p, 'v> TryGet for TryPileMut<'p, 'v> {
-    fn try_get<'a, T>(&self, ptr: &'a ValidPtr<T, Self>) -> Result<Ref<'a, T, Self>, Self::Error>
+    unsafe fn try_get_unchecked<'a, T>(&self, ptr: &'a OffsetMut<'p, 'v>, metadata: T::Metadata)
+        -> Result<Ref<'a, T, Self>, Self::Error>
         where T: ?Sized + PersistPointee
     {
+        /*
         let fatptr: FatPtr<T, Self> = **ptr;
 
         match TryCoerce::<FatPtr<T, TryPile>>::try_coerce(**ptr) {
@@ -537,11 +545,13 @@ impl<'p, 'v> TryGet for TryPileMut<'p, 'v> {
                 })
             },
         }
+        */ todo!()
     }
 
-    fn try_take<T: ?Sized + Load<Self>>(&self, ptr: OwnedPtr<T, Self>)
+    unsafe fn try_take_unchecked<T: ?Sized + Load<Self>>(&self, ptr: OffsetMut<'p, 'v>, metadata: T::Metadata)
         -> Result<Own<T::Owned, Self>, Self::Error>
     {
+        /*
         let metadata: T::Metadata = ptr.metadata;
         OffsetMut::try_take_dirty_unsized(ptr, |result| {
             match result {
@@ -564,6 +574,7 @@ impl<'p, 'v> TryGet for TryPileMut<'p, 'v> {
                 },
             }
         })
+        */ todo!()
     }
 }
 
@@ -617,10 +628,11 @@ where T: ?Sized + PersistPointee,
 }
 
 impl<'p, 'v> TryGetMut for TryPileMut<'p, 'v> {
-    fn try_get_mut<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut ValidPtr<T, Self>)
+    unsafe fn try_get_mut_unchecked<'a, T: ?Sized + Load<Self>>(&self, ptr: &'a mut OffsetMut<'p,'v>, metadata: T::Metadata)
         -> Result<RefMut<'a, T, Self>, Self::Error>
     {
-        try_get_mut_impl(self, ptr)
+        // try_get_mut_impl(self, ptr)
+        todo!()
     }
 }
 

@@ -48,8 +48,8 @@ impl Zone for Missing {
         Missing
     }
 
-    fn clone_ptr<T: Clone>(ptr: &ValidPtr<T, Self>) -> OwnedPtr<T, Self> {
-        make_missing_ptr(ptr.metadata)
+    unsafe fn clone_ptr_unchecked<T: Clone>(ptr: &Self::Ptr) -> Self::Ptr {
+        *ptr
     }
 
     fn try_get_dirty<T: ?Sized + Pointee>(ptr: &ValidPtr<T, Self>) -> Result<&T, FatPtr<T, Self::Persist>> {
@@ -70,13 +70,13 @@ impl Zone for Missing {
 }
 
 impl TryGet for Missing {
-    fn try_get<'a, T: ?Sized + Load<Self>>(&self, _: &'a ValidPtr<T, Self>)
+    unsafe fn try_get_unchecked<'a, T: ?Sized + Load<Self>>(&self, _ptr: &'a (), _metadata: T::Metadata)
         -> Result<Ref<'a, T, Self>, Self::Error>
     {
         Err(MissingError)
     }
 
-    fn try_take<T: ?Sized + Load<Self>>(&self, _: OwnedPtr<T, Self>)
+    unsafe fn try_take_unchecked<T: ?Sized + Load<Self>>(&self, _: (), _metadata: T::Metadata)
         -> Result<Own<T::Owned, Self>, Self::Error>
     {
         Err(MissingError)
@@ -84,7 +84,7 @@ impl TryGet for Missing {
 }
 
 impl TryGetMut for Missing {
-    fn try_get_mut<'a, T: ?Sized + Load<Self>>(&self, _: &'a mut ValidPtr<T, Self>)
+    unsafe fn try_get_mut_unchecked<'a, T: ?Sized + Load<Self>>(&self, _: &'a mut (), _: T::Metadata)
         -> Result<RefMut<'a, T, Self>, Self::Error>
     {
         Err(MissingError)
