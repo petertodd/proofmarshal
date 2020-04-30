@@ -2,11 +2,14 @@
 
 use std::alloc::Layout;
 use std::any::Any;
+use std::cmp;
 use std::convert::TryInto;
 use std::fmt;
 use std::hash::Hash;
 use std::mem::{self, MaybeUninit};
 use std::ptr::{self, NonNull};
+
+use thiserror::Error;
 
 use leint::Le;
 
@@ -27,6 +30,13 @@ impl Metadata for () {
     #[inline(always)]
     fn kind(&self) -> MetadataKind {
         MetadataKind::Sized
+    }
+}
+
+impl Metadata for Le<u64> {
+    #[inline(always)]
+    fn kind(&self) -> MetadataKind {
+        MetadataKind::Len(self.get())
     }
 }
 
@@ -100,35 +110,35 @@ unsafe impl<T> Pointee for T {
     }
 }
 
-/*
+#[derive(Debug, Error)]
+#[error("FIXME")]
+pub struct LayoutSliceError;
+
 unsafe impl<T> Pointee for [T] {
     type Metadata = Le<u64>;
+    type LayoutError = LayoutSliceError;
 
-    #[inline(always)]
-    fn metadata_from_dropped(dropped: &MaybeDropped<Self>) -> Self::Metadata {
-        let len: u64 = unsafe {
-            dropped.get_unchecked().len()
-        }.try_into().unwrap();
-        len.into()
+    fn try_layout(len: Self::Metadata) -> Result<Layout, Self::LayoutError> {
+        let item_size = cmp::max(mem::size_of::<T>(), mem::align_of::<T>());
+        item_size.checked_mul(len.get() as usize)
+                 .and_then(|size| Layout::from_size_align(size, mem::align_of::<T>()).ok())
+                 .ok_or(LayoutSliceError)
+    }
+
+    fn metadata_from_dropped(this: &MaybeDropped<Self>) -> Le<u64> {
+        (this.as_ptr().len() as u64).into()
     }
 
     #[inline(always)]
-    fn make_fat_ptr(thin: *const (), len: Le<u64>) -> *const [T] {
-        ptr::slice_from_raw_parts(
-            thin as *const T,
-            len.get().try_into().unwrap()
-        )
+    fn make_fat_ptr(thin: *const (), len: Self::Metadata) -> *const Self {
+        ptr::slice_from_raw_parts(thin as *const T, len.get() as usize)
     }
 
     #[inline(always)]
-    fn make_fat_ptr_mut(thin: *mut (), len: Self::Metadata) -> *mut [T] {
-        ptr::slice_from_raw_parts_mut(
-            thin as *mut T,
-            len.get().try_into().unwrap()
-        )
+    fn make_fat_ptr_mut(thin: *mut (), len: Self::Metadata) -> *mut Self {
+        ptr::slice_from_raw_parts_mut(thin as *mut T, len.get() as usize)
     }
 }
-*/
 
 #[cfg(test)]
 mod tests {

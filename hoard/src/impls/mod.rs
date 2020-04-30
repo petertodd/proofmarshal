@@ -12,3 +12,4 @@ use crate::marshal::{PtrValidator, Dumper, Primitive};
 pub mod never;
 pub mod scalar;
 pub mod array;
+pub mod slices;

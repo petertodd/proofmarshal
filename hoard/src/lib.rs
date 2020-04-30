@@ -23,7 +23,7 @@
 #![feature(const_if_match)]
 #![feature(optin_builtin_traits)]
 #![feature(never_type)]
-#![feature(backtrace)]
+#![feature(slice_ptr_len)]
 
 #![feature(rustc_attrs)]
 
