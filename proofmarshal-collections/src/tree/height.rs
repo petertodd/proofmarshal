@@ -1,17 +1,39 @@
 use std::convert::TryFrom;
 use std::num::NonZeroU8;
+use std::ops;
+use std::cmp;
 
 use thiserror::Error;
 
 use hoard::marshal::{Primitive, blob::*};
 use hoard::pointee::{Metadata, MetadataKind};
-use proofmarshal_derive::{Commit, Prune};
+
+use proofmarshal_core::commit::{Digest, Commit, Verbatim, WriteVerbatim};
 
 /// The height of a perfect binary tree.
 ///
 /// Valid range: `0 ..= 63`
-#[derive(Commit, Prune, Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Height(u8);
+
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[error("out of range")]
+#[non_exhaustive]
+pub struct TryFromIntError;
+
+/// The height of an inner node in a perfect binary tree.
+///
+/// Valid range: `1 ..= 63`
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NonZeroHeight(NonZeroU8);
+
+impl Verbatim for Height {
+    const LEN: usize = 1;
+    fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error> {
+        dst.write(&self.0)?
+           .finish()
+    }
+}
 
 impl Height {
     pub const MAX: u8 = 63;
@@ -55,6 +77,27 @@ impl Height {
             assert!(self.0 == Self::MAX);
             None
         }
+    }
+}
+
+impl NonZeroHeight {
+    #[inline(always)]
+    pub fn new(n: NonZeroU8) -> Result<Self, TryFromIntError> {
+        if n.get() <= Height::MAX {
+            Ok(Self(n))
+        } else {
+            Err(TryFromIntError)
+        }
+    }
+
+    #[inline(always)]
+    pub const unsafe fn new_unchecked(n: NonZeroU8) -> Self {
+        Self(n)
+    }
+
+    #[inline]
+    pub fn decrement(self) -> Height {
+        Height::new(self.0.get().checked_sub(1).unwrap()).unwrap()
     }
 }
 
@@ -122,37 +165,12 @@ impl Metadata for NonZeroHeight {
     }
 }
 
-/// The height of an inner node in a perfect binary tree.
-///
-/// Valid range: `1 ..= 63`
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct NonZeroHeight(NonZeroU8);
-
-impl NonZeroHeight {
-    #[inline(always)]
-    pub fn new(n: NonZeroU8) -> Result<Self, TryFromIntError> {
-        if n.get() <= Height::MAX {
-            Ok(Self(n))
-        } else {
-            Err(TryFromIntError)
-        }
-    }
-
-    #[inline(always)]
-    pub const unsafe fn new_unchecked(n: NonZeroU8) -> Self {
-        Self(n)
-    }
-
+impl Metadata for Height {
     #[inline]
-    pub fn decrement(self) -> Height {
-        Height::new(self.0.get().checked_sub(1).unwrap()).unwrap()
+    fn kind(&self) -> MetadataKind {
+        MetadataKind::Len(self.0 as u64)
     }
 }
-
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
-#[error("out of range")]
-#[non_exhaustive]
-pub struct TryFromIntError;
 
 impl TryFrom<u8> for Height {
     type Error = TryFromIntError;
@@ -182,6 +200,7 @@ impl TryFrom<usize> for Height {
         }
     }
 }
+
 
 impl TryFrom<Height> for NonZeroHeight {
     type Error = TryFromIntError;
@@ -234,6 +253,28 @@ impl From<NonZeroHeight> for usize {
     #[inline]
     fn from(height: NonZeroHeight) -> usize {
         height.0.get() as usize
+    }
+}
+
+impl cmp::PartialEq<u8> for Height {
+    fn eq(&self, rhs: &u8) -> bool {
+        self.0 == *rhs
+    }
+}
+impl cmp::PartialEq<Height> for u8 {
+    fn eq(&self, rhs: &Height) -> bool {
+        rhs == self
+    }
+}
+
+impl cmp::PartialOrd<u8> for Height {
+    fn partial_cmp(&self, rhs: &u8) -> Option<cmp::Ordering> {
+        self.0.partial_cmp(rhs)
+    }
+}
+impl cmp::PartialOrd<Height> for u8 {
+    fn partial_cmp(&self, rhs: &Height) -> Option<cmp::Ordering> {
+        self.partial_cmp(&rhs.0)
     }
 }
 

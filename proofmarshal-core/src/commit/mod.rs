@@ -6,38 +6,20 @@ pub use self::digest::Digest;
 /// The ability to cryptographically commit to a value of this type.
 ///
 /// Usually, but not always, this means hashing the value in a deterministic way.
-pub trait Commit {
-    fn commit(&self) -> Digest<Self>;
+pub trait Commit : Verbatim {
+    type Committed;
+
+    fn commit(&self) -> Digest<Self::Committed> {
+        Digest::hash_verbatim(self)
+    }
 }
 
-/// Verbatim encoding.
 pub trait Verbatim {
     /// The length of the verbatim encoding.
     const LEN: usize;
 
     fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error>;
 }
-
-/*
-impl<T: Verbatim> Commit for T {
-    fn commit(&self) -> Digest<Self> {
-        let mut fixed_bytes = [0; 512];
-        let mut vec_buf;
-
-        let buf = if let Some(buf) = fixed_bytes.get_mut(0 .. Self::LEN) {
-            buf
-        } else {
-            vec_buf = vec![0; Self::LEN];
-            &mut vec_buf[..]
-        };
-
-        let rest = self.encode_verbatim(&mut buf[..]).unwrap();
-        assert_eq!(rest.len(), 0);
-
-        Digest::hash_verbatim_bytes(buf)
-    }
-}
-*/
 
 pub trait WriteVerbatim : Sized {
     type Error;
@@ -79,6 +61,17 @@ impl WriteVerbatim for &'_ mut [u8] {
         let (dst, rest) = self.split_at_mut(src.len());
         dst.copy_from_slice(src);
         Ok(rest)
+    }
+}
+
+impl WriteVerbatim for sha2::Sha256 {
+    type Error = !;
+
+    #[inline(always)]
+    fn write_bytes(mut self, src: &[u8]) -> Result<Self, Self::Error> {
+        use sha2::Digest as _;
+        self.input(src);
+        Ok(self)
     }
 }
 

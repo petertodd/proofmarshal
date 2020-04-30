@@ -29,6 +29,8 @@ use std::marker::PhantomData;
 
 use super::*;
 
+use hoard::marshal::blob::*;
+
 /// Typed 32-byte hash digest.
 #[repr(transparent)]
 pub struct Digest<T: ?Sized = !> {
@@ -72,33 +74,23 @@ impl<T: ?Sized> Digest<T> {
         Digest::new(self.buf)
     }
 
-    pub fn hash_verbatim_bytes(verbatim: &[u8]) -> Self {
-        let mut digest = [0;32];
-        if verbatim.len() < 32 {
-            digest[0] = 0xff;
-            digest[1..1+verbatim.len()].copy_from_slice(verbatim);
-
-            Self::from(digest)
-        } else {
-            sha256_hash(verbatim).cast()
-        }
-    }
-
     pub fn hash_verbatim<U: ?Sized + Verbatim>(value: &U) -> Self {
-        let mut fixed_bytes = [0; 512];
-        let mut vec_buf;
+        if U::LEN <= 32 {
+            let mut buf = [0; 32];
+            let rest = value.encode_verbatim(&mut buf[0 .. U::LEN]).unwrap();
+            assert_eq!(rest.len(), 0, "some bytes remaining");
 
-        let buf = if let Some(buf) = fixed_bytes.get_mut(0 .. U::LEN) {
-            buf
+            Digest::from(buf)
+        } else if U::LEN <= 1024 {
+            let mut buf = [0; 1024];
+            let buf = &mut buf[0 .. U::LEN];
+            let rest = value.encode_verbatim(&mut buf[..]).unwrap();
+            assert_eq!(rest.len(), 0);
+
+            sha256_hash(buf).cast()
         } else {
-            vec_buf = vec![0; U::LEN];
-            &mut vec_buf[..]
-        };
-
-        let rest = value.encode_verbatim(&mut buf[..]).unwrap();
-        assert_eq!(rest.len(), 0);
-
-        Self::hash_verbatim_bytes(buf)
+            todo!()
+        }
     }
 }
 
@@ -197,6 +189,16 @@ impl<T: ?Sized> Ord for Digest<T> {
     #[inline]
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.as_bytes().cmp(other.as_bytes())
+    }
+}
+
+impl<T: ?Sized> ValidateBlob for Digest<T> {
+    type Error = !;
+
+    fn validate<'a, V>(blob: BlobCursor<'a, Self, V>) -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
+        where V: PaddingValidator
+    {
+        unsafe { blob.assume_valid() }
     }
 }
 

@@ -1,5 +1,9 @@
 use super::*;
 
+impl<T: Commit, const N: usize> Commit for [T; N] {
+    type Committed = [T::Committed; N];
+}
+
 impl<T: Verbatim, const N: usize> Verbatim for [T; N] {
     const LEN: usize = T::LEN * N;
 
@@ -8,15 +12,6 @@ impl<T: Verbatim, const N: usize> Verbatim for [T; N] {
             dst = dst.write(item)?;
         }
         dst.finish()
-    }
-}
-
-impl<T: Prune, const N: usize> Prune for [T; N] {
-    fn prune(&mut self) {
-        self.iter_mut().for_each(T::prune)
-    }
-    fn fully_prune(&mut self) {
-        self.iter_mut().for_each(T::fully_prune)
     }
 }
 

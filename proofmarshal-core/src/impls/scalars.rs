@@ -6,6 +6,10 @@ use std::slice;
 
 use hoard::prelude::Le;
 
+impl Commit for ! {
+    type Committed = Self;
+}
+
 impl Verbatim for ! {
     const LEN: usize = 0;
 
@@ -15,11 +19,8 @@ impl Verbatim for ! {
     }
 }
 
-impl Prune for ! {
-    #[inline(always)]
-    fn prune(&mut self) { match *self {} }
-    #[inline(always)]
-    fn fully_prune(&mut self) { match *self {} }
+impl Commit for bool {
+    type Committed = Self;
 }
 
 impl Verbatim for bool {
@@ -30,8 +31,12 @@ impl Verbatim for bool {
     }
 }
 
-macro_rules! impl_verbatim {
+macro_rules! impl_commit {
     ($($t:ty,)+) => {$(
+        impl Commit for $t {
+            type Committed = Self;
+        }
+
         impl Verbatim for $t {
             const LEN: usize = mem::size_of::<$t>();
             fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error> {
@@ -42,28 +47,8 @@ macro_rules! impl_verbatim {
     )+}
 }
 
-impl_verbatim! {
+impl_commit! {
     (),
-    u8, Le<u16>, Le<u32>, Le<u64>, Le<u128>,
-    i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
-    num::NonZeroU8, Le<num::NonZeroU16>, Le<num::NonZeroU32>, Le<num::NonZeroU64>, Le<num::NonZeroU128>,
-    num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
-}
-
-macro_rules! impl_prune {
-    ($($t:ty,)+) => {$(
-        impl Prune for $t {
-            #[inline(always)]
-            fn prune(&mut self) {}
-
-            #[inline(always)]
-            fn fully_prune(&mut self) {}
-        }
-    )+}
-}
-
-impl_prune! {
-    (), bool,
     u8, Le<u16>, Le<u32>, Le<u64>, Le<u128>,
     i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
     num::NonZeroU8, Le<num::NonZeroU16>, Le<num::NonZeroU32>, Le<num::NonZeroU64>, Le<num::NonZeroU128>,

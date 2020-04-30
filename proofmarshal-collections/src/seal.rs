@@ -9,121 +9,56 @@
 //! Seals are the core anti-double-spend primitive in Proofmarshal.
 
 use std::marker::PhantomData;
-use std::num::NonZeroU128;
-use std::ops;
 
-use crate::digest::Digest;
-use crate::commit::Commit;
+use hoard::prelude::*;
+use hoard::zone::Missing;
 
-/// A typed wrapper around a raw seal.
-#[repr(transparent)]
+use proofmarshal_core::commit::{Digest, Verbatim, WriteVerbatim};
+use proofmarshal_core::fact::{Fact, Maybe};
+
+pub trait SingleUseSeal {
+    type Error;
+    type Witness;
+
+    fn validate_witness(&self, witness: &Self::Witness, digest: Digest) -> Result<(), Self::Error>;
+}
+
 pub struct Seal<T, S> {
-    marker: PhantomData<(fn(T) -> T)>,
+    marker: PhantomData<fn(&()) -> &T>,
     raw: S,
 }
 
-impl<T, S> From<S> for Seal<T,S> {
-    fn from(raw: S) -> Self {
-        Self { marker: PhantomData, raw}
+impl<T, S: Verbatim> Verbatim for Seal<T, S> {
+    const LEN: usize = S::LEN;
+
+    fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error> {
+        self.raw.encode_verbatim(dst)
     }
 }
 
-/// Contextual proof that a seal has been closed.
-pub trait Witness<S, Context> {
-    type Error;
-
-    /// Validates that the seal has been closed.
-    fn validate(&self, context: &mut Context,
-                       seal: &S,
-                       digest: Digest) -> Result<(), Self::Error>;
+pub struct Sealed<T: Fact<Z>, W: Fact<Z>, Z: Zone = Missing> {
+    witness: Maybe<W, Z>,
+    value: Maybe<T, Z>,
 }
 
-/// The fact that a seal has been closed over a value.
-#[derive(Debug)]
-#[repr(C)]
-pub struct Sealed<T,S,W=!,X=!> {
-    // Invariant over W and X to be conservative.
-    marker: PhantomData<(fn(W) -> X,fn(X) -> X)>,
-    seal: Digest<S>,
-    value: T,
+impl<T: Fact<Z>, W: Fact<Z>, Z: Zone> Sealed<T,W,Z> {
+    pub fn get_value<S>(&self, seal: S) -> Result<&Maybe<T, Z>, S::Error>
+        where S: SingleUseSeal<Witness = W>
+    {
+        todo!()
+    }
 }
 
-/// A `Sealed` value that hasn't been verified.
-pub type MaybeSealed<T,S,W> = Sealed<T,S,W>;
-
-impl<T,S,W> MaybeSealed<T,S,W>
+impl<Z: Zone, T: Fact + Fact<Z>, W: Fact + Fact<Z>> Fact<Z> for Sealed<T, W>
+where T: Clone,
+      W: Clone
 {
-    /// Creates a new sealed value, without a context.
-    ///
-    /// This is an untrusted operation as you won't be able to access the value.
-    pub fn new(value: T, seal: Digest<S>) -> Self {
-        Self { marker: PhantomData, value, seal }
-    }
-}
+    type Evidence = Sealed<T,W,Z>;
 
-impl<T,S,W,X> Sealed<T,S,W,X>
-where W: Witness<S,X>
-{
-    /// Trusts that a value has been sealed without verifying that fact.
-    pub fn trust(maybe: &MaybeSealed<T,S,W>) -> &Self {
-        // Safe because `Sealed` is #[repr(C)] and W and X are phantoms.
-        unsafe { &*(maybe as *const _ as *const _) }
-    }
-}
-
-/// If the witness is valid for the specified seal and context validation (or trust) must have
-/// happened, so we can dereference to the value.
-impl<T,S,W,X> ops::Deref for Sealed<T,S,W,X>
-where W: Witness<S,X>
-{
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.value
-    }
-}
-
-/// "Fake" seal that simply hashes the sealed value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HashSeal {
-    nonce: Option<NonZeroU128>,
-    digest: Digest,
-}
-
-impl HashSeal {
-    /// Creates a new `HashSeal` from a value.
-    pub fn new<T: Commit>(value: &T) -> Seal<T, Self> {
+    fn from_evidence(evidence: &Self::Evidence) -> Self {
         Self {
-            nonce: None,
-            digest: value.commit().cast(),
-        }.into()
-    }
-}
-
-#[derive(Debug)]
-pub struct ValidateHashSealError;
-
-impl<X: AsRef<()>> Witness<HashSeal,X> for () {
-    type Error = ValidateHashSealError;
-
-    fn validate(&self, _: &mut X, seal: &HashSeal, digest: Digest) -> Result<(), Self::Error> {
-        if seal.digest == digest {
-            Ok(())
-        } else {
-            Err(ValidateHashSealError)
+            witness: Fact::from_evidence(&evidence.witness),
+            value: Fact::from_evidence(&evidence.value),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test() {
-        let v = 0x1234_5678_u32;
-
-        let seal = HashSeal::new(&v);
-        let maybe = MaybeSealed::<_,HashSeal,()>::new(v, Digest::default());
     }
 }
