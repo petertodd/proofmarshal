@@ -2,6 +2,8 @@ use thiserror::Error;
 
 pub trait MerkleSum<T: ?Sized> : 'static + Copy {
     const MAX: Self;
+    const ZERO: Self;
+
     type Error : std::error::Error;
 
     fn from_item(item: &T) -> Self;
@@ -15,6 +17,8 @@ pub trait MerkleSum<T: ?Sized> : 'static + Copy {
 
 impl<T: ?Sized> MerkleSum<T> for () {
     const MAX: Self = ();
+    const ZERO: Self = ();
+
     type Error = !;
 
     fn from_item(_: &T) -> Self {}
@@ -31,6 +35,8 @@ pub struct OverflowError;
 
 impl MerkleSum<u8> for u8 {
     const MAX: Self = u8::MAX;
+    const ZERO: Self = 0;
+
     type Error = OverflowError;
 
     fn from_item(x: &u8) -> Self {

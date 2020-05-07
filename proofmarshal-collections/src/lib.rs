@@ -8,6 +8,7 @@ use proofmarshal_core::*;
 
 pub mod merklesum;
 pub mod tree;
+pub mod mmr;
 
 #[cfg(test)]
 mod tests {

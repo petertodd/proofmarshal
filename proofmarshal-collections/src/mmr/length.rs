@@ -192,6 +192,13 @@ unsafe impl GetLength for [()] {
     }
 }
 
+unsafe impl GetLength for DynLength {
+    #[inline]
+    fn get(&self) -> Length {
+        Length::try_from(self.0.len()).expect("invalid height")
+    }
+}
+
 unsafe impl GetLength for Length {
     #[inline]
     fn get(&self) -> Length {
