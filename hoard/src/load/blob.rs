@@ -1,36 +1,9 @@
 //! Blobs and blob validation.
 
-// FIXME: add Persist requirements re: alignment
-
-use std::any::type_name;
-use std::convert::TryFrom;
-use std::fmt;
 use std::marker::PhantomData;
 use std::mem::{self, MaybeUninit, size_of};
-use std::ops;
-use std::ptr::{self, NonNull};
 use std::slice;
-
-use thiserror::Error;
-
-pub mod padding;
-pub use self::padding::PaddingValidator;
-
-mod writeblob;
-pub use self::writeblob::WriteBlob;
-
-use crate::bytes::Bytes;
-
-/*
-use crate::{
-    load::Persist,
-    pointee::Pointee,
-};
-
-mod cursor;
-pub use self::cursor::Error;
-
-*/
+use std::ops;
 
 /// Unverified bytes from a persistent zone.
 #[repr(transparent)]
@@ -38,23 +11,6 @@ pub struct Blob<'a, T: ?Sized> {
     // *invariant* over 'a
     marker: PhantomData<fn(Self) -> &'a T>,
     ptr: *const T,
-}
-
-pub struct ValidBlob<'a, T: ?Sized>(Blob<'a, T>);
-
-impl<'a, T: ?Sized> Clone for Blob<'a, T> {
-    fn clone(&self) -> Self {
-        Blob {
-            marker: PhantomData,
-            ptr: self.ptr,
-        }
-    }
-}
-
-impl<'a, T: ?Sized> Clone for ValidBlob<'a, T> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
 }
 
 impl<T> ops::Deref for Blob<'_, T> {
@@ -91,18 +47,101 @@ impl<'a, T: ?Sized> Blob<'a, T> {
         ValidBlob(self)
     }
 
-    pub fn into_cursor(self) -> BlobCursor<'a, T, padding::CheckPadding> {
-        BlobCursor::new(self, padding::CheckPadding)
+    pub fn into_cursor(self) -> BlobCursor<'a, T> {
+        BlobCursor {
+            blob: self,
+            offset: 0,
+        }
     }
-
-    pub fn into_cursor_ignore_padding(self) -> BlobCursor<'a, T, padding::IgnorePadding> {
-        BlobCursor::new(self, padding::IgnorePadding)
-    }
-
     pub unsafe fn cast_unchecked<U>(self) -> Blob<'a, U> {
         Blob::from_ptr(self.ptr as *const U)
     }
 }
+
+pub struct ValidBlob<'a, T: ?Sized>(Blob<'a, T>);
+
+impl<T: ?Sized> ops::Deref for ValidBlob<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe {
+            &*self.0.ptr
+        }
+    }
+}
+
+pub struct BlobCursor<'a, T: ?Sized> {
+    blob: Blob<'a, T>,
+    offset: usize,
+}
+
+impl<'a, T: ?Sized + super::Load> BlobCursor<'a, T> {
+    pub fn field<U: super::Load>(&mut self) -> Result<ValidBlob<'a, U>, U::Error> {
+        /*
+        unsafe {
+            self.field_unchecked::<U,F>(mem::size_of::<T>(), f)
+        }
+        */ todo!()
+    }
+
+    pub unsafe fn assume_valid(self) -> ValidBlob<'a, T> {
+        self.blob.assume_valid()
+    }
+}
+
+impl<'a, T: ?Sized> From<BlobCursor<'a, T>> for Blob<'a, T> {
+    fn from(cursor: BlobCursor<'a, T>) -> Blob<'a, T> {
+        cursor.blob
+    }
+}
+
+
+/*
+use std::any::type_name;
+use std::convert::TryFrom;
+use std::fmt;
+use std::marker::PhantomData;
+use std::ops;
+use std::ptr::{self, NonNull};
+
+use thiserror::Error;
+
+pub mod padding;
+pub use self::padding::PaddingValidator;
+
+mod writeblob;
+pub use self::writeblob::WriteBlob;
+
+use crate::bytes::Bytes;
+
+/*
+use crate::{
+    load::Persist,
+    pointee::Pointee,
+};
+
+mod cursor;
+pub use self::cursor::Error;
+
+*/
+
+
+impl<'a, T: ?Sized> Clone for Blob<'a, T> {
+    fn clone(&self) -> Self {
+        Blob {
+            marker: PhantomData,
+            ptr: self.ptr,
+        }
+    }
+}
+
+impl<'a, T: ?Sized> Clone for ValidBlob<'a, T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+
 
 impl<'a, T> From<&'a Bytes<T>> for Blob<'a, T> {
     /// Creates a `Blob` from a `Bytes` reference.
@@ -292,3 +331,4 @@ mod test {
                    "hoard::marshal::blob::Blob<!> { ptr: 0x1 }");
     }
 }
+*/

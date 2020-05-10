@@ -1,13 +1,17 @@
 //! Targets of pointers.
 
+use std::hash::Hash;
+use std::ptr::{self, NonNull};
+
+use crate::load::Load;
+
+/*
 use std::alloc::Layout;
 use std::any::Any;
 use std::cmp;
 use std::convert::TryInto;
 use std::fmt;
-use std::hash::Hash;
 use std::mem::{self, MaybeUninit};
-use std::ptr::{self, NonNull};
 
 use thiserror::Error;
 
@@ -39,6 +43,7 @@ impl Metadata for Le<u64> {
         MetadataKind::Len(self.get())
     }
 }
+*/
 
 /// A target of a pointer.
 ///
@@ -47,16 +52,15 @@ impl Metadata for Le<u64> {
 /// Other code can assume `Pointee` is implemented correctly.
 pub unsafe trait Pointee {
     /// Fat pointer metadata.
-    type Metadata : 'static + Metadata + Copy + Eq + Ord + Hash + Send + Sync;
+    type Metadata : 'static + Load + Copy + Eq + Ord + Hash + Send + Sync;
+
     type LayoutError : 'static + std::error::Error + Send + Sync;
 
+    /*
     fn try_layout(metadata: Self::Metadata) -> Result<Layout, Self::LayoutError>;
+    */
 
-    fn metadata(this: &Self) -> Self::Metadata {
-        Self::metadata_from_dropped(MaybeDropped::from_ref(this))
-    }
-
-    fn metadata_from_dropped(dropped: &MaybeDropped<Self>) -> Self::Metadata;
+    fn metadata(this: &Self) -> Self::Metadata;
 
     /// Makes the metadata for a sized type.
     ///
@@ -87,6 +91,13 @@ unsafe impl<T> Pointee for T {
     type Metadata = ();
     type LayoutError = !;
 
+    fn metadata(_this: &Self) -> Self::Metadata {
+        ()
+    }
+
+    /*
+    type LayoutError = !;
+
     fn try_layout(_: ()) -> Result<Layout, !> {
         Ok(Layout::new::<T>())
     }
@@ -98,6 +109,7 @@ unsafe impl<T> Pointee for T {
     }
 
     fn metadata_from_dropped(_: &MaybeDropped<Self>) -> () {}
+    */
 
     #[inline(always)]
     fn make_fat_ptr(thin: *const (), _: Self::Metadata) -> *const Self {
@@ -110,6 +122,7 @@ unsafe impl<T> Pointee for T {
     }
 }
 
+/*
 #[derive(Debug, Error)]
 #[error("FIXME")]
 pub struct LayoutSliceError;
@@ -148,3 +161,4 @@ mod tests {
     fn test_layout() {
     }
 }
+*/

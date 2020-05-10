@@ -11,10 +11,6 @@
 #![allow(dead_code)]
 
 pub mod commit;
-//pub mod fact;
-pub mod cache;
-
-pub mod impls;
 
 #[cfg(test)]
 mod tests {

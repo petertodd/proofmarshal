@@ -2,6 +2,32 @@ use super::*;
 
 use thiserror::Error;
 
+impl Load for ! {
+    type Error = !;
+
+    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        unsafe { Ok(blob.assume_valid()) }
+    }
+}
+
+impl<P> Save<P> for ! {
+    type State = !;
+
+    fn init_save_state(&self) -> ! {
+        *self
+    }
+
+    unsafe fn poll<D: SavePtr<P>>(&self, _state: &mut Self::State, _dumper: D) -> Result<D, D::Error> {
+        match *self {}
+    }
+
+    unsafe fn encode<W: WriteBlob>(&self, _state: &Self::State, _dst: W) -> Result<W::Ok, W::Error> {
+        match *self {}
+    }
+}
+
+
+/*
 #[derive(Debug, Error, PartialEq, Eq)]
 #[error("the ! type has no valid representations")]
 pub struct ValidateNeverError;
@@ -72,3 +98,4 @@ mod tests {
                    BlobError::Error(ValidateNeverError));
     }
 }
+*/

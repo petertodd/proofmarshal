@@ -7,13 +7,13 @@ members = [
 	"sliceinit",
 
 	"hoard",
-	"hoard-derive",
-	"hoard-derive-tests",
+#	"hoard-derive",
+#	"hoard-derive-tests",
 
 	"proofmarshal-core",
-	"proofmarshal-derive",
- 	"proofmarshal-derive-tests",
-	"proofmarshal-collections",
+ 	"proofmarshal-collections",
+#	"proofmarshal-derive",
+# 	"proofmarshal-derive-tests",
 
 #	"tests",
 ]

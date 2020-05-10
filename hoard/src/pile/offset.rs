@@ -71,22 +71,59 @@ use std::ptr::NonNull;
 use thiserror::Error;
 use leint::Le;
 
-use crate::coerce::TryCoerce;
-use crate::marshal::*;
-use crate::marshal::blob::*;
-use crate::marshal::decode::*;
-use crate::marshal::encode::*;
-
-use super::Pile;
+use crate::pointee::Pointee;
+use crate::ptr::Ptr;
+use crate::load::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Offset<'pile, 'version> {
     marker: PhantomData<(
-        fn(&Pile<'pile, 'version>) -> &'pile (),
+        fn(&'pile [u8]) -> &'pile [u8],
         &'version (),
     )>,
     pub(super) raw: Le<NonZeroU64>,
+}
+
+impl<'p, 'v> Ptr for Offset<'p, 'v> {
+    unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, _metadata: T::Metadata) {
+        // nothing to do here
+    }
+
+    unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
+        *self
+    }
+
+    unsafe fn fmt_debug_valid_ptr<T: ?Sized + Pointee>(&self, metadata: T::Metadata, f: &mut fmt::Formatter) -> fmt::Result {
+        todo!()
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("invalid Offset: {0}")]
+pub struct LoadOffsetError(u64);
+
+impl<'p, 'v> Load for Offset<'p, 'v> {
+    type Error = LoadOffsetError;
+
+    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        /*
+        blob.validate_bytes(|blob| {
+            let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
+
+            if raw & 1 == 0 {
+                Err(LoadOffsetError(raw))
+            } else {
+                let idx = raw >> 1;
+                if idx <= Self::MAX as u64 {
+                    unsafe { Ok(blob.assume_valid()) }
+                } else {
+                    Err(LoadOffsetError(raw))
+                }
+            }
+        })
+        */ todo!()
+    }
 }
 
 impl fmt::Debug for Offset<'_,'_> {
@@ -123,6 +160,10 @@ impl<'p,'v> Offset<'p,'v> {
     pub fn get(&self) -> usize {
         (self.raw.get().get() >> 1) as usize
     }
+
+    pub fn dangling() -> Self {
+        Self::new(Self::MAX).unwrap()
+    }
 }
 
 impl From<Offset<'_, '_>> for usize {
@@ -138,79 +179,7 @@ impl fmt::Pointer for Offset<'_, '_> {
     }
 }
 
-#[derive(Error,Debug, PartialEq, Eq)]
-#[error("invalid Offset: {0}")]
-pub struct ValidateOffsetError(u64);
-
-impl ValidateBlob for Offset<'static, 'static> {
-    type Error = ValidateOffsetError;
-
-    #[inline(always)]
-    fn validate<'a, V: PaddingValidator>(blob: BlobCursor<'a, Self, V>)
-        -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
-    {
-        blob.validate_bytes(|blob| {
-            let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
-
-            if raw & 1 == 0 {
-                Err(ValidateOffsetError(raw))
-            } else {
-                let idx = raw >> 1;
-                if idx <= Self::MAX as u64 {
-                    unsafe { Ok(blob.assume_valid()) }
-                } else {
-                    Err(ValidateOffsetError(raw))
-                }
-            }
-        })
-    }
-}
-
-unsafe impl Persist for Offset<'_, '_> {
-    type Persist = Offset<'static, 'static>;
-    type Error = ValidateOffsetError;
-}
-
-unsafe impl<'a, Z> ValidateChildren<'a, Z> for Offset<'_, '_> {
-    type State = ();
-
-    #[inline(always)]
-    fn validate_children(_: &Offset<'static, 'static>) -> () {}
-
-    #[inline(always)]
-    fn poll<V: PtrValidator<Z>>(this: &Self::Persist, _: &mut (), _: &V) -> Result<(), V::Error> {
-        Ok(())
-    }
-}
-impl<Z> Decode<Z> for Offset<'_,'_> {}
-
-impl<'p,'v, Z> Encoded<Z> for Offset<'p, 'v> {
-    type Encoded = Self;
-}
-
-impl<Z> Encode<'_, Z> for Offset<'_, '_> {
-    type State = ();
-
-    #[inline(always)]
-    fn make_encode_state(&self) -> () {}
-
-    #[inline(always)]
-    fn encode_poll<D: Dumper<Z>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
-        Ok(dumper)
-    }
-
-    #[inline(always)]
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
-        dst.write_primitive(&self.raw)?
-           .finish()
-    }
-}
-impl Primitive for Offset<'_, '_> {}
-
-unsafe impl<'p, 'v> TryCoerce<Offset<'p,'v>> for Offset<'_, '_> {
-    type Error = !;
-}
-
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,3 +206,4 @@ mod tests {
         assert_eq!(ptr2.raw.get(), 42);
     }
 }
+*/

@@ -1,21 +1,20 @@
 //! Copy-on-write pile offsets.
 
-use core::alloc::Layout;
-use core::cmp;
-use core::fmt;
-use core::mem::{self, ManuallyDrop};
-use core::ptr::NonNull;
+use std::alloc::Layout;
+use std::cmp;
+use std::fmt;
+use std::marker::PhantomData;
+use std::mem::{self, ManuallyDrop};
+use std::ptr::NonNull;
+use std::ops::Deref;
 
 use thiserror::Error;
 
 use owned::{Take, IntoOwned};
 
-use crate::coerce::TryCoerce;
-use crate::marshal::PtrValidator;
-use crate::marshal::blob;
-use crate::marshal::decode::*;
+use crate::load::*;
 use crate::pointee::Pointee;
-use crate::zone::*;
+use crate::ptr::*;
 
 use super::offset::*;
 
@@ -23,59 +22,11 @@ use super::offset::*;
 #[repr(transparent)]
 pub struct OffsetMut<'p,'v>(Offset<'p,'v>);
 
-unsafe impl<'p, 'v> TryCoerce<OffsetMut<'p, 'v>> for Offset<'_, '_> {
-    type Error = !;
-}
-
-unsafe impl<'p, 'v> TryCoerce<Offset<'p, 'v>> for OffsetMut<'_, '_> {
-    type Error = TryCoerceOffsetMutError;
-
-    #[inline(always)]
-    fn try_coerce_ptr(this: &Self) -> Result<*const Offset<'p,'v>, Self::Error> {
-        match this.kind() {
-            Kind::Offset(_) => Ok(this as *const _ as *const _),
-            Kind::Ptr(ptr) => Err(TryCoerceOffsetMutError { ptr }),
-        }
-    }
-}
-
-/// Returned if an `OffsetMut` can't be coerced to an `Offset` due to being a pointer.
-#[derive(Error, Debug, PartialEq, Eq, Hash)]
-#[error("OffsetMut is a pointer: {ptr:?}")]
-pub struct TryCoerceOffsetMutError {
-    pub ptr: NonNull<u16>,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum Kind<'p,'v> {
     Offset(Offset<'p,'v>),
     Ptr(NonNull<u16>),
 }
-
-impl<'p, 'v> From<Offset<'p,'v>> for OffsetMut<'p,'v> {
-    #[inline]
-    fn from(offset: Offset<'p,'v>) -> Self {
-        Self(offset)
-    }
-}
-
-unsafe impl Persist for OffsetMut<'_, '_> {
-    type Persist = Offset<'static, 'static>;
-    type Error = ValidateOffsetError;
-}
-
-unsafe impl<'a, Z> ValidateChildren<'a, Z> for OffsetMut<'_, '_> {
-    type State = ();
-
-    #[inline(always)]
-    fn validate_children(_: &Offset<'static, 'static>) -> () {}
-
-    #[inline(always)]
-    fn poll<V: PtrValidator<Z>>(this: &Self::Persist, _: &mut (), _: &V) -> Result<(), V::Error> {
-        Ok(())
-    }
-}
-impl<Z> Decode<Z> for OffsetMut<'_,'_> {}
 
 #[inline]
 fn min_align_layout(layout: Layout) -> Layout {
@@ -87,12 +38,11 @@ fn min_align_layout(layout: Layout) -> Layout {
     }
 }
 
-impl<'p,'v> OffsetMut<'p,'v> {
-    pub fn alloc<T: ?Sized + Pointee, Z>(src: impl Take<T>) -> OwnedPtr<T, Z>
-        where Z: Zone<Ptr=Self>
-    {
+impl<'p,'v> Ptr for OffsetMut<'p, 'v> {
+    fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, Self> {
 	src.take_unsized(|src| unsafe {
 	    let metadata = T::metadata(src);
+
 	    let layout = min_align_layout(Layout::for_value(src));
 
 	    let ptr = if layout.size() > 0 {
@@ -107,23 +57,58 @@ impl<'p,'v> OffsetMut<'p,'v> {
 		NonNull::new_unchecked(layout.align() as *mut u16)
 	    };
 
-            let fatptr = FatPtr {
+            let fat = Fat {
                 raw: Self::from_ptr(ptr),
                 metadata,
             };
-	    OwnedPtr::new_unchecked(ValidPtr::new_unchecked(fatptr))
+
+	    Bag::new_unchecked(fat)
 	})
     }
 
-    pub fn try_take_dirty_unsized<T: ?Sized + Pointee, Z, R>(
-        owned: OwnedPtr<T, Z>,
+    unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) {
+        todo!()
+    }
+
+    unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
+        todo!()
+    }
+
+    unsafe fn fmt_debug_valid_ptr<T: ?Sized + Pointee>(&self, metadata: T::Metadata, f: &mut fmt::Formatter) -> fmt::Result
+        where T: fmt::Debug
+    {
+        todo!()
+    }
+}
+
+impl<'p> Default for OffsetMut<'p, 'static> {
+    fn default() -> Self {
+        Offset::new(0).unwrap().into()
+    }
+}
+
+impl<'p, 'v> From<Offset<'p,'v>> for OffsetMut<'p,'v> {
+    #[inline]
+    fn from(offset: Offset<'p,'v>) -> Self {
+        Self(offset)
+    }
+}
+
+impl<'p, 'v> Load for OffsetMut<'p, 'v> {
+    type Error = super::offset::LoadOffsetError;
+
+    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        todo!()
+    }
+}
+
+impl<'p,'v> OffsetMut<'p,'v> {
+    pub fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
+        self, metadata: T::Metadata,
         f: impl FnOnce(Result<&mut ManuallyDrop<T>, Offset<'p,'v>>) -> R
     ) -> R
-    where Z: Zone<Ptr=Self>
     {
-        let FatPtr { raw, metadata } = owned.into_inner().into_inner();
-
-        match raw.kind() {
+        match self.kind() {
             Kind::Ptr(nonnull) => unsafe {
                 let v: &mut T = &mut *T::make_fat_ptr_mut(nonnull.cast().as_ptr(), metadata);
                 let v: &mut ManuallyDrop<T> = &mut *(v as *mut _ as *mut _);

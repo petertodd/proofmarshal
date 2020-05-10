@@ -1,18 +1,15 @@
 use std::mem;
 
-use crate::pointee::Pointee;
-use crate::zone::{Zone, FatPtr, ValidPtr};
-
 pub mod blob;
-use self::blob::{ValidateBlob, WriteBlob};
+use self::blob::*;
 
-pub mod decode;
-pub mod load;
-use self::load::{PersistPointee, ValidatePointeeChildren};
+pub trait Load {
+    type Error : std::error::Error;
 
-pub mod encode;
-pub mod save;
+    fn load<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error>;
+}
 
+/*
 pub trait Primitive : decode::Decode<!> + for<'a> encode::Encode<'a, !, Encoded=Self> {
     fn encode_primitive_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
         let state = self.make_encode_state();
@@ -63,6 +60,7 @@ pub trait Dumper<Y> : Sized {
     }
 }
 
+*/
 #[cfg(test)]
 mod tests {
     #[test]

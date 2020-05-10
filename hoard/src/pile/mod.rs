@@ -11,6 +11,65 @@
 //! `OffsetMut` pointers also implement `Persist`, using the least-significant-bit to distinguish
 //! between persistant offsets and heap memory pointers.
 
+use std::marker::PhantomData;
+
+use crate::ptr::*;
+use crate::load::Load;
+
+pub mod offset;
+use self::offset::Offset;
+
+pub mod offsetmut;
+use self::offsetmut::OffsetMut;
+
+pub mod mapping;
+use self::mapping::Mapping;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TryPile<'pile, 'version> {
+    marker: PhantomData<
+        fn(&Offset<'pile, 'version>) -> &'pile [u8]
+    >,
+    mapping: &'pile dyn Mapping,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Pile<'pile, 'version>(TryPile<'pile, 'version>);
+
+
+impl<'p,'v> Get<Offset<'p, 'v>> for Pile<'p, 'v> {
+    unsafe fn get_unchecked<'a, T: ?Sized + Load>(&self, ptr: &'a Offset<'p,'v>, metadata: T::Metadata) -> &'a T {
+        todo!()
+    }
+
+    unsafe fn take_unchecked<T: Load>(&self, ptr: Offset<'p, 'v>, metadata: T::Metadata) -> T {
+        todo!()
+    }
+}
+
+impl<'p,'v> Get<OffsetMut<'p, 'v>> for Pile<'p, 'v> {
+    unsafe fn get_unchecked<'a, T: ?Sized + Load>(&self, ptr: &'a OffsetMut<'p,'v>, metadata: T::Metadata) -> &'a T {
+        todo!()
+    }
+
+    unsafe fn take_unchecked<T: Load>(&self, ptr: OffsetMut<'p, 'v>, metadata: T::Metadata) -> T {
+        todo!()
+    }
+}
+
+impl<'p> Default for TryPile<'p, 'static> {
+    fn default() -> Self {
+        todo!()
+    }
+}
+
+impl<'p> Default for Pile<'p, 'static> {
+    fn default() -> Self {
+        todo!()
+    }
+}
+
+/*
 use std::any::type_name;
 use std::cmp;
 use std::fmt;
@@ -36,8 +95,6 @@ use crate::marshal::save::*;
 use crate::marshal::blob::*;
 use crate::marshal::*;
 
-pub mod offset;
-use self::offset::Offset;
 
 pub mod offsetmut;
 use self::offsetmut::OffsetMut;
@@ -45,28 +102,7 @@ use self::offsetmut::OffsetMut;
 pub mod error;
 use self::error::*;
 
-pub mod mapping;
-use self::mapping::Mapping;
 
-/// Fallible, unverified, `Pile`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TryPile<'pile, 'version> {
-    marker: PhantomData<
-        fn(&Offset<'pile, 'version>) -> &'pile [u8]
-    >,
-    mapping: &'pile dyn Mapping,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Pile<'pile, 'version>(TryPile<'pile, 'version>);
-
-/// Mutable, unverified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TryPileMut<'p, 'v>(TryPile<'p, 'v>);
-
-/// Mutable, unverified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PileMut<'p, 'v>(TryPileMut<'p, 'v>);
 
 impl<'p, 'v> From<TryPile<'p, 'v>> for Pile<'p,'v> {
     #[inline(always)]
@@ -930,3 +966,4 @@ pub mod test {
                     ][..]);
     }
 }
+*/

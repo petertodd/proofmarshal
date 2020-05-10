@@ -6,8 +6,8 @@ use std::ops;
 
 use thiserror::Error;
 
-use hoard::marshal::{Primitive, blob::*};
-use hoard::pointee::{Metadata, MetadataKind};
+// use hoard::pointee::{Metadata, MetadataKind};
+use hoard::load::*;
 
 use proofmarshal_core::commit::{Digest, Commit, Verbatim, WriteVerbatim};
 
@@ -55,14 +55,6 @@ impl fmt::Debug for DynHeight {
 impl fmt::Debug for DynNonZeroHeight {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.len().fmt(f)
-    }
-}
-
-impl Verbatim for Height {
-    const LEN: usize = 1;
-    fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error> {
-        dst.write(&self.0)?
-           .finish()
     }
 }
 
@@ -131,6 +123,8 @@ impl NonZeroHeight {
         Height::new(self.0.get().checked_sub(1).unwrap()).unwrap()
     }
 }
+
+/*
 
 hoard::impl_encode_for_primitive!(Height, |this, dst| {
     dst.write_bytes(&[this.0])?
@@ -202,6 +196,7 @@ impl Metadata for Height {
         MetadataKind::Len(self.0 as u64)
     }
 }
+*/
 
 impl TryFrom<u8> for Height {
     type Error = TryFromIntError;
@@ -345,5 +340,31 @@ unsafe impl GetHeight for () {
     #[inline]
     fn get(&self) -> Height {
         panic!()
+    }
+}
+
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[error("out of range: {0}")]
+pub struct LoadHeightError(u8);
+
+// marshalling
+impl Load for Height {
+    type Error = LoadHeightError;
+
+    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        todo!()
+    }
+}
+
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[error("out of range: {0}")]
+pub struct LoadNonZeroHeightError(u8);
+
+// marshalling
+impl Load for NonZeroHeight {
+    type Error = LoadNonZeroHeightError;
+
+    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        todo!()
     }
 }

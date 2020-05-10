@@ -27,9 +27,9 @@ use std::fmt;
 use std::hash;
 use std::marker::PhantomData;
 
-use super::*;
+use hoard::load::*;
 
-use hoard::marshal::blob::*;
+use super::*;
 
 /// Typed 32-byte hash digest.
 #[repr(transparent)]
@@ -192,13 +192,11 @@ impl<T: ?Sized> Ord for Digest<T> {
     }
 }
 
-impl<T: ?Sized> ValidateBlob for Digest<T> {
+impl<T: ?Sized> Load for Digest<T> {
     type Error = !;
 
-    fn validate<'a, V>(blob: BlobCursor<'a, Self, V>) -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
-        where V: PaddingValidator
-    {
-        unsafe { blob.assume_valid() }
+    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, !> {
+        unsafe { Ok(blob.assume_valid()) }
     }
 }
 
