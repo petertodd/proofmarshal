@@ -75,7 +75,7 @@ pub struct BlobCursor<'a, T: ?Sized> {
     offset: usize,
 }
 
-impl<'a, T: ?Sized + super::Load> BlobCursor<'a, T> {
+impl<'a, T: ?Sized> BlobCursor<'a, T> {
     pub fn field<U: super::Load>(&mut self) -> Result<ValidBlob<'a, U>, U::Error> {
         /*
         unsafe {

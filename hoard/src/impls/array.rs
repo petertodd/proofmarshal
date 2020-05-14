@@ -7,7 +7,6 @@ use sliceinit::SliceInitializer;
 
 use super::*;
 
-
 impl<T: Load, const N: usize> Load for [T;N] {
     type Error = LoadArrayError<T::Error, N>;
 
@@ -19,6 +18,25 @@ impl<T: Load, const N: usize> Load for [T;N] {
         unsafe { Ok(blob.assume_valid()) }
     }
 }
+
+/*
+pub struct ValidateArrayState<S> {
+    idx: usize,
+    state: S,
+}
+
+impl<'a, P, T: Validate<'a, P>, const N: usize> Validate<'a, P> for [T; N] {
+    type State = ValidateArrayState<T::State>;
+
+    fn init_validate_state(&self) -> Self::State {
+        todo!()
+    }
+
+    fn poll<V: ValidatePtr<P>>(&'a self, state: &mut Self::State, validator: &mut V) -> Result<(), V::Error> {
+        todo!()
+    }
+}
+*/
 
 #[derive(Error, Debug, PartialEq, Eq)]
 //#[error("array validation failed at index {idx}: {err}")]
@@ -34,10 +52,20 @@ impl<E: fmt::Debug + Into<!>, const N: usize> From<LoadArrayError<E, N>> for ! {
     }
 }
 
-impl<'a, P, T: Save<P>, const N: usize> Save<P> for [T; N] {
+impl<'a, R, T, const N: usize> Saved<R> for [T; N]
+where T: Saved<R>,
+      T::Saved: Sized,
+{
+    type Saved = [T::Saved; N];
+}
+
+impl<'a, Q, R, T, const N: usize> Save<'a, Q, R> for [T; N]
+where T: Save<'a, Q, R>,
+      T::Saved: Sized,
+{
     type State = [T::State; N];
 
-    fn init_save_state(&self) -> Self::State {
+    fn init_save_state(&'a self) -> Self::State {
         let mut r: [MaybeUninit<T::State>; N] = unsafe { MaybeUninit::uninit().assume_init() };
         let mut initializer = SliceInitializer::new(&mut r[..]);
 
@@ -55,20 +83,30 @@ impl<'a, P, T: Save<P>, const N: usize> Save<P> for [T; N] {
         r2
     }
 
-    unsafe fn poll<D: SavePtr<P>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Error> {
+    fn save_poll<D: SavePtr<Q, R>>(&'a self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Error> {
         for (item, state) in self.iter().zip(state.iter_mut()) {
-            dumper = item.poll(state, dumper)?;
+            dumper = item.save_poll(state, dumper)?;
         }
         Ok(dumper)
     }
 
-    unsafe fn encode<W: WriteBlob>(&self, state: &Self::State, mut dst: W) -> Result<W::Ok, W::Error> {
+    fn save_blob<W: SaveBlob>(&'a self, state: &Self::State, mut dst: W) -> Result<W::Done, W::Error> {
+        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
+        self.encode_blob(state, dst)
+    }
+
+    fn encode_blob<W: WriteBlob>(&'a self, state: &Self::State, mut dst: W) -> Result<W::Done, W::Error> {
         for (item, state) in self.iter().zip(state.iter()) {
             dst = dst.write(item, state)?;
         }
-        dst.finish()
+        dst.done()
     }
 }
+
+impl<T, const N: usize> Primitive for [T; N]
+where T: Primitive,
+      T::Saved: Sized,
+{}
 
 #[cfg(test)]
 mod tests {

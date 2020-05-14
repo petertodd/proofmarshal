@@ -15,8 +15,9 @@ pub trait WriteBlob : Sized {
     }
 
 
+    /*
     #[inline(always)]
-    unsafe fn write<P, T: super::Save<P>>(self, value: &T, state: &T::State) -> Result<Self, Self::Error> {
+    fn write<'a, Q, T: super::Encode<'a, Q>>(self, value: &'a T, state: &T::State) -> Result<Self, Self::Error> {
         /*
         value.encode_blob(
             state,
@@ -24,6 +25,7 @@ pub trait WriteBlob : Sized {
         )
         */ todo!()
     }
+    */
 
 /*
     #[inline(always)]

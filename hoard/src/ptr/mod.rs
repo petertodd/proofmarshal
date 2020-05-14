@@ -14,7 +14,9 @@ pub use self::bag::Bag;
 pub mod never;
 mod unit;
 
-pub trait Ptr : Sized {
+pub trait Ptr : Sized + AsPtr<Self> {
+    type Persist : 'static + fmt::Debug;
+
     fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, Self>
         where Self: Default
     {
@@ -26,15 +28,7 @@ pub trait Ptr : Sized {
     unsafe fn clone_unchecked<T: Clone>(&self) -> Self
         where Self: Clone;
 
-    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Option<&T> {
-        None
-    }
-
-    unsafe fn fmt_debug_valid_ptr<T: ?Sized + Pointee>(&self, metadata: T::Metadata, f: &mut fmt::Formatter) -> fmt::Result
-        where T: fmt::Debug
-    {
-        todo!()
-    }
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist>;
 }
 
 pub trait Get<P: Ptr> {
@@ -63,4 +57,14 @@ pub trait GetMut<P: Ptr> : Get<P> {
 pub trait Alloc {
     type Ptr : Ptr;
     fn alloc<T: ?Sized + Pointee>(&self, src: impl Take<T>) -> Bag<T, Self::Ptr>;
+}
+
+pub trait AsPtr<Q> {
+    fn as_ptr(&self) -> &Q;
+}
+
+impl<Q> AsPtr<Q> for ! {
+    fn as_ptr(&self) -> &Q {
+        match *self {}
+    }
 }

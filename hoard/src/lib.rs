@@ -24,6 +24,7 @@
 #![feature(optin_builtin_traits)]
 #![feature(never_type)]
 #![feature(slice_ptr_len)]
+#![feature(unwrap_infallible)]
 
 #![feature(rustc_attrs)]
 
@@ -44,6 +45,8 @@ use thiserror::Error;
 
 pub mod load;
 pub mod save;
+pub mod primitive;
+
 pub mod ptr;
 pub mod pointee;
 

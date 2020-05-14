@@ -72,8 +72,10 @@ use thiserror::Error;
 use leint::Le;
 
 use crate::pointee::Pointee;
-use crate::ptr::Ptr;
+use crate::ptr::{Ptr, AsPtr};
 use crate::load::*;
+use crate::save::*;
+use crate::primitive::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -86,6 +88,8 @@ pub struct Offset<'pile, 'version> {
 }
 
 impl<'p, 'v> Ptr for Offset<'p, 'v> {
+    type Persist = Offset<'static, 'static>;
+
     unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, _metadata: T::Metadata) {
         // nothing to do here
     }
@@ -94,8 +98,14 @@ impl<'p, 'v> Ptr for Offset<'p, 'v> {
         *self
     }
 
-    unsafe fn fmt_debug_valid_ptr<T: ?Sized + Pointee>(&self, metadata: T::Metadata, f: &mut fmt::Formatter) -> fmt::Result {
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
         todo!()
+    }
+}
+
+impl<'p, 'v> AsPtr<Offset<'p, 'v>> for Offset<'p,'v> {
+    fn as_ptr(&self) -> &Self {
+        self
     }
 }
 
@@ -125,6 +135,31 @@ impl<'p, 'v> Load for Offset<'p, 'v> {
         */ todo!()
     }
 }
+
+impl<'p, 'v, R> Saved<R> for Offset<'p, 'v> {
+    type Saved = Offset<'p, 'v>;
+}
+
+impl<'p, 'v, Q, R> Save<'_, Q, R> for Offset<'p, 'v> {
+    type State = ();
+
+    fn init_save_state(&self) -> Self::State {}
+
+    fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut (), dst: D) -> Result<D, D::Error> {
+        Ok(dst)
+    }
+
+    fn save_blob<W: SaveBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+        todo!()
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+        dst.write_primitive(&self.raw)?
+           .done()
+    }
+}
+
+impl<'p, 'v> Primitive for Offset<'p, 'v> {}
 
 impl fmt::Debug for Offset<'_,'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

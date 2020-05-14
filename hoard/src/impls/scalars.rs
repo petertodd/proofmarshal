@@ -8,25 +8,41 @@ use leint::Le;
 
 use super::*;
 
+macro_rules! impl_primitive {
+    ($t:ty) => {
+        impl Primitive for $t {
+        }
+    }
+}
+
 macro_rules! impl_save {
     ($t:ty) => {
-        impl<P> Save<P> for $t {
+        impl<R> Saved<R> for $t {
+            type Saved = $t;
+        }
+
+        impl<Q, R> Save<'_, Q, R> for $t {
             type State = ();
 
             fn init_save_state(&self) -> () {}
 
-            unsafe fn poll<D: SavePtr<P>>(&self, _: &mut (), dumper: D) -> Result<D, D::Error> {
-                Ok(dumper)
+            fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut (), dst: D) -> Result<D, D::Error> {
+                Ok(dst)
             }
 
-            unsafe fn encode<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Ok, W::Error> {
-                let src = slice::from_raw_parts(
+            fn save_blob<W: SaveBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
+                let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
+                <Self as Save<Q,R>>::encode_blob(self, state, dst)
+            }
+
+            fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+                let src = unsafe { slice::from_raw_parts(
                     self as *const _ as *const u8,
                     mem::size_of::<$t>()
-                );
+                )};
 
                 dst.write_bytes(src)?
-                   .finish()
+                   .done()
             }
         }
     }
@@ -36,6 +52,7 @@ macro_rules! impl_all_valid {
     ($($t:ty,)+) => {$(
         impl Load for $t {
             type Error = !;
+
             fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
                 let blob = Blob::from(blob);
                 unsafe { Ok(blob.assume_valid()) }
@@ -43,6 +60,7 @@ macro_rules! impl_all_valid {
         }
 
         impl_save!($t);
+        impl_primitive!($t);
     )+}
 }
 
@@ -69,49 +87,54 @@ impl Load for bool {
     }
 }
 
-/*
-crate::impl_decode_for_primitive!(bool);
-crate::impl_encode_for_primitive!(bool, |this, dst| {
-    dst.write_bytes(&[if *this { 1 } else { 0 }][..])?
-       .finish()
-});
+impl<R> Saved<R> for bool {
+    type Saved = Self;
+}
+
+impl<Q, R> Save<'_, Q, R> for bool {
+    type State = ();
+
+    fn init_save_state(&self) -> () {}
+    fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut (), dst: D) -> Result<D, D::Error> {
+        Ok(dst)
+    }
+
+    fn save_blob<W: SaveBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
+        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
+        <Self as Save<Q,R>>::encode_blob(self, state, dst)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+        todo!()
+    }
+}
+
+impl_primitive!(bool);
 
 #[non_exhaustive]
 #[derive(Debug, Error)]
 #[error("non-zero int")]
-pub struct ValidateNonZeroIntError;
+pub struct LoadNonZeroIntError;
 
 macro_rules! impl_nonzero {
     ($($t:ty,)+) => {$(
-        impl ValidateBlob for $t {
-            type Error = ValidateNonZeroIntError;
-            fn validate<'a, V>(blob: BlobCursor<'a, Self, V>)
-                -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
-                where V: PaddingValidator
-            {
+        impl Load for $t {
+            type Error = !;
+
+            fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+                /*
                 blob.validate_bytes(|blob| {
                     if blob.iter().all(|b| *b == 0) {
                         Err(ValidateNonZeroIntError)
                     } else {
                         Ok(unsafe { blob.assume_valid() })
                     }
-                })
+                })*/ todo!()
             }
         }
 
-        crate::impl_decode_for_primitive!($t);
-
-        crate::impl_encode_for_primitive!($t, |this, dst| {
-            let src = unsafe { slice::from_raw_parts(
-                this as *const _ as *const u8,
-                mem::size_of::<$t>()
-            )};
-
-            dst.write_bytes(src)?
-               .finish()
-        });
-
-        impl Primitive for $t {}
+        impl_save!($t);
+        impl_primitive!($t);
     )+}
 }
 
@@ -119,4 +142,3 @@ impl_nonzero! {
     num::NonZeroU8, Le<num::NonZeroU16>, Le<num::NonZeroU32>, Le<num::NonZeroU64>, Le<num::NonZeroU128>,
     num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
 }
-*/

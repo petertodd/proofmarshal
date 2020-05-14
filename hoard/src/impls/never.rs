@@ -10,20 +10,31 @@ impl Load for ! {
     }
 }
 
-impl<P> Save<P> for ! {
+impl<R> Saved<R> for ! {
+    type Saved = !;
+}
+
+impl<Q, R> Save<'_, Q, R> for ! {
     type State = !;
 
     fn init_save_state(&self) -> ! {
         *self
     }
 
-    unsafe fn poll<D: SavePtr<P>>(&self, _state: &mut Self::State, _dumper: D) -> Result<D, D::Error> {
+    fn save_poll<D: SavePtr<Q, R>>(&self, _state: &mut Self::State, _dumper: D) -> Result<D, D::Error> {
         match *self {}
     }
 
-    unsafe fn encode<W: WriteBlob>(&self, _state: &Self::State, _dst: W) -> Result<W::Ok, W::Error> {
+    fn save_blob<W: SaveBlob>(&self, _state: &Self::State, _dst: W) -> Result<W::Done, W::Error> {
         match *self {}
     }
+
+    fn encode_blob<W: WriteBlob>(&self, _state: &Self::State, _dst: W) -> Result<W::Done, W::Error> {
+        match *self {}
+    }
+}
+
+impl Primitive for ! {
 }
 
 

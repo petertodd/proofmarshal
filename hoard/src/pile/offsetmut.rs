@@ -39,6 +39,8 @@ fn min_align_layout(layout: Layout) -> Layout {
 }
 
 impl<'p,'v> Ptr for OffsetMut<'p, 'v> {
+    type Persist = Offset<'static, 'static>;
+
     fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, Self> {
 	src.take_unsized(|src| unsafe {
 	    let metadata = T::metadata(src);
@@ -67,17 +69,48 @@ impl<'p,'v> Ptr for OffsetMut<'p, 'v> {
     }
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) {
-        todo!()
+        match self.kind() {
+            Kind::Offset(_) => {},
+            Kind::Ptr(ptr) => {
+                let v = &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata);
+                let layout = min_align_layout(Layout::for_value(v));
+                std::ptr::drop_in_place(v);
+
+                if layout.size() > 0 {
+                    std::alloc::dealloc(v as *mut _ as *mut _, layout);
+                }
+            },
+        }
     }
 
     unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
         todo!()
     }
 
-    unsafe fn fmt_debug_valid_ptr<T: ?Sized + Pointee>(&self, metadata: T::Metadata, f: &mut fmt::Formatter) -> fmt::Result
-        where T: fmt::Debug
-    {
-        todo!()
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
+        match self.kind() {
+            Kind::Ptr(ptr) => Ok(&*T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata)),
+            Kind::Offset(ptr) => Err(ptr.cast()),
+        }
+    }
+}
+
+impl<'p, 'v> AsPtr<OffsetMut<'p, 'v>> for OffsetMut<'p, 'v> {
+    fn as_ptr(&self) -> &Self {
+        self
+    }
+}
+
+impl<'p, 'v> AsPtr<OffsetMut<'p, 'v>> for Offset<'p, 'v> {
+    fn as_ptr(&self) -> &OffsetMut<'p, 'v> {
+        unsafe { &*(self as *const _ as *const _) }
+    }
+}
+
+impl<'p, 'v> AsPtr<OffsetMut<'p, 'v>> for crate::heap::Heap {
+    fn as_ptr(&self) -> &OffsetMut<'p, 'v> {
+        // FIXME: check 64-bitness
+        unsafe { &*(self as *const _ as *const _) }
     }
 }
 

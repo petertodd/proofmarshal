@@ -12,9 +12,14 @@
 //! between persistant offsets and heap memory pointers.
 
 use std::marker::PhantomData;
+use std::mem;
 
+use owned::Take;
+
+use crate::pointee::Pointee;
 use crate::ptr::*;
 use crate::load::Load;
+use crate::save::*;
 
 pub mod offset;
 use self::offset::Offset;
@@ -57,15 +62,97 @@ impl<'p,'v> Get<OffsetMut<'p, 'v>> for Pile<'p, 'v> {
     }
 }
 
+impl<'p, 'v> Alloc for Pile<'p, 'v> {
+    type Ptr = OffsetMut<'p, 'v>;
+
+    fn alloc<T: ?Sized + Pointee>(&self, src: impl Take<T>) -> Bag<T, Self::Ptr> {
+        OffsetMut::alloc(src)
+    }
+}
+
 impl<'p> Default for TryPile<'p, 'static> {
     fn default() -> Self {
-        todo!()
+        static EMPTY_SLICE: &[u8] = &[];
+
+        TryPile {
+            marker: PhantomData,
+            mapping: &EMPTY_SLICE,
+        }
     }
 }
 
 impl<'p> Default for Pile<'p, 'static> {
     fn default() -> Self {
-        todo!()
+        Self(TryPile::default())
+    }
+}
+
+#[derive(Debug)]
+pub struct ShallowDumper<'p, 'v> {
+    pile: Pile<'p, 'v>,
+    buf: Vec<u8>,
+}
+
+impl<'p, 'v> ShallowDumper<'p, 'v> {
+    pub fn new(pile: Pile<'p, 'v>) -> Self {
+        Self {
+            pile,
+            buf: vec![],
+        }
+    }
+
+    pub fn save_tip<'a, T>(mut self, tip: &'a T) -> (Vec<u8>, Offset<'p, 'static>)
+        where T: Save<'a, OffsetMut<'p, 'v>, Offset<'p, 'static>>
+    {
+        let mut state = tip.init_save_state();
+        self = tip.save_poll(&mut state, self).into_ok();
+
+        let (this, offset) = self.save(tip, &state).into_ok();
+        (this.buf, offset)
+    }
+}
+
+impl<'p, 'v1, 'v2> SavePtr<OffsetMut<'p, 'v1>, Offset<'p, 'v2>> for ShallowDumper<'p, 'v1> {
+    type Error = !;
+
+    fn save<'a, T: ?Sized>(mut self, value: &'a T, state: &T::State) -> Result<(Self, Offset<'p, 'v2>), Self::Error>
+        where T: Save<'a, OffsetMut<'p, 'v1>, Offset<'p, 'v2>>
+    {
+        let offset = Offset::new(self.buf.len()).expect("overflow");
+        let buf = mem::replace(&mut self.buf, vec![]);
+        self.buf = value.save_blob(state, buf).into_ok();
+
+        Ok((self, offset))
+    }
+
+    unsafe fn try_save_ptr<'a, T: ?Sized + Pointee>(&mut self, ptr: &'a OffsetMut<'p, 'v1>, metadata: T::Metadata)
+        -> Result<Offset<'p, 'v2>, &'a T>
+    {
+        match ptr.try_get_dirty_unchecked::<T>(metadata) {
+            Ok(value) => Err(value),
+            Err(persist_ptr) => Ok(persist_ptr.cast()),
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod test {
+    use super::*;
+
+    use crate::heap::Heap;
+
+    #[test]
+    fn test() {
+        let pile = Pile::default();
+
+        let bag = pile.alloc([42u8, 43u8, 44u8]);
+        let bag = Heap::alloc(bag);
+        let bag = Heap::alloc(bag);
+        let bag = Heap::alloc(bag);
+
+        let dumper = ShallowDumper::new(pile);
+
+        let (v, ptr) = dbg!(dumper.save_tip(&bag));
     }
 }
 

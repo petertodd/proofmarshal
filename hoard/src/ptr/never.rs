@@ -3,6 +3,8 @@ use std::marker::PhantomData;
 use super::*;
 
 impl Ptr for ! {
+    type Persist = !;
+
     unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, _: T::Metadata) {
         match *self {}
     }
@@ -11,7 +13,7 @@ impl Ptr for ! {
         match *self {}
     }
 
-    unsafe fn fmt_debug_valid_ptr<T: ?Sized + Pointee>(&self, _: T::Metadata, f: &mut fmt::Formatter) -> fmt::Result {
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, _: T::Metadata) -> Result<&T, Self::Persist> {
         match *self {}
     }
 }

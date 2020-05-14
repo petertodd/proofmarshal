@@ -9,11 +9,20 @@ pub struct Fat<T: ?Sized + Pointee, P> {
     pub metadata: T::Metadata,
 }
 
-impl<T: ?Sized + Pointee, P: Load> Load for Fat<T,P> {
+/*
+impl<Q, T: ?Sized + Pointee, P: Load> Load<Q> for Fat<T,P> {
     type Error = LoadError<P::Error, <T::Metadata as Load>::Error>;
+    type State = ();
 
     fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
         todo!()
+    }
+
+    fn init_validate_state(&self) -> Self::State {
+    }
+
+    fn poll<V: ValidatePtr<Q>>(_: &mut Self::State, _: &V) -> Result<(), V::Error> {
+        Ok(())
     }
 }
 
@@ -25,3 +34,4 @@ pub enum LoadError<P: std::fmt::Debug, M: std::fmt::Debug> {
     #[error("invalid metadata: {0:?}")]
     Metadata(M),
 }
+*/
