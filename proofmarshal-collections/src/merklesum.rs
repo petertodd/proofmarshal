@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use hoard::primitive::Primitive;
+
 pub trait MerkleSum<T: ?Sized> : 'static + Copy {
     const MAX: Self;
     const ZERO: Self;
@@ -23,7 +25,7 @@ impl<T: ?Sized> MerkleSum<T> for () {
 
     fn from_item(_: &T) -> Self {}
 
-    fn try_sum(_: &Self, _: &Self) -> Result<Self, Self::Error> {
+    fn try_sum(_: &Self, _: &Self) -> Result<Self, !> {
         Ok(())
     }
 }
@@ -43,7 +45,7 @@ impl MerkleSum<u8> for u8 {
         *x
     }
 
-    fn try_sum(lhs: &Self, rhs: &Self) -> Result<Self, Self::Error> {
+    fn try_sum(lhs: &Self, rhs: &Self) -> Result<Self, OverflowError> {
         lhs.checked_add(*rhs)
            .ok_or(OverflowError)
     }

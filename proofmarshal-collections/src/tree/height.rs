@@ -1,6 +1,7 @@
 use std::cmp;
 use std::convert::TryFrom;
 use std::fmt;
+use std::mem;
 use std::num::NonZeroU8;
 use std::ops;
 
@@ -8,6 +9,8 @@ use thiserror::Error;
 
 // use hoard::pointee::{Metadata, MetadataKind};
 use hoard::load::*;
+use hoard::save::*;
+use hoard::primitive::*;
 
 use proofmarshal_core::commit::{Digest, Commit, Verbatim, WriteVerbatim};
 
@@ -347,7 +350,6 @@ unsafe impl GetHeight for () {
 #[error("out of range: {0}")]
 pub struct LoadHeightError(u8);
 
-// marshalling
 impl Load for Height {
     type Error = LoadHeightError;
 
@@ -356,11 +358,34 @@ impl Load for Height {
     }
 }
 
+impl<R> Saved<R> for Height {
+    type Saved = Self;
+}
+impl<Q, R> Save<'_, Q, R> for Height {
+    type State = ();
+
+    fn init_save_state(&self) -> Self::State {}
+
+    fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut Self::State, dst: D) -> Result<D, D::Error> {
+        Ok(dst)
+    }
+
+    fn save_blob<W: SaveBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
+        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
+        <Self as Save<Q,R>>::encode_blob(self, state, dst)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+        dst.write_bytes(&[self.0])?
+           .done()
+    }
+}
+impl Primitive for Height {}
+
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 #[error("out of range: {0}")]
 pub struct LoadNonZeroHeightError(u8);
 
-// marshalling
 impl Load for NonZeroHeight {
     type Error = LoadNonZeroHeightError;
 
@@ -368,3 +393,27 @@ impl Load for NonZeroHeight {
         todo!()
     }
 }
+
+impl<R> Saved<R> for NonZeroHeight {
+    type Saved = Self;
+}
+impl<Q, R> Save<'_, Q, R> for NonZeroHeight {
+    type State = ();
+
+    fn init_save_state(&self) -> Self::State {}
+
+    fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut Self::State, dst: D) -> Result<D, D::Error> {
+        Ok(dst)
+    }
+
+    fn save_blob<W: SaveBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
+        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
+        <Self as Save<Q,R>>::encode_blob(self, state, dst)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+        dst.write_bytes(&[self.0.get()])?
+           .done()
+    }
+}
+impl Primitive for NonZeroHeight {}

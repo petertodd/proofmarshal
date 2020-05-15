@@ -26,8 +26,11 @@ use std::cmp;
 use std::fmt;
 use std::hash;
 use std::marker::PhantomData;
+use std::mem;
 
 use hoard::load::*;
+use hoard::save::*;
+use hoard::primitive::*;
 
 use super::*;
 
@@ -199,6 +202,32 @@ impl<T: ?Sized> Load for Digest<T> {
         unsafe { Ok(blob.assume_valid()) }
     }
 }
+
+impl<R, T: ?Sized> Saved<R> for Digest<T> {
+    type Saved = Self;
+}
+
+impl<Q, R, T: ?Sized> Save<'_, Q, R> for Digest<T> {
+    type State = ();
+
+    fn init_save_state(&self) -> Self::State {}
+
+    fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut Self::State, dst: D) -> Result<D, D::Error> {
+        Ok(dst)
+    }
+
+    fn save_blob<W: SaveBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
+        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
+        <Self as Save<Q,R>>::encode_blob(self, state, dst)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+        dst.write_bytes(&self.buf)?
+           .done()
+    }
+}
+
+impl<T: ?Sized> Primitive for Digest<T> {}
 
 #[cfg(test)]
 mod tests {

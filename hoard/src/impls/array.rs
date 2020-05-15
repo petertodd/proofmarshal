@@ -90,7 +90,7 @@ where T: Save<'a, Q, R>,
         Ok(dumper)
     }
 
-    fn save_blob<W: SaveBlob>(&'a self, state: &Self::State, mut dst: W) -> Result<W::Done, W::Error> {
+    fn save_blob<W: SaveBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
         let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
         self.encode_blob(state, dst)
     }

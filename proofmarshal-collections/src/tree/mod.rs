@@ -15,6 +15,11 @@ use thiserror::Error;
 use owned::{IntoOwned, Take};
 
 use hoard::prelude::*;
+use hoard::save::*;
+use hoard::load::*;
+use hoard::primitive::*;
+use hoard::ptr::*;
+
 use proofmarshal_core::commit::{Digest, Commit, Verbatim, WriteVerbatim};
 
 use crate::merklesum::MerkleSum;
@@ -22,9 +27,12 @@ use crate::merklesum::MerkleSum;
 pub mod height;
 use self::height::*;
 
+mod flags;
+use self::flags::*;
+
 /// Perfect merkle sum tree.
 #[repr(C)]
-pub struct SumTree<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight = Height> {
+pub struct SumTree<T, S, P: Ptr, H: ?Sized + GetHeight = Height> {
     marker: PhantomData<T>,
     flags: AtomicU8,
     tip_digest: UnsafeCell<Digest>,
@@ -40,40 +48,23 @@ pub type DynTree<T, P> = SumTree<T, (), P, DynHeight>;
 
 
 #[repr(C)]
-pub struct Inner<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight = NonZeroHeight> {
+pub struct Inner<T, S, P: Ptr, H: ?Sized + GetHeight = NonZeroHeight> {
     left:  ManuallyDrop<SumTree<T,S,P,()>>,
     right: ManuallyDrop<SumTree<T,S,P,()>>,
     height: H,
 }
 pub type DynInner<T, S, P> = Inner<T, S, P, DynNonZeroHeight>;
 
-
 #[derive(Debug)]
-enum Tip<'a, T, S: MerkleSum<T>, P: Ptr> {
+enum Tip<'a, T, S, P: Ptr> {
     Inner(&'a DynInner<T, S, P>),
     Leaf(&'a T),
 }
 
 #[derive(Debug)]
-enum TipMut<'a, T, S: MerkleSum<T>, P: Ptr> {
+enum TipMut<'a, T, S, P: Ptr> {
     Inner(&'a mut DynInner<T, S, P>),
     Leaf(&'a mut T),
-}
-
-bitflags::bitflags! {
-    pub struct Flags: u8 {
-        const DIGEST_DIRTY  = 0b0001;
-        const DIGEST_LOCKED = 0b0010;
-        const SUM_DIRTY     = 0b0100;
-        const SUM_LOCKED    = 0b1000;
-    }
-}
-
-impl From<Flags> for AtomicU8 {
-    #[inline(always)]
-    fn from(flags: Flags) -> Self {
-        flags.bits.into()
-    }
 }
 
 #[derive(Debug, Error)]
@@ -88,6 +79,7 @@ pub enum JoinError<SumError: std::fmt::Debug> {
     SumOverflow(SumError),
 }
 
+/*
 impl<T, S: MerkleSum<T>, P: Ptr> SumTree<T,S,P> {
     pub fn new_leaf(value: T) -> Self
         where P: Default
@@ -139,7 +131,9 @@ impl<T, S: MerkleSum<T>, P: Ptr> SumTree<T,S,P> {
     }
 }
 
-impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
+*/
+
+impl<T, S, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
     /// Gets the height of the tree.
     pub fn height(&self) -> Height {
         self.height.get()
@@ -151,13 +145,16 @@ impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
 
     #[inline]
     pub fn sum(&self) -> S {
+        /*
         if let Some(sum) = self.try_sum() {
             sum
         } else {
             self.fix_dirty_sum()
         }
+        */ todo!()
     }
 
+    /*
     /// Tries to get the sum, if already calculated.
     pub fn try_sum(&self) -> Option<S> {
         if mem::size_of::<S>() == 0 {
@@ -250,23 +247,27 @@ impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
             }
         }
     }
+    */
 
     /// Sets all dirty bits.
     fn set_dirty(&mut self) {
-        *self.flags.get_mut() |= (Flags::DIGEST_DIRTY | Flags::SUM_DIRTY).bits;
+        *self.flags.get_mut() |= (Flags::DIGEST_DIRTY | Flags::SUM_DIRTY).bits();
     }
 }
 
-impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
+impl<T, S, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
     #[inline]
     pub fn tip_digest(&self) -> Digest {
+        /*
         if let Some(digest) = self.try_tip_digest() {
             digest
         } else {
             self.fix_dirty_tip_digest()
         }
+        */ todo!()
     }
 
+    /*
     fn fix_dirty_tip_digest(&self) -> Digest
     {
         /*
@@ -298,8 +299,10 @@ impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
         }
         */ todo!()
     }
+*/
 }
 
+/*
 impl<T, S: MerkleSum<T>, P: Ptr> Inner<T, S, P, NonZeroHeight> {
     pub fn new(left: SumTree<T, S, P>, right: SumTree<T, S, P>) -> Result<Self, JoinError<S::Error>> {
         if left.height != right.height {
@@ -320,11 +323,14 @@ impl<T, S: MerkleSum<T>, P: Ptr> Inner<T, S, P, NonZeroHeight> {
         }
     }
 }
+*/
 
-impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> Inner<T, S, P, H> {
+impl<T, S, P: Ptr, H: ?Sized + GetHeight> Inner<T, S, P, H> {
+    /*
     pub fn sum(&self) -> S {
         S::try_sum(&self.left.sum(), &self.right.sum()).expect("sum to be valid")
     }
+    */
 
     pub fn height(&self) -> NonZeroHeight {
         NonZeroHeight::try_from(self.height.get()).expect("inner node to have non-zero height")
@@ -361,12 +367,11 @@ impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> Inner<T, S, P, H> {
     }
 }
 
-
 // ----- hoard impls --------
 
 // ----- Pointee ------
 
-unsafe impl<T, S: MerkleSum<T>, P: Ptr> Pointee for DynSumTree<T, S, P> {
+unsafe impl<T, S, P: Ptr> Pointee for DynSumTree<T, S, P> {
     type Metadata = Height;
     type LayoutError = !;
 
@@ -397,7 +402,7 @@ unsafe impl<T, S: MerkleSum<T>, P: Ptr> Pointee for DynSumTree<T, S, P> {
     }
 }
 
-unsafe impl<T, S: MerkleSum<T>, P: Ptr> Pointee for DynInner<T, S, P> {
+unsafe impl<T, S, P: Ptr> Pointee for DynInner<T, S, P> {
     type Metadata = NonZeroHeight;
     type LayoutError = !;
 
@@ -428,6 +433,7 @@ unsafe impl<T, S: MerkleSum<T>, P: Ptr> Pointee for DynInner<T, S, P> {
     }
 }
 
+/*
 // Drop
 
 impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> Drop for SumTree<T, S, P, H> {
@@ -450,6 +456,7 @@ impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> Drop for Inner<T, S, P, 
         }
     }
 }
+*/
 
 // Take/Borrow/etc.
 
@@ -555,23 +562,6 @@ impl<T, S: MerkleSum<T>, P: Ptr, H: GetHeight> AsMut<DynInner<T, S, P>> for Inne
 }
 
 // ---- Load ------
-#[derive(Debug, Error)]
-#[error("invalid flags")]
-pub struct LoadFlagsError(u8);
-
-impl Load for Flags {
-    type Error = LoadFlagsError;
-
-    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        /*
-        blob.validate_bytes(|blob| {
-            match blob[0] {
-                0 => Ok(unsafe { blob.assume_valid() }),
-                x => Err(LoadFlagsError(x)),
-            }
-        })*/ todo!()
-    }
-}
 
 #[derive(Debug, Error)]
 #[error("invalid flags")]
@@ -582,7 +572,7 @@ pub enum LoadSumTreeError<S: fmt::Debug, P: fmt::Debug, H: fmt::Debug> {
     Height(H),
 }
 
-impl<T, S: MerkleSum<T>, P: Ptr, H: GetHeight> Load for SumTree<T, S, P, H>
+impl<T, S, P: Ptr, H: GetHeight> Load for SumTree<T, S, P, H>
 where S: Load, P: Load, H: Load,
 {
     type Error = LoadSumTreeError<<S as Load>::Error, P::Error, H::Error>;
@@ -592,7 +582,7 @@ where S: Load, P: Load, H: Load,
     }
 }
 
-impl<T, S: MerkleSum<T>, P: Ptr> Load for DynSumTree<T, S, P>
+impl<T, S, P: Ptr> Load for DynSumTree<T, S, P>
 where S: Load, P: Load,
 {
     type Error = LoadSumTreeError<<S as Load>::Error, P::Error, !>;
@@ -611,7 +601,7 @@ pub enum LoadInnerError<E: fmt::Debug, H: fmt::Debug> {
     Height(H),
 }
 
-impl<T, S: MerkleSum<T>, P: Ptr, H: GetHeight> Load for Inner<T, S, P, H>
+impl<T, S, P: Ptr, H: GetHeight> Load for Inner<T, S, P, H>
 where S: Load, P: Load, H: Load,
 {
     type Error = LoadInnerError<LoadSumTreeError<<S as Load>::Error, P::Error, !>, H::Error>;
@@ -623,48 +613,161 @@ where S: Load, P: Load, H: Load,
 
 // ---- Save ------
 
-pub struct SaveSumTreeState<Q: Ptr, T: Save<Q>, S: MerkleSum<T>, P: Ptr> {
-    stack: Vec<*const DynSumTree<T, S, P>>,
-    state: TipState<Q, T, S, P>,
+#[derive(Debug)]
+pub struct SaveSumTreeState<'a, R, T, TState, S, P: Ptr> {
+    stack: Vec<InnerState<'a, R, T, S, P>>,
+    state: TipState<'a, R, T, TState, S, P>,
 }
 
-enum TipState<Q: Ptr, T: Save<Q>, S: MerkleSum<T>, P: Ptr> {
-    Ready(*const DynSumTree<T, S, P>),
-    PendingLeaf {
-        this: *const DynSumTree<T, S, P>,
-        leaf: *const T,
-        state: T::State,
+#[derive(Debug)]
+struct InnerState<'a, R, T, S, P: Ptr> {
+    this: &'a DynSumTree<T, S, P>,
+    inner: &'a DynInner<T, S, P>,
+    left_ptr: Option<R>,
+}
+
+#[derive(Debug)]
+enum TipState<'a, R, T, TState, S, P: Ptr> {
+    Ready(&'a DynSumTree<T, S, P>),
+    PollLeaf {
+        this: &'a DynSumTree<T, S, P>,
+        leaf: &'a T,
+        leaf_state: TState,
     },
     Done {
-        this: *const DynSumTree<T, S, P>,
-        saved_ptr: Q,
+        this: &'a DynSumTree<T, S, P>,
+        saved_ptr: R,
     }
 }
 
-impl<T, S: MerkleSum<T>, P: Ptr, Q: Ptr> Save<Q> for DynSumTree<T, S, P>
-where T: Save<Q>,
-      P: Save<Q>,
+impl<R: Ptr, T, S: MerkleSum<T>, P: Ptr> Saved<R> for DynSumTree<T, S, P>
+where T: Saved<R>,
+      T::Saved: Sized,
 {
-    type State = SaveSumTreeState<Q, T, S, P>;
+    type Saved = DynSumTree<T::Saved, S, R>;
+}
 
-    fn init_save_state(&self) -> Self::State {
+impl<'a, Q: 'a, R: Ptr, T: 'a, S: MerkleSum<T>, P: 'a + Ptr> Save<'a, Q, R> for DynSumTree<T, S, P>
+where T: Save<'a, Q, R>,
+      T::Saved: Sized,
+      P: AsPtr<Q>,
+{
+    type State = SaveSumTreeState<'a, R, T, T::State, S, P>;
+
+    fn init_save_state(&'a self) -> Self::State {
+        SaveSumTreeState {
+            stack: vec![],
+            state: TipState::Ready(self),
+        }
+    }
+
+    fn save_poll<D: SavePtr<Q, R>>(&'a self, state: &mut Self::State, mut dst: D) -> Result<D, D::Error> {
+        loop {
+            state.state = match &mut state.state {
+                TipState::Ready(this) => {
+                    if let Ok(height) = NonZeroHeight::try_from(this.height()) {
+                        match unsafe { dst.try_save_ptr::<DynInner<T, S, P>>(this.tip.as_ptr(), height) } {
+                            Ok(saved_ptr) => TipState::Done { this, saved_ptr },
+                            Err(inner) => {
+                                // Add this inner node to the stack.
+                                state.stack.push(InnerState {
+                                    this,
+                                    inner,
+                                    left_ptr: None,
+                                });
+
+                                // Descend the left side
+                                TipState::Ready(inner.left())
+                            },
+                        }
+                    } else {
+                        match unsafe { dst.try_save_ptr::<T>(this.tip.as_ptr(), T::make_sized_metadata()) } {
+                            Ok(saved_ptr) => TipState::Done { this, saved_ptr },
+                            Err(leaf) => TipState::PollLeaf {
+                                leaf_state: leaf.init_save_state(),
+                                this, leaf,
+                            },
+                        }
+                    }
+                },
+                TipState::PollLeaf { this, leaf, leaf_state } => {
+                    dst = leaf.save_poll(leaf_state, dst)?;
+                    let (d, saved_ptr) = dst.save(*leaf, leaf_state)?;
+                    dst = d;
+                    TipState::Done { this, saved_ptr }
+                },
+                TipState::Done { .. } => break Ok(dst),
+            }
+        }
+    }
+
+    fn save_blob<W: SaveBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
         todo!()
     }
 
-    unsafe fn poll<D: SavePtr<Q>>(&self, state: &mut Self::State, dst: D) -> Result<D, D::Error> {
-        todo!()
+    fn encode_blob<W: WriteBlob>(&self, _: &Self::State, dst: W) -> Result<W::Done, W::Error>
+        where Self::Saved: Sized,
+    {
+        unreachable!()
+    }
+}
+
+impl<R: Ptr, T, S: MerkleSum<T>, P: Ptr> Saved<R> for SumTree<T, S, P>
+where T: Saved<R>,
+      T::Saved: Sized,
+{
+    type Saved = SumTree<T::Saved, S, R>;
+}
+
+impl<'a, Q: 'a, R: Ptr, T: 'a, S: MerkleSum<T>, P: 'a + Ptr> Save<'a, Q, R> for SumTree<T, S, P>
+where T: Save<'a, Q, R>,
+      T::Saved: Sized,
+      S: Primitive,
+      R: Primitive,
+      P: AsPtr<Q>,
+{
+    type State = SaveSumTreeState<'a, R, T, T::State, S, P>;
+
+    fn init_save_state(&'a self) -> Self::State {
+        SaveSumTreeState {
+            stack: vec![],
+            state: TipState::Ready(self.borrow()),
+        }
     }
 
-    unsafe fn encode<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        todo!()
+    fn save_poll<D: SavePtr<Q, R>>(&'a self, state: &mut Self::State, dst: D) -> Result<D, D::Error> {
+        let this: &'a DynSumTree<T, S, P> = self.as_ref();
+        this.save_poll(state, dst)
+    }
+
+    fn save_blob<W: SaveBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
+        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
+        <Self as Save<Q,R>>::encode_blob(self, state, dst)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, mut dst: W) -> Result<W::Done, W::Error> {
+        if let TipState::Done { this, saved_ptr } = &state.state {
+            assert_eq!(state.stack.len(), 0);
+            assert!(std::ptr::eq(self as *const _ as *const (), this as *const _ as *const ()));
+
+            dst.write_primitive(&0u8)? // flags, FIXME
+               .write_primitive(&self.tip_digest())?
+               .write_primitive(&self.sum())?
+               .write_primitive(saved_ptr)?
+               .write_primitive(&self.height)?
+               .done()
+        } else {
+            panic!()
+        }
     }
 }
 
 // ---- Debug impls ----
-impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> fmt::Debug for SumTree<T, S, P, H>
+impl<T, S, P: Ptr, H: ?Sized + GetHeight> fmt::Debug for SumTree<T, S, P, H>
 where T: fmt::Debug, S: fmt::Debug, P: fmt::Debug, H: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        /*
         let mut f = f.debug_struct("SumTree");
 
         f.field("flags", &self.load_flags(Ordering::Relaxed))
@@ -679,21 +782,25 @@ where T: fmt::Debug, S: fmt::Debug, P: fmt::Debug, H: fmt::Debug,
 
         f.field("height", &&self.height)
          .finish()
+        */ todo!()
     }
 }
 
-impl<T, S: MerkleSum<T>, P: Ptr, H: ?Sized + GetHeight> fmt::Debug for Inner<T, S, P, H>
+impl<T, S, P: Ptr, H: ?Sized + GetHeight> fmt::Debug for Inner<T, S, P, H>
 where T: fmt::Debug, S: fmt::Debug, P: fmt::Debug, H: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        /*
         f.debug_struct("Inner")
             .field("left", &self.left())
             .field("right", &self.right())
             .field("height", &&self.height)
             .finish()
+        */ todo!()
     }
 }
 
+/*
 // ---- Clone/ToOwned impls ----
 
 impl<T, S: MerkleSum<T>, P: Ptr> ToOwned for DynSumTree<T, S, P>
@@ -1375,3 +1482,4 @@ mod tests {
         */
     }
 }
+*/
