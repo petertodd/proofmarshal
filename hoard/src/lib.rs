@@ -43,25 +43,28 @@ compile_error!("little endian required");
 
 use thiserror::Error;
 
+pub mod pointee;
+
 pub mod load;
 pub mod save;
-pub mod primitive;
+//pub mod primitive;
 
-pub mod ptr;
-pub mod pointee;
+//pub mod ptr;
 
 pub mod impls;
 
-pub mod heap;
-pub mod pile;
+//pub mod heap;
+//pub mod pile;
 
 pub mod prelude {
     pub use crate::{
         pointee::Pointee,
+        /*
         ptr::{
             Alloc, Get, GetMut,
             Ptr, Bag,
         },
+        */
         load::{
             Load,
             Blob, BlobCursor, ValidBlob,
@@ -71,6 +74,6 @@ pub mod prelude {
             SavePtr,
             WriteBlob,
         },
-        heap::Heap,
+        //heap::Heap,
     };
 }

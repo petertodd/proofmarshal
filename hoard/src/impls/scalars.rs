@@ -10,8 +10,10 @@ use super::*;
 
 macro_rules! impl_primitive {
     ($t:ty) => {
+        /*
         impl Primitive for $t {
         }
+        */
     }
 }
 
@@ -21,21 +23,25 @@ macro_rules! impl_save {
             type Saved = $t;
         }
 
-        impl<Q, R> Save<'_, Q, R> for $t {
-            type State = ();
+        impl<Q, R> Save<Q, R> for $t {
+            type Thunk = $t;
 
-            fn init_save_state(&self) -> () {}
+	    fn save_children<D>(&self, _dst: &mut D) -> Self::Thunk {
+		*self
+	    }
+	}
 
-            fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut (), dst: D) -> Result<D, D::Error> {
-                Ok(dst)
-            }
 
-            fn save_blob<W: SaveBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
-                let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
-                <Self as Save<Q,R>>::encode_blob(self, state, dst)
-            }
+	impl<Q, R> SavePoll<Q, R> for $t {
+            type Target = $t;
 
-            fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+	    fn save_poll<D>(&mut self, dst: D) -> Result<D, D::Error>
+		where D: SavePtr<Source=Q, Target=R>
+	    {
+		Ok(dst)
+	    }
+
+	    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
                 let src = unsafe { slice::from_raw_parts(
                     self as *const _ as *const u8,
                     mem::size_of::<$t>()
@@ -43,8 +49,14 @@ macro_rules! impl_save {
 
                 dst.write_bytes(src)?
                    .done()
-            }
-        }
+	    }
+
+	    fn save_blob<W: SaveBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+                let dst = dst.alloc(mem::size_of::<$t>())?;
+                //<Self as SavePoll<$t, Q,R>>::encode_blob(self, dst)
+                todo!()
+	    }
+	}
     }
 }
 
@@ -91,26 +103,44 @@ impl<R> Saved<R> for bool {
     type Saved = Self;
 }
 
-impl<Q, R> Save<'_, Q, R> for bool {
-    type State = ();
+impl<Q, R> Save<Q, R> for bool {
+    type Thunk = bool;
 
-    fn init_save_state(&self) -> () {}
-    fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut (), dst: D) -> Result<D, D::Error> {
+    fn save_children<D>(&self, _dst: &mut D) -> Self::Thunk {
+        *self
+    }
+}
+
+
+impl<Q, R> SavePoll<Q, R> for bool {
+    type Target = bool;
+
+    fn save_poll<D>(&mut self, dst: D) -> Result<D, D::Error>
+        where D: SavePtr<Source=Q, Target=R>
+    {
         Ok(dst)
     }
 
-    fn save_blob<W: SaveBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
-        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
-        <Self as Save<Q,R>>::encode_blob(self, state, dst)
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        let src = unsafe { slice::from_raw_parts(
+            self as *const _ as *const u8,
+            mem::size_of::<bool>()
+        )};
+
+        dst.write_bytes(src)?
+           .done()
     }
 
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+    fn save_blob<W: SaveBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        let dst = dst.alloc(mem::size_of::<bool>())?;
+        //<Self as SavePoll<bool, Q,R>>::encode_blob(self, dst)
         todo!()
     }
 }
 
 impl_primitive!(bool);
 
+/*
 #[non_exhaustive]
 #[derive(Debug, Error)]
 #[error("non-zero int")]
@@ -142,3 +172,4 @@ impl_nonzero! {
     num::NonZeroU8, Le<num::NonZeroU16>, Le<num::NonZeroU32>, Le<num::NonZeroU64>, Le<num::NonZeroU128>,
     num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
 }
+*/

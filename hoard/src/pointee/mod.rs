@@ -3,8 +3,6 @@
 use std::hash::Hash;
 use std::ptr::{self, NonNull};
 
-use crate::primitive::Primitive;
-
 /*
 use std::alloc::Layout;
 use std::any::Any;
@@ -52,7 +50,7 @@ impl Metadata for Le<u64> {
 /// Other code can assume `Pointee` is implemented correctly.
 pub unsafe trait Pointee {
     /// Fat pointer metadata.
-    type Metadata : 'static + Primitive + Copy + Eq + Ord + Hash + Send + Sync;
+    type Metadata : 'static + Copy + Eq + Ord + Hash + Send + Sync;
 
     type LayoutError : 'static + std::error::Error + Send + Sync;
 

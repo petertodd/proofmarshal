@@ -59,18 +59,20 @@ where T: Saved<R>,
     type Saved = [T::Saved; N];
 }
 
-impl<'a, Q, R, T, const N: usize> Save<'a, Q, R> for [T; N]
-where T: Save<'a, Q, R>,
+impl<Q, R, T, const N: usize> Save<Q, R> for [T; N]
+where T: Save<Q, R>,
       T::Saved: Sized,
 {
-    type State = [T::State; N];
+    type Thunk = [T::Thunk; N];
 
-    fn init_save_state(&'a self) -> Self::State {
-        let mut r: [MaybeUninit<T::State>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+    fn save_children<D>(&self, dst: &mut D) -> Self::Thunk
+        where D: SavePtr<Source=Q, Target=R>
+    {
+        let mut r: [MaybeUninit<T::Thunk>; N] = unsafe { MaybeUninit::uninit().assume_init() };
         let mut initializer = SliceInitializer::new(&mut r[..]);
 
         for item in self.iter() {
-            initializer.push(item.init_save_state())
+            initializer.push(item.save_children(dst))
         }
 
         initializer.done();
@@ -82,31 +84,43 @@ where T: Save<'a, Q, R>,
 
         r2
     }
+}
 
-    fn save_poll<D: SavePtr<Q, R>>(&'a self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Error> {
-        for (item, state) in self.iter().zip(state.iter_mut()) {
-            dumper = item.save_poll(state, dumper)?;
+impl<Q, R, T, const N: usize> SavePoll<Q, R> for [T; N]
+where T: SavePoll<Q, R>,
+      T::Target: Sized,
+{
+    type Target = [T::Target; N];
+
+    fn save_poll<D>(&mut self, mut dst: D) -> Result<D, D::Error>
+        where D: SavePtr<Source=Q, Target=R>
+    {
+        for thunk in self.iter_mut() {
+            dst = thunk.save_poll(dst)?;
         }
-        Ok(dumper)
+        Ok(dst)
     }
 
-    fn save_blob<W: SaveBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
-        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
-        self.encode_blob(state, dst)
-    }
-
-    fn encode_blob<W: WriteBlob>(&'a self, state: &Self::State, mut dst: W) -> Result<W::Done, W::Error> {
-        for (item, state) in self.iter().zip(state.iter()) {
-            dst = dst.write(item, state)?;
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        for thunk in self.iter() {
+            //dst = dst.write(thunk)?;
+            todo!()
         }
         dst.done()
     }
+
+    fn save_blob<W: SaveBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        let dst = dst.alloc(mem::size_of::<Self::Target>())?;
+        self.encode_blob(dst)
+    }
 }
 
+/*
 impl<T, const N: usize> Primitive for [T; N]
 where T: Primitive,
       T::Saved: Sized,
 {}
+*/
 
 #[cfg(test)]
 mod tests {

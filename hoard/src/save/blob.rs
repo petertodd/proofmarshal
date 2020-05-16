@@ -3,7 +3,6 @@ use std::mem;
 
 use crate::save::*;
 use crate::pointee::Pointee;
-use crate::ptr::AsPtr;
 
 pub trait WriteBlob : Sized {
     type Done;
@@ -19,6 +18,7 @@ pub trait WriteBlob : Sized {
         Ok(self)
     }
 
+    /*
     fn write<'a, Q, R, T: Save<'a, Q, R>>(self, val: &'a T, state: &T::State) -> Result<Self, Self::Error>
         where T::Saved: Sized,
     {
@@ -33,8 +33,10 @@ pub trait WriteBlob : Sized {
         val.save_poll(&mut state, DummySavePtr).into_ok();
         self.write(val, &state)
     }
+    */
 }
 
+/*
 struct DummySavePtr;
 
 impl SavePtr<!, !> for DummySavePtr {
@@ -50,6 +52,7 @@ impl SavePtr<!, !> for DummySavePtr {
         match *ptr {}
     }
 }
+*/
 
 #[derive(Debug)]
 pub struct Limit<W> {

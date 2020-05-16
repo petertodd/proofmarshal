@@ -14,28 +14,34 @@ impl<R> Saved<R> for ! {
     type Saved = !;
 }
 
-impl<Q, R> Save<'_, Q, R> for ! {
-    type State = !;
+impl<Q, R> Save<Q, R> for ! {
+    type Thunk = !;
 
-    fn init_save_state(&self) -> ! {
-        *self
-    }
-
-    fn save_poll<D: SavePtr<Q, R>>(&self, _state: &mut Self::State, _dumper: D) -> Result<D, D::Error> {
-        match *self {}
-    }
-
-    fn save_blob<W: SaveBlob>(&self, _state: &Self::State, _dst: W) -> Result<W::Done, W::Error> {
-        match *self {}
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, _state: &Self::State, _dst: W) -> Result<W::Done, W::Error> {
+    fn save_children<D>(&self, _dst: &mut D) -> Self::Thunk {
         match *self {}
     }
 }
 
-impl Primitive for ! {
+impl<Q, R> SavePoll<Q, R> for ! {
+    type Target = !;
+
+    fn save_poll<D>(&mut self, _dst: D) -> Result<D, D::Error>
+        where D: SavePtr<Source=Q, Target=R>
+    {
+        match *self {}
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _dst: W) -> Result<W::Done, W::Error> {
+        match *self {}
+    }
+
+    fn save_blob<W: SaveBlob>(&self, _dst: W) -> Result<W::Done, W::Error> {
+        match *self {}
+    }
 }
+
+//impl Primitive for ! {
+//}
 
 
 /*
