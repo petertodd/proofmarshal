@@ -5,11 +5,15 @@ use super::*;
 impl Ptr for ! {
     type Persist = !;
 
-    unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, _: T::Metadata) {
+    unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
         match *self {}
     }
 
     unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
+        match *self {}
+    }
+
+    fn duplicate(&self) -> Self {
         match *self {}
     }
 

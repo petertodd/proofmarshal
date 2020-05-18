@@ -4,6 +4,89 @@ use std::slice;
 
 use thiserror::Error;
 
+use super::*;
+
+macro_rules! unsafe_impl_decode_for_all_valid {
+    ($($t:ty,)+) => {$(
+        impl ValidateBlob for $t {
+            type Error = !;
+
+            const BLOB_LEN: usize = mem::size_of::<Self>();
+
+            fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+                unsafe { Ok(blob.assume_valid()) }
+            }
+        }
+
+        impl<Z> Load<Z> for $t {
+            fn decode_blob_owned<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self {
+                Self::load_blob(blob, zone).clone()
+            }
+
+            fn load_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Ref<'a, Self> {
+                let _ = zone;
+                blob.to_ref().into()
+            }
+        }
+    )+}
+}
+
+macro_rules! unsafe_impl_persist {
+    ($($t:ty,)+) => {$(
+        unsafe impl Persist for $t {
+        }
+    )+}
+}
+
+unsafe_impl_decode_for_all_valid! {
+    (), u8,
+}
+
+unsafe_impl_persist! {
+    (), u8,
+}
+
+#[non_exhaustive]
+#[derive(Error, Debug)]
+#[error("invalid bool blob")]
+pub struct ValidateBoolError;
+
+impl ValidateBlob for bool {
+    type Error = ValidateBoolError;
+    const BLOB_LEN: usize = mem::size_of::<Self>();
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        match &blob[..] {
+            [0] | [1] => unsafe { Ok(blob.assume_valid()) },
+            _ => Err(ValidateBoolError),
+        }
+    }
+}
+
+unsafe impl Persist for bool {}
+
+impl<Z> Load<Z> for bool {
+    fn decode_blob_owned<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self {
+        Self::load_blob(blob, zone).clone()
+    }
+
+    fn load_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Ref<'a, Self> {
+        blob.to_ref().into()
+    }
+}
+
+/*
+impl<Z> Load<Z> for bool {
+    fn decode_blob_owned<'a>(blob: ValidBlob<'a, Self>, _: &Z) -> Self {
+        blob.to_ref().clone()
+    }
+
+    fn load_blob<'a>(blob: ValidBlob<'a, Self>, _: &Z) -> Ref<'a, Self> {
+        blob.to_ref().into()
+    }
+}
+
+/*
 use leint::Le;
 
 use super::*;
@@ -82,10 +165,6 @@ impl_all_valid! {
     i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
 }
 
-#[non_exhaustive]
-#[derive(Error, Debug)]
-#[error("invalid bool blob")]
-pub struct ValidateBoolError;
 
 impl Load for bool {
     type Error = ValidateBoolError;
@@ -172,4 +251,6 @@ impl_nonzero! {
     num::NonZeroU8, Le<num::NonZeroU16>, Le<num::NonZeroU32>, Le<num::NonZeroU64>, Le<num::NonZeroU128>,
     num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
 }
+*/
+*/
 */

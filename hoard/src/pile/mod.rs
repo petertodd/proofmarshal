@@ -12,20 +12,23 @@
 //! between persistant offsets and heap memory pointers.
 
 use std::marker::PhantomData;
-use std::mem;
+use std::borrow::Borrow;
 
 use owned::Take;
 
 use crate::pointee::Pointee;
 use crate::ptr::*;
-use crate::load::Load;
-use crate::save::*;
+use crate::zone::*;
+use crate::bag::*;
+use crate::refs::Ref;
+use crate::load::*;
+use crate::blob::*;
 
 pub mod offset;
 use self::offset::Offset;
 
 pub mod offsetmut;
-use self::offsetmut::OffsetMut;
+use self::offsetmut::{OffsetMut, Kind};
 
 pub mod mapping;
 use self::mapping::Mapping;
@@ -40,6 +43,159 @@ pub struct TryPile<'pile, 'version> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pile<'pile, 'version>(TryPile<'pile, 'version>);
+
+
+impl ValidateBlob for TryPile<'_, '_> {
+    type Error = !;
+    const BLOB_LEN: usize = 0;
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        unsafe { Ok(blob.assume_valid()) }
+    }
+}
+
+impl ValidateBlob for Pile<'_, '_> {
+    type Error = !;
+    const BLOB_LEN: usize = 0;
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        unsafe { Ok(blob.assume_valid()) }
+    }
+}
+
+impl<Z> Load<Z> for TryPile<'_, '_>
+where Z: Borrow<Self>
+{
+    fn decode_blob_owned<'a>(_: ValidBlob<'a, Self>, zone: &Z) -> Self {
+        zone.borrow().clone()
+    }
+}
+
+impl<Z> Load<Z> for Pile<'_, '_>
+where Z: Borrow<Self>
+{
+    fn decode_blob_owned<'a>(_: ValidBlob<'a, Self>, zone: &Z) -> Self {
+        zone.borrow().clone()
+    }
+}
+
+
+impl<'p,'v> Zone for Pile<'p, 'v> {
+    type Ptr = Offset<'p, 'v>;
+}
+
+/*
+impl<'p, 'v> Get for Pile<'p, 'v> {
+    unsafe fn get_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a Self::Ptr, metadata: T::Metadata) -> Ref<'a, T>
+        where T: Load<Self>,
+    {
+        todo!()
+    }
+
+    unsafe fn take_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: Self::Ptr, metadata: T::Metadata) -> T::Owned
+        where T: Load<Self>
+    {
+        todo!()
+    }
+}
+*/
+
+/*
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TryPileMut<'pile, 'version>(TryPile<'pile, 'version>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PileMut<'pile, 'version>(Pile<'pile, 'version>);
+
+impl<'p> TryPile<'p, 'static> {
+    pub fn empty() -> Self {
+        static EMPTY_SLICE: &[u8] = &[];
+
+        TryPile {
+            marker: PhantomData,
+            mapping: &EMPTY_SLICE,
+        }
+    }
+}
+
+impl<'p> Pile<'p, 'static> {
+    pub fn empty() -> Self {
+        Self(TryPile::empty())
+    }
+}
+
+
+impl<'p> Default for TryPileMut<'p, 'static> {
+    fn default() -> Self {
+        Self(TryPile::empty())
+    }
+}
+
+impl<'p> Default for PileMut<'p, 'static> {
+    fn default() -> Self {
+        Self(Pile::empty())
+    }
+}
+
+impl<'p,'v> Zone for PileMut<'p, 'v> {
+    type Ptr = OffsetMut<'p, 'v>;
+
+    unsafe fn clone_ptr_unchecked<T: Clone>(ptr: &Self::Ptr) -> Self::Ptr {
+        todo!()
+    }
+
+    fn alloc<T: ?Sized + Pointee>(_value: impl Take<T>) -> Bag<T, Self> {
+        todo!()
+    }
+}
+
+impl<'p, 'v> Get for PileMut<'p, 'v> {
+    unsafe fn get_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a Self::Ptr, metadata: T::Metadata) -> Ref<'a, T>
+        where T: Load<Self>,
+    {
+        match ptr.kind() {
+            Kind::Ptr(ptr) => Ref::Ref(&*T::make_fat_ptr(ptr.cast().as_ptr(), metadata)),
+            Kind::Offset(offset) => {
+                todo!()
+            },
+        }
+    }
+
+    unsafe fn take_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: Self::Ptr, metadata: T::Metadata) -> T::Owned
+        where T: Load<Self>
+    {
+        todo!()
+    }
+}
+
+impl<'p, 'v> GetMut for PileMut<'p, 'v> {
+    unsafe fn get_mut_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut Self::Ptr, metadata: T::Metadata) -> &'a mut T
+        where T: Load<Self>,
+    {
+        match ptr.kind() {
+            Kind::Ptr(ptr) => &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata),
+            Kind::Offset(offset) => {
+                todo!()
+            },
+        }
+    }
+}
+
+/*
+use std::mem;
+
+use owned::Take;
+
+use crate::pointee::Pointee;
+use crate::ptr::*;
+use crate::load::Load;
+use crate::save::*;
+
+
+pub mod offsetmut;
+use self::offsetmut::OffsetMut;
+
+
 
 
 impl<'p,'v> Get<Offset<'p, 'v>> for Pile<'p, 'v> {
@@ -70,16 +226,6 @@ impl<'p, 'v> Alloc for Pile<'p, 'v> {
     }
 }
 
-impl<'p> Default for TryPile<'p, 'static> {
-    fn default() -> Self {
-        static EMPTY_SLICE: &[u8] = &[];
-
-        TryPile {
-            marker: PhantomData,
-            mapping: &EMPTY_SLICE,
-        }
-    }
-}
 
 impl<'p> Default for Pile<'p, 'static> {
     fn default() -> Self {
@@ -994,6 +1140,8 @@ impl<'p,'v> SavePtr<Self> for TryPileMut<'p, 'v> {
         }
     }
 }
+*/
+*/
 
 #[cfg(test)]
 pub mod test {
@@ -1002,7 +1150,9 @@ pub mod test {
     #[test]
     pub fn trypile_alloc() {
         let pile = TryPileMut::default();
-        let x = pile.alloc(42u8);
+        //let x = pile.alloc(42u8);
+
+        /*
         assert_eq!(pile.encode_dirty(&x),
                    &[42,
                       1, 0, 0, 0, 0, 0, 0, 0]);
@@ -1051,6 +1201,7 @@ pub mod test {
                      13, 0, 0, 0, 0, 0, 0, 0,
                     109, 0, 0, 0, 0, 0, 0, 0,
                     ][..]);
+        */
     }
 }
 */

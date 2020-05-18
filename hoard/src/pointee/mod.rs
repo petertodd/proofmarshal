@@ -2,13 +2,9 @@
 
 use std::hash::Hash;
 use std::ptr::{self, NonNull};
+use std::fmt;
 
 /*
-use std::alloc::Layout;
-use std::any::Any;
-use std::cmp;
-use std::convert::TryInto;
-use std::fmt;
 use std::mem::{self, MaybeUninit};
 
 use thiserror::Error;
@@ -50,7 +46,7 @@ impl Metadata for Le<u64> {
 /// Other code can assume `Pointee` is implemented correctly.
 pub unsafe trait Pointee {
     /// Fat pointer metadata.
-    type Metadata : 'static + Copy + Eq + Ord + Hash + Send + Sync;
+    type Metadata : 'static + Copy + Eq + Ord + Hash + Send + Sync + fmt::Debug;
 
     type LayoutError : 'static + std::error::Error + Send + Sync;
 

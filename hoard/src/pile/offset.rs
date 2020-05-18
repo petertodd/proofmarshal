@@ -72,10 +72,11 @@ use thiserror::Error;
 use leint::Le;
 
 use crate::pointee::Pointee;
-use crate::ptr::{Ptr, AsPtr};
+use crate::ptr::*;
+use crate::zone::*;
+use crate::refs::*;
+use crate::blob::*;
 use crate::load::*;
-use crate::save::*;
-use crate::primitive::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -90,8 +91,12 @@ pub struct Offset<'pile, 'version> {
 impl<'p, 'v> Ptr for Offset<'p, 'v> {
     type Persist = Offset<'static, 'static>;
 
-    unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, _metadata: T::Metadata) {
+    unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
         // nothing to do here
+    }
+
+    fn duplicate(&self) -> Self {
+        *self
     }
 
     unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
@@ -103,39 +108,46 @@ impl<'p, 'v> Ptr for Offset<'p, 'v> {
     }
 }
 
-impl<'p, 'v> AsPtr<Offset<'p, 'v>> for Offset<'p,'v> {
-    fn as_ptr(&self) -> &Self {
-        self
-    }
-}
-
 #[derive(Debug, Error)]
-#[error("invalid Offset: {0}")]
-pub struct LoadOffsetError(u64);
+#[error("invalid offset")]
+#[non_exhaustive]
+pub struct ValidateBlobOffsetError;
 
-impl<'p, 'v> Load for Offset<'p, 'v> {
-    type Error = LoadOffsetError;
+impl ValidateBlob for Offset<'_, '_> {
+    type Error = ValidateBlobOffsetError;
 
-    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        /*
-        blob.validate_bytes(|blob| {
-            let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
+    const BLOB_LEN: usize = mem::size_of::<Self>();
 
-            if raw & 1 == 0 {
-                Err(LoadOffsetError(raw))
+    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        let raw = u64::from_le_bytes(blob[..].try_into().unwrap());
+
+        if raw & 1 == 0 {
+            Err(ValidateBlobOffsetError)
+        } else {
+            let idx = raw >> 1;
+            if idx <= Self::MAX as u64 {
+                unsafe { Ok(blob.assume_valid()) }
             } else {
-                let idx = raw >> 1;
-                if idx <= Self::MAX as u64 {
-                    unsafe { Ok(blob.assume_valid()) }
-                } else {
-                    Err(LoadOffsetError(raw))
-                }
+                Err(ValidateBlobOffsetError)
             }
-        })
-        */ todo!()
+        }
     }
 }
 
+impl<Z> Load<Z> for Offset<'_, '_> {
+    fn decode_blob_owned<'a>(blob: ValidBlob<'a, Self>, _: &Z) -> Self {
+        blob.to_ref().clone()
+    }
+
+    fn load_blob<'a>(blob: ValidBlob<'a, Self>, _: &Z) -> Ref<'a, Self> {
+        blob.to_ref().into()
+    }
+}
+
+unsafe impl Persist for Offset<'_, '_> {
+}
+
+/*
 impl<'p, 'v, R> Saved<R> for Offset<'p, 'v> {
     type Saved = Offset<'p, 'v>;
 }
@@ -160,6 +172,7 @@ impl<'p, 'v, Q, R> Save<'_, Q, R> for Offset<'p, 'v> {
 }
 
 impl<'p, 'v> Primitive for Offset<'p, 'v> {}
+*/
 
 impl fmt::Debug for Offset<'_,'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -208,37 +221,12 @@ impl From<Offset<'_, '_>> for usize {
     }
 }
 
-impl fmt::Pointer for Offset<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:x}", self.get())
-    }
-}
-
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::TryPile;
-
-    use crate::coerce::Coerce;
-    use crate::zone::FatPtr;
 
     #[test]
-    fn coerce_lifetimes() {
-        fn do_coerce<'p,'v, T, U>(_: &'p Vec<u8>, ptr: FatPtr<T, TryPile<'p,'static>>) -> FatPtr<U, TryPile<'v, 'p>> {
-            ptr.coerce()
-        }
-
-        let ptr = FatPtr::<Box<u8>, TryPile> {
-            raw: Offset::<'_, 'static>::new(42).unwrap(),
-            metadata: ()
-        };
-
-        let anchor = vec![];
-
-        let ptr2: FatPtr<&Vec<u8>, TryPile<'static,'_>> = do_coerce(&anchor, ptr);
-
-        assert_eq!(ptr2.raw.get(), 42);
+    fn test() {
+        assert_eq!(Offset::dangling().get(), Offset::MAX);
     }
 }
-*/

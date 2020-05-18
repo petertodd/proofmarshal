@@ -1,20 +1,22 @@
 //! Volatile, in-memory, zone allocation.
 
-use std::alloc::Layout;
-use std::borrow::Borrow;
-use std::cmp;
+use std::alloc::{self, Layout};
 use std::ptr::NonNull;
+use std::cmp;
 
-use owned::Take;
+use owned::{Take, IntoOwned};
 
-use crate::{
-    pointee::Pointee,
-    ptr::*,
-    save::*,
-};
+use crate::pointee::Pointee;
+use crate::ptr::*;
+use crate::zone::*;
+use crate::bag::Bag;
+use crate::refs::Ref;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
-pub struct Heap(NonNull<u16>);
+pub struct HeapPtr(NonNull<u16>);
+
+#[derive(Default,Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
+pub struct Heap;
 
 #[inline]
 fn min_align_layout(layout: Layout) -> Layout {
@@ -26,8 +28,37 @@ fn min_align_layout(layout: Layout) -> Layout {
     }
 }
 
-impl Ptr for Heap {
+impl Ptr for HeapPtr {
     type Persist = !;
+
+    unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
+        let value = &mut *T::make_fat_ptr_mut(self.0.cast().as_ptr(), metadata);
+        let layout = Layout::for_value(value);
+
+        std::ptr::drop_in_place(value);
+        std::alloc::dealloc(self.0.cast().as_ptr(), layout);
+    }
+
+    fn duplicate(&self) -> Self {
+        *self
+    }
+
+    unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
+        todo!()
+    }
+
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
+        Ok(&*T::make_fat_ptr(self.0.cast().as_ptr(), metadata))
+    }
+}
+
+impl Zone for Heap {
+    type Ptr = HeapPtr;
+
+    /*
+    unsafe fn clone_ptr_unchecked<T: Clone>(ptr: &Self::Ptr) -> Self::Ptr {
+        todo!()
+    }
 
     fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, Self> {
         src.take_unsized(|src| unsafe {
@@ -46,74 +77,64 @@ impl Ptr for Heap {
                 NonNull::new_unchecked(layout.align() as *mut u16)
             };
 
-            Bag::new_unchecked(Fat {
-                raw: Heap(ptr),
-                metadata,
-            })
+            Bag::from_owned_ptr(
+                OwnedPtr::new_unchecked(
+                    FatPtr::new(HeapPtr(ptr), metadata)
+                ),
+                Heap,
+            )
         })
     }
+    */
+}
 
-    unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) {
-        let value = &mut *T::make_fat_ptr_mut(self.0.cast().as_ptr(), metadata);
-        let layout = Layout::for_value(value);
-
-        std::ptr::drop_in_place(value);
-        std::alloc::dealloc(self.0.cast().as_ptr(), layout);
+/*
+impl Get for Heap {
+    unsafe fn get_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a Self::Ptr, metadata: T::Metadata) -> Ref<'a, T>
+        where T: IntoOwned
+    {
+        let r: &'a T = &*T::make_fat_ptr(ptr.0.cast().as_ptr(), metadata);
+        Ref::Ref(r)
     }
 
-    unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
+    unsafe fn take_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: Self::Ptr, metadata: T::Metadata) -> T::Owned
+        where T: IntoOwned
+    {
         todo!()
     }
-
-    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, !> {
-        Ok(&mut *T::make_fat_ptr_mut(self.0.cast().as_ptr(), metadata))
-    }
 }
 
-impl Default for Heap {
-    fn default() -> Self {
-        Self(NonNull::new(1 as *mut u16).unwrap())
-    }
-}
-
-impl AsPtr<Heap> for Heap {
-    fn as_ptr(&self) -> &Self {
-        self
+impl GetMut for Heap {
+    unsafe fn get_mut_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut Self::Ptr, metadata: T::Metadata) -> &'a mut T {
+        &mut *T::make_fat_ptr_mut(ptr.0.cast().as_ptr(), metadata)
     }
 }
 
 /*
-impl<Q> Saved<Q> for Heap {
-    type Saved = Q;
-}
-
-impl<'a, Q> Save<'a, Q> for Heap {
-    type State = !;
-
-    fn init_save_state(&'a self) -> Self::State {
-        todo!()
-    }
-
-    fn poll<D: SavePtr<Q>>(&'a self, state: &mut Self::State, dst: D) -> Result<D, D::Error> {
-        todo!()
-    }
-
-    fn encode<W: WriteBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Ok, W::Error> {
-        todo!()
-    }
-
-    unsafe fn save_ptr<T: ?Sized + Pointee>(&'a self, metadata: T::Metadata) -> Result<Q, &'a T> {
-        todo!()
-    }
-}
-*/
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test() {
+    fn get() {
+        let bag = Heap::alloc(123u8);
+
+        let r: Ref<u8> = bag.get();
+        assert_eq!(*r, 123u8);
+
         let bag = Heap::alloc(123u8);
     }
+
+    #[test]
+    fn get_mut() {
+        let mut bag = Heap::alloc(1u8);
+
+        let r = bag.get_mut();
+        *r += 1;
+
+        let r = bag.get();
+        assert_eq!(*r, 2);
+    }
 }
+*/
+*/

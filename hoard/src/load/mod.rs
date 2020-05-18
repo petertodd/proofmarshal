@@ -1,30 +1,35 @@
-use std::mem;
+use std::error::Error;
+use std::alloc::Layout;
+use std::marker::PhantomData;
+use std::mem::{self, ManuallyDrop};
+
+use thiserror::Error;
+
+use owned::IntoOwned;
 
 use crate::pointee::Pointee;
+pub use crate::blob::*;
+use crate::refs::Ref;
 
-pub mod blob;
-pub use self::blob::*;
+pub trait Load<Z: ?Sized> : Pointee + IntoOwned + BlobLen {
+    fn decode_blob_owned<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self::Owned;
 
-pub trait Load : Pointee {
-    type Error : std::error::Error;
+    fn decode_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self
+        where Self: Sized
+    {
+        let owned = Self::decode_blob_owned(blob, zone);
 
-    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error>;
+        unsafe {
+            let owned = ManuallyDrop::new(owned);
+            assert_eq!(Layout::new::<Self>(), Layout::new::<Self::Owned>());
+            mem::transmute_copy(&owned)
+        }
+    }
+
+    fn load_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Ref<'a, Self> {
+        Ref::Owned(Self::decode_blob_owned(blob, zone))
+    }
 }
-
-/*
-pub trait Validate<'a, P> {
-    type State;
-
-    fn init_validate_state(&'a self) -> Self::State;
-    fn poll<V: ValidatePtr<P>>(&'a self, state: &mut Self::State, validator: &mut V) -> Result<(), V::Error>;
-}
-
-pub trait ValidatePtr<P> {
-    type Error;
-
-    fn validate_ptr<T: ?Sized + Load>(&self, ptr: &P, metadata: T::Metadata) -> Result<Option<&T>, Self::Error>;
-}
-*/
 
 #[cfg(test)]
 mod tests {

@@ -1,48 +1,48 @@
 use std::fmt;
+use std::cmp;
 
 use owned::Take;
 
 use crate::pointee::Pointee;
 use crate::load::Load;
 
-pub mod fat;
-pub use self::fat::Fat;
+pub mod fatptr;
+pub use self::fatptr::FatPtr;
 
-pub mod bag;
-pub use self::bag::Bag;
+pub mod ownedptr;
+pub use self::ownedptr::OwnedPtr;
 
-pub mod never;
-mod unit;
+mod never;
 
-pub trait Ptr : Sized + AsPtr<Self> {
+pub trait Ptr : Sized + fmt::Debug {
     type Persist : 'static + fmt::Debug;
 
-    fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, Self>
+    unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata);
+
+    fn duplicate(&self) -> Self;
+
+    unsafe fn clone_unchecked<T: Clone>(&self) -> Self
+        where Self: Clone;
+
+    /*
+    fn alloc_raw<T: ?Sized + Pointee>(src: impl Take<T>) -> (Self, T::Metadata)
         where Self: Default
     {
         unimplemented!()
     }
 
-    unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata);
-
-    unsafe fn clone_unchecked<T: Clone>(&self) -> Self
-        where Self: Clone;
+    */
 
     unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist>;
 }
 
-pub trait Get<P: Ptr> {
-    fn get<'p, T: ?Sized + Load>(&self, ptr: &'p Bag<T, P>) -> &'p T {
-        unsafe {
-            self.get_unchecked(&ptr.raw, ptr.metadata)
-        }
-    }
-
-    unsafe fn get_unchecked<'p, T: ?Sized + Load>(&self, ptr: &'p P, metadata: T::Metadata) -> &'p T;
-
-    unsafe fn take_unchecked<T: Load>(&self, ptr: P, metadata: T::Metadata) -> T;
+/*
+pub trait Get<P> {
+    unsafe fn get_unchecked<'p, T: ?Sized + Load<Self, P>>(&self, ptr: &'p P, metadata: T::Metadata) -> &'p T;
 }
+*/
 
+/*
 pub trait GetMut<P: Ptr> : Get<P> {
     fn get_mut<'p, T: ?Sized + Load>(&self, ptr: &'p mut Bag<T, P>) -> &'p mut T {
         let metadata = ptr.metadata;
@@ -58,13 +58,10 @@ pub trait Alloc {
     type Ptr : Ptr;
     fn alloc<T: ?Sized + Pointee>(&self, src: impl Take<T>) -> Bag<T, Self::Ptr>;
 }
+*/
 
+/*
 pub trait AsPtr<Q> {
     fn as_ptr(&self) -> &Q;
 }
-
-impl<Q> AsPtr<Q> for ! {
-    fn as_ptr(&self) -> &Q {
-        match *self {}
-    }
-}
+*/

@@ -1,5 +1,42 @@
 //! Zones where data can be stored.
 
+use std::fmt;
+
+use owned::Take;
+
+use crate::pointee::Pointee;
+use crate::load::Load;
+use crate::blob::Persist;
+use crate::refs::*;
+use crate::ptr::*;
+use crate::bag::Bag;
+
+pub trait Zone : Sized {
+    type Ptr : Ptr;
+}
+
+impl Zone for () {
+    type Ptr = !;
+}
+
+pub trait Get : Zone {
+    unsafe fn get_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a Self::Ptr, metadata: T::Metadata) -> Ref<'a, T>
+        where T: Load<Self>;
+
+    unsafe fn take_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: Self::Ptr, metadata: T::Metadata) -> T::Owned
+        where T: Load<Self>;
+}
+
+pub trait GetMut : Get {
+    unsafe fn get_mut_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut Self::Ptr, metadata: T::Metadata) -> &'a mut T
+        where T: Load<Self>;
+}
+
+pub trait Alloc : Zone {
+}
+
+
+/*
 use core::any::{Any, type_name};
 use core::borrow::Borrow;
 use core::mem::ManuallyDrop;
@@ -241,5 +278,6 @@ impl<A: Alloc> Alloc for &'_ mut A {
         (**self).zone()
     }
 }
+*/
 */
 */

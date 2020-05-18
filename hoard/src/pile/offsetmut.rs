@@ -13,14 +13,32 @@ use thiserror::Error;
 use owned::{Take, IntoOwned};
 
 use crate::load::*;
-use crate::pointee::Pointee;
-use crate::ptr::*;
 
-use super::offset::*;
+use super::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct OffsetMut<'p,'v>(Offset<'p,'v>);
+
+impl<'p,'v> Ptr for OffsetMut<'p, 'v> {
+    type Persist = Offset<'static, 'static>;
+
+    unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
+        todo!()
+    }
+
+    fn duplicate(&self) -> Self {
+        *self
+    }
+
+    unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
+        todo!()
+    }
+
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
+        todo!()
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Kind<'p,'v> {
@@ -38,35 +56,10 @@ fn min_align_layout(layout: Layout) -> Layout {
     }
 }
 
+/*
 impl<'p,'v> Ptr for OffsetMut<'p, 'v> {
     type Persist = Offset<'static, 'static>;
 
-    fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, Self> {
-	src.take_unsized(|src| unsafe {
-	    let metadata = T::metadata(src);
-
-	    let layout = min_align_layout(Layout::for_value(src));
-
-	    let ptr = if layout.size() > 0 {
-		let dst = NonNull::new(std::alloc::alloc(layout))
-				  .unwrap_or_else(|| std::alloc::handle_alloc_error(layout));
-
-		core::ptr::copy_nonoverlapping(src as *const _ as *const u8, dst.as_ptr(),
-                                               layout.size());
-
-		dst.cast()
-	    } else {
-		NonNull::new_unchecked(layout.align() as *mut u16)
-	    };
-
-            let fat = Fat {
-                raw: Self::from_ptr(ptr),
-                metadata,
-            };
-
-	    Bag::new_unchecked(fat)
-	})
-    }
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) {
         match self.kind() {
@@ -134,8 +127,39 @@ impl<'p, 'v> Load for OffsetMut<'p, 'v> {
         todo!()
     }
 }
+*/
 
 impl<'p,'v> OffsetMut<'p,'v> {
+    /*
+    fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, Self> {
+	src.take_unsized(|src| unsafe {
+	    let metadata = T::metadata(src);
+
+	    let layout = min_align_layout(Layout::for_value(src));
+
+	    let ptr = if layout.size() > 0 {
+		let dst = NonNull::new(std::alloc::alloc(layout))
+				  .unwrap_or_else(|| std::alloc::handle_alloc_error(layout));
+
+		core::ptr::copy_nonoverlapping(src as *const _ as *const u8, dst.as_ptr(),
+                                               layout.size());
+
+		dst.cast()
+	    } else {
+		NonNull::new_unchecked(layout.align() as *mut u16)
+	    };
+
+            let fat = Fat {
+                raw: Self::from_ptr(ptr),
+                metadata,
+            };
+
+	    Bag::new_unchecked(fat)
+	})
+    }
+    */
+
+    /*
     pub fn try_take_dirty_unsized<T: ?Sized + Pointee, R>(
         self, metadata: T::Metadata,
         f: impl FnOnce(Result<&mut ManuallyDrop<T>, Offset<'p,'v>>) -> R
@@ -173,6 +197,7 @@ impl<'p,'v> OffsetMut<'p,'v> {
             Kind::Offset(offset) => f(Err(offset)),
         }
     }
+    */
 
     #[inline]
     pub unsafe fn from_ptr(ptr: NonNull<u16>) -> Self {
@@ -219,8 +244,34 @@ impl fmt::Debug for OffsetMut<'_,'_> {
     }
 }
 
-impl fmt::Pointer for OffsetMut<'_,'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
+impl ValidateBlob for OffsetMut<'_, '_> {
+    type Error = super::offset::ValidateBlobOffsetError;
+
+    const BLOB_LEN: usize = mem::size_of::<Self>();
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        let mut blob = blob.validate_fields();
+        blob.validate::<Offset>()?;
+        unsafe { Ok(blob.assume_valid()) }
+    }
+}
+
+impl<Z> Load<Z> for OffsetMut<'_, '_> {
+    fn decode_blob_owned<'a>(blob: ValidBlob<'a, Self>, _: &Z) -> Self {
+        blob.to_ref().clone()
+    }
+
+    fn load_blob<'a>(blob: ValidBlob<'a, Self>, _: &Z) -> Ref<'a, Self> {
+        blob.to_ref().into()
+    }
+}
+
+unsafe impl Persist for OffsetMut<'_, '_> {
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test() {
     }
 }
