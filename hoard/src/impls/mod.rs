@@ -6,4 +6,4 @@ use crate::blob::*;
 
 pub mod never;
 pub mod scalars;
-//pub mod array;
+pub mod array;

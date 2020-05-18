@@ -37,10 +37,11 @@ impl<T: ValidateBlob, const N: usize> ValidateBlob for [T; N] {
     }
 }
 
-impl<Z, P, T, const N: usize> Load<Z, P> for [T; N]
-where T: ValidateBlob + Load<Z, P>
+impl<Z, T, const N: usize> Load<Z> for [T; N]
+where T: Decode<Z>
 {
-    fn decode_blob_owned<'a>(mut loader: BlobLoader<'a, '_, Self, Z, P>) -> Self {
+    fn decode_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self {
+        let mut loader = blob.into_loader(zone);
         let mut r: [MaybeUninit<T>; N] = unsafe { MaybeUninit::uninit().assume_init() };
         let mut initializer = SliceInitializer::new(&mut r[..]);
 
