@@ -7,7 +7,7 @@ use std::slice;
 
 use crate::pointee::Pointee;
 use crate::refs::Ref;
-use crate::load::Load;
+use crate::load::{Load, Decode};
 
 pub trait ValidateBlob : Sized {
     type Error : std::error::Error;
@@ -195,14 +195,14 @@ impl<'a, 'z, T: ?Sized + BlobLen, Z: ?Sized> BlobLoader<'a, 'z, T, Z> {
     }
 
     pub unsafe fn load_unchecked<F>(&mut self) -> Ref<'a, F>
-        where F: ValidateBlob + Load<Z>
+        where F: Decode<Z>
     {
         let blob = self.get_blob().assume_valid();
         F::load_blob(blob, self.zone)
     }
 
     pub unsafe fn decode_unchecked<F>(&mut self) -> F
-        where F: ValidateBlob + Load<Z>
+        where F: Decode<Z>
     {
         let blob = self.get_blob().assume_valid();
         F::decode_blob(blob, self.zone)

@@ -105,10 +105,10 @@ where P: Persist, M: Persist,
 {}
 
 impl<Z, T: ?Sized + Pointee, P: Ptr, M: 'static> Load<Z> for OwnedPtr<T, P, M>
-where P: ValidateBlob + Load<Z>,
-      M: ValidateBlob + Load<Z>,
+where P: Decode<Z>,
+      M: Decode<Z>,
 {
-    fn decode_blob_owned<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self::Owned {
+    fn decode_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self::Owned {
         let mut blob = blob.into_loader(zone);
 
         unsafe {

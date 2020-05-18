@@ -143,11 +143,11 @@ where Z: ValidateBlob,
 }
 
 impl<Y, T: ?Sized + Pointee, Z, P: Ptr, M: 'static> Load<Y> for Bag<T, Z, P, M>
-where Z: ValidateBlob + Load<Y>,
-      P: ValidateBlob + Load<Y>,
-      M: ValidateBlob + Load<Y>,
+where Z: Decode<Y>,
+      P: Decode<Y>,
+      M: Decode<Y>,
 {
-    fn decode_blob_owned<'a>(blob: ValidBlob<'a, Self>, zone: &Y) -> Self {
+    fn decode_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Y) -> Self {
         let mut blob = blob.into_loader(zone);
         unsafe {
             let ptr = blob.decode_unchecked();

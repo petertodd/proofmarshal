@@ -135,7 +135,7 @@ impl ValidateBlob for Offset<'_, '_> {
 }
 
 impl<Z> Load<Z> for Offset<'_, '_> {
-    fn decode_blob_owned<'a>(blob: ValidBlob<'a, Self>, _: &Z) -> Self {
+    fn decode_blob<'a>(blob: ValidBlob<'a, Self>, _: &Z) -> Self {
         blob.to_ref().clone()
     }
 

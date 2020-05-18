@@ -66,7 +66,7 @@ impl ValidateBlob for Pile<'_, '_> {
 impl<Z> Load<Z> for TryPile<'_, '_>
 where Z: Borrow<Self>
 {
-    fn decode_blob_owned<'a>(_: ValidBlob<'a, Self>, zone: &Z) -> Self {
+    fn decode_blob<'a>(_: ValidBlob<'a, Self>, zone: &Z) -> Self {
         zone.borrow().clone()
     }
 }
@@ -74,7 +74,7 @@ where Z: Borrow<Self>
 impl<Z> Load<Z> for Pile<'_, '_>
 where Z: Borrow<Self>
 {
-    fn decode_blob_owned<'a>(_: ValidBlob<'a, Self>, zone: &Z) -> Self {
+    fn decode_blob<'a>(_: ValidBlob<'a, Self>, zone: &Z) -> Self {
         zone.borrow().clone()
     }
 }

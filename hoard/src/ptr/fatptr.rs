@@ -89,10 +89,10 @@ where P: Persist,
 {}
 
 impl<Z, T: ?Sized, P, M> Load<Z> for FatPtr<T, P, M>
-where P: ValidateBlob + Load<Z>,
-      M: ValidateBlob + Load<Z>,
+where P: Decode<Z>,
+      M: Decode<Z>,
 {
-    fn decode_blob_owned<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self::Owned {
+    fn decode_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self::Owned {
         let mut loader = blob.into_loader(zone);
 
         unsafe {
