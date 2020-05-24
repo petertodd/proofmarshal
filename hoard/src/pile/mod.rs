@@ -13,36 +13,402 @@
 
 use std::marker::PhantomData;
 use std::borrow::Borrow;
+use std::mem::ManuallyDrop;
+use std::ops::Deref;
 
-use owned::Take;
+use thiserror::Error;
+use singlelife::Unique;
 
 use crate::pointee::Pointee;
+use crate::offset::*;
 use crate::ptr::*;
-use crate::zone::*;
-use crate::bag::*;
 use crate::refs::Ref;
 use crate::load::*;
+use crate::save::*;
 use crate::blob::*;
 
-pub mod offset;
-use self::offset::Offset;
+pub mod error;
+use self::error::*;
 
-pub mod offsetmut;
-use self::offsetmut::{OffsetMut, Kind};
+#[derive(Debug, Clone, Copy)]
+pub struct TryPile<'p, 'v> {
+    marker: PhantomData<fn(&'p ()) -> &'p ()>,
+    buf: &'v [u8],
+}
 
+impl<'p, 'v> ValidateBlob for TryPile<'p, 'v> {
+    const BLOB_LEN: usize = 0;
+    type Error = !;
+
+    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        unsafe { Ok(blob.finish()) }
+    }
+}
+
+impl<'p, 'v, Z> Decode<Z> for TryPile<'p, 'v>
+where Z: Borrow<Self>
+{
+    fn decode_blob(decoder: BlobDecoder<Z, Self>) -> Self {
+        decoder.zone().borrow().clone()
+    }
+}
+
+impl<'p, 'v, R> Encoded<R> for TryPile<'p, 'v> {
+    type Encoded = Self;
+}
+
+impl<'p, 'v, Q, R> Encode<'_, Q, R> for TryPile<'p, 'v> {
+    type State = ();
+
+    fn init_encode_state(&self) -> () {}
+
+    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
+        where D: Dumper<Source=Q, Target=R>
+    {
+        Ok(dst)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+        dst.done()
+    }
+}
+
+impl<'p> Default for TryPile<'p, 'static> {
+    fn default() -> Self {
+        unsafe { Self::new_unchecked(&[]) }
+    }
+}
+
+impl<'p, 'v> TryPile<'p, 'v> {
+    pub unsafe fn new_unchecked(buf: &'v [u8]) -> Self {
+        Self { marker: PhantomData, buf, }
+    }
+
+    pub fn get_blob<T: ?Sized>(&self, offset: Offset<'p, 'v>, metadata: T::Metadata)
+        -> Result<Blob<'v, T>, GetBlobError<T::LayoutError>>
+        where T: BlobLen
+    {
+        let blob_len = T::try_blob_len(metadata)
+                         .map_err(GetBlobError::Layout)?;
+
+        let start = offset.get();
+        start.checked_add(blob_len)
+             .and_then(|end| self.buf.get(start .. end))
+             .map(|slice| unsafe { Blob::new_unchecked(slice, metadata) })
+             .ok_or(GetBlobError::OutOfRange)
+    }
+
+    pub fn get_valid_blob<T: ?Sized>(&self, offset: Offset<'p, 'v>, metadata: T::Metadata)
+        -> Result<ValidBlob<'v, T>, GetValidBlobError<T::LayoutError, T::Error>>
+        where T: ValidateBlobPtr
+    {
+        let blob = self.get_blob::<T>(offset, metadata)?;
+
+        T::validate_blob_ptr(blob.into())
+          .map_err(GetValidBlobError::Validate)
+    }
+
+    pub unsafe fn extend_unchecked<'v2>(&self, new_buf: &'v2 [u8]) -> TryPile<'p, 'v2>
+        where 'v: 'v2
+    {
+        debug_assert!(new_buf.starts_with(self.buf));
+        TryPile::new_unchecked(new_buf)
+    }
+}
+
+impl<'p, 'v> TryGet<Offset<'p, 'v>> for TryPile<'p, 'v> {
+    type Error = Box<dyn std::error::Error>;
+
+    unsafe fn try_get_unchecked<'a, T: ?Sized>(&self, ptr: &'a Offset<'p, 'v>, metadata: T::Metadata)
+        -> Result<Ref<'a, T>, Self::Error>
+        where T: Load<Self>
+    {
+        let blob = self.get_valid_blob::<T>(*ptr, metadata)?;
+
+        let loader = BlobDecoder::new(blob, self);
+        Ok(T::deref_blob(loader))
+    }
+
+    unsafe fn try_take_unchecked<'a, T: ?Sized>(&self, ptr: Offset<'p, 'v>, metadata: T::Metadata)
+        -> Result<T::Owned, Self::Error>
+        where T: Load<Self>
+    {
+        let blob = self.get_valid_blob::<T>(ptr, metadata)?;
+        let loader = BlobDecoder::new(blob, self);
+        Ok(T::load_blob(loader))
+    }
+}
+
+impl<'p, 'v> TryGet<OffsetMut<'p, 'v>> for TryPile<'p, 'v> {
+    type Error = !;
+
+    unsafe fn try_get_unchecked<'a, T: ?Sized>(&self, ptr: &'a OffsetMut<'p, 'v>, metadata: T::Metadata)
+        -> Result<Ref<'a, T>, Self::Error>
+        where T: Load<Self>
+    {
+        match ptr.try_get_dirty_unchecked::<T>(metadata) {
+            Ok(r) => Ok(Ref::Ref(r)),
+            Err(offset) => {
+                let blob = self.get_valid_blob::<T>(offset.cast(), metadata)
+                               .ok().unwrap();
+
+                let loader = BlobDecoder::new(blob, self);
+                Ok(T::deref_blob(loader))
+            }
+        }
+    }
+
+    unsafe fn try_take_unchecked<'a, T: ?Sized>(&self, ptr: OffsetMut<'p, 'v>, metadata: T::Metadata)
+        -> Result<T::Owned, Self::Error>
+        where T: Load<Self>
+    {
+        match ptr.try_take_dirty_unchecked::<T>(metadata) {
+            Ok(owned) => Ok(owned),
+            Err(offset) => {
+                let blob = self.get_valid_blob::<T>(offset.cast(), metadata)
+                               .ok().unwrap();
+
+                let loader = BlobDecoder::new(blob, self);
+                Ok(T::load_blob(loader))
+            }
+        }
+    }
+}
+
+impl<'p, 'v> Alloc for TryPile<'p, 'v> {
+    type Zone = Self;
+    type Ptr = OffsetMut<'p, 'v>;
+
+    fn zone(&self) -> Self {
+        *self
+    }
+
+    unsafe fn alloc_unchecked<T: ?Sized>(&mut self, src: &mut ManuallyDrop<T>) -> Self::Ptr {
+        OffsetMut::alloc_unchecked(src)
+    }
+}
+
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct Pile<'p, 'v>(TryPile<'p, 'v>);
+
+impl<'p, 'v> ValidateBlob for Pile<'p, 'v> {
+    const BLOB_LEN: usize = 0;
+    type Error = !;
+
+    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        unsafe { Ok(blob.finish()) }
+    }
+}
+
+impl<'p, 'v, Z> Decode<Z> for Pile<'p, 'v>
+where Z: Borrow<Self>
+{
+    fn decode_blob(decoder: BlobDecoder<Z, Self>) -> Self {
+        decoder.zone().borrow().clone()
+    }
+}
+
+impl<'p, 'v, R> Encoded<R> for Pile<'p, 'v> {
+    type Encoded = Self;
+}
+
+impl<'p, 'v, Q, R> Encode<'_, Q, R> for Pile<'p, 'v> {
+    type State = ();
+
+    fn init_encode_state(&self) -> () {}
+
+    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
+        where D: Dumper<Source=Q, Target=R>
+    {
+        Ok(dst)
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+        dst.done()
+    }
+}
+
+impl<'p, 'v> Deref for Pile<'p, 'v> {
+    type Target = TryPile<'p, 'v>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<'p, 'v> AsRef<TryPile<'p, 'v>> for Pile<'p, 'v> {
+    fn as_ref(&self) -> &TryPile<'p, 'v> {
+        &self.0
+    }
+}
+impl<'p, 'v> Borrow<TryPile<'p, 'v>> for Pile<'p, 'v> {
+    fn borrow(&self) -> &TryPile<'p, 'v> {
+        &self.0
+    }
+}
+impl<'p, 'v> From<Pile<'p, 'v>> for TryPile<'p, 'v> {
+    fn from(pile: Pile<'p, 'v>) -> Self {
+        pile.0
+    }
+}
+impl<'p> Default for Pile<'p, 'static> {
+    fn default() -> Self {
+        Self(TryPile::default())
+    }
+}
+
+impl<'p, 'v> Pile<'p, 'v> {
+    pub unsafe fn new_unchecked(buf: &'v [u8]) -> Self {
+        Self(TryPile::new_unchecked(buf))
+    }
+
+    pub unsafe fn extend_unchecked<'v2>(&self, new_buf: &'v2 [u8]) -> Pile<'p, 'v2>
+        where 'v: 'v2
+    {
+        Pile(self.0.extend_unchecked(new_buf))
+    }
+}
+
+impl<'p, 'v> Get<Offset<'p, 'v>> for Pile<'p, 'v> {
+    unsafe fn get_unchecked<'a, T: ?Sized>(&self, ptr: &'a Offset<'p, 'v>, metadata: T::Metadata) -> Ref<'a, T>
+        where T: Load<Self>
+    {
+        let blob = self.get_valid_blob::<T>(*ptr, metadata)
+                       .unwrap();
+
+        let loader = BlobDecoder::new(blob, self);
+        T::deref_blob(loader)
+    }
+
+    unsafe fn take_unchecked<'a, T: ?Sized>(&self, ptr: Offset<'p, 'v>, metadata: T::Metadata) -> T::Owned
+        where T: Load<Self>
+    {
+        let blob = self.get_valid_blob::<T>(ptr, metadata)
+                       .unwrap();
+        let loader = BlobDecoder::new(blob, self);
+        T::load_blob(loader)
+    }
+}
+
+impl<'p, 'v> Get<OffsetMut<'p, 'v>> for Pile<'p, 'v> {
+    unsafe fn get_unchecked<'a, T: ?Sized>(&self, ptr: &'a OffsetMut<'p, 'v>, metadata: T::Metadata) -> Ref<'a, T>
+        where T: Load<Self>
+    {
+        match ptr.try_get_dirty_unchecked::<T>(metadata) {
+            Ok(r) => Ref::Ref(r),
+            Err(offset) => {
+                let blob = self.get_valid_blob::<T>(offset.cast(), metadata)
+                               .unwrap();
+
+                let loader = BlobDecoder::new(blob, self);
+                T::deref_blob(loader)
+            }
+        }
+    }
+
+    unsafe fn take_unchecked<'a, T: ?Sized>(&self, ptr: OffsetMut<'p, 'v>, metadata: T::Metadata) -> T::Owned
+        where T: Load<Self>
+    {
+        match ptr.try_take_dirty_unchecked::<T>(metadata) {
+            Ok(owned) => owned,
+            Err(offset) => {
+                let blob = self.get_valid_blob::<T>(offset.cast(), metadata)
+                               .unwrap();
+
+                let loader = BlobDecoder::new(blob, self);
+                T::load_blob(loader)
+            }
+        }
+    }
+}
+
+impl<'p, 'v> Alloc for Pile<'p, 'v> {
+    type Zone = Self;
+    type Ptr = OffsetMut<'p, 'v>;
+
+    fn zone(&self) -> Self {
+        *self
+    }
+
+    unsafe fn alloc_unchecked<T: ?Sized>(&mut self, src: &mut ManuallyDrop<T>) -> Self::Ptr {
+        OffsetMut::alloc_unchecked(src)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::bag::Bag;
+
+    #[test]
+    fn test() {
+        let pile = TryPile::default();
+        let offset = Offset::new(0).unwrap();
+
+        unsafe {
+            let _: () = pile.try_take_unchecked::<()>(offset, ()).unwrap();
+            let _ = pile.try_take_unchecked::<u8>(offset, ()).unwrap_err();
+        }
+    }
+
+    #[test]
+    fn test_alloc() {
+        let pile = TryPile::default();
+        let bag = Bag::new_in(42u8, pile);
+        let bag2 = Bag::new_in(bag, pile);
+    }
+
+    #[test]
+    fn test_pile() {
+        let pile = Pile::default();
+        let bag = Bag::new_in(42u8, pile);
+        dbg!(bag.get());
+    }
+
+    #[test]
+    fn test_recursive_get() {
+        let pile = Pile::default();
+        let bag1 = Bag::new_in(1u8, pile);
+        dbg!(bag1.get());
+        let bag2 = Bag::new_in(bag1, pile);
+        dbg!(bag2.get());
+    }
+
+    #[test]
+    fn test_extend() {
+        let pile1 = Pile::default();
+        let bag1 = Bag::new_in(1u8, pile1);
+        dbg!(bag1.get());
+
+        let buf2 = vec![1,2,3];
+        let pile2 = unsafe { pile1.extend_unchecked(&buf2) };
+        let bag2 = Bag::new_in(bag1, pile2);
+        dbg!(bag2.get());
+
+        assert_eq!(bag2.take().take(), 1);
+    }
+}
+
+/*
 pub mod mapping;
 use self::mapping::Mapping;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TryPile<'pile, 'version> {
-    marker: PhantomData<
-        fn(&Offset<'pile, 'version>) -> &'pile [u8]
-    >,
-    mapping: &'pile dyn Mapping,
+pub mod error;
+use self::error::{Error, ErrorKind};
+
+trait PileZone<'p, 'v> {
+    fn get_try_pile(&self) -> TryPile<'p, 'v>;
+
+    fn mapping(&self) -> &'p dyn Mapping;
+
+    fn slice(&self) -> &'p &'p [u8] {
+        unsafe {
+            &*(self.mapping() as *const dyn Mapping as *const &'p [u8])
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Pile<'pile, 'version>(TryPile<'pile, 'version>);
 
 
 impl ValidateBlob for TryPile<'_, '_> {
@@ -84,21 +450,24 @@ impl<'p,'v> Zone for Pile<'p, 'v> {
     type Ptr = Offset<'p, 'v>;
 }
 
-/*
-impl<'p, 'v> Get for Pile<'p, 'v> {
-    unsafe fn get_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a Self::Ptr, metadata: T::Metadata) -> Ref<'a, T>
-        where T: Load<Self>,
+impl<'p, 'v> TryGet<Offset<'p, 'v>> for TryPile<'p, 'v> {
+    type Error = ErrorKind;
+
+    unsafe fn try_get_unchecked<'a, T>(&self, ptr: &'a Offset<'p,'v>, metadata: T::Metadata) -> Result<Ref<'a, T>, Self::Error>
+        where T: ?Sized + Load<Self>,
     {
+        let blob_len = T::try_blob_len(metadata).map_err(|err| ErrorKind::Layout(err.into()))?;
+
         todo!()
     }
 
-    unsafe fn take_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: Self::Ptr, metadata: T::Metadata) -> T::Owned
-        where T: Load<Self>
+    unsafe fn try_take_unchecked<'a, T>(&self, ptr: Offset<'p,'v>, metadata: T::Metadata) -> Result<T::Owned, Self::Error>
+        where T: ?Sized + Load<Self>
     {
         todo!()
     }
 }
-*/
+
 
 /*
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -218,13 +587,6 @@ impl<'p,'v> Get<OffsetMut<'p, 'v>> for Pile<'p, 'v> {
     }
 }
 
-impl<'p, 'v> Alloc for Pile<'p, 'v> {
-    type Ptr = OffsetMut<'p, 'v>;
-
-    fn alloc<T: ?Sized + Pointee>(&self, src: impl Take<T>) -> Bag<T, Self::Ptr> {
-        OffsetMut::alloc(src)
-    }
-}
 
 
 impl<'p> Default for Pile<'p, 'static> {
@@ -316,7 +678,6 @@ use std::slice;
 use std::alloc::Layout;
 
 use owned::{Take, IntoOwned};
-use singlelife::Unique;
 
 use crate::coerce::{Coerce, TryCoerce};
 use crate::pointee::Pointee;
@@ -361,15 +722,6 @@ impl<'p,'v> ops::Deref for Pile<'p,'v> {
     }
 }
 
-impl<'p> From<Unique<'p, &&[u8]>> for TryPile<'p, 'p> {
-    #[inline]
-    fn from(slice: Unique<'p, &&[u8]>) -> Self {
-        Self {
-            marker: PhantomData,
-            mapping: &*Unique::into_inner(slice),
-        }
-    }
-}
 
 pub trait PileZone<'p, 'v>
 : Zone<Error = Error<'p,'v>,
@@ -1204,4 +1556,5 @@ pub mod test {
         */
     }
 }
+*/
 */

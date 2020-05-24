@@ -3,20 +3,28 @@
 use std::alloc::{self, Layout};
 use std::ptr::NonNull;
 use std::cmp;
+use std::mem::ManuallyDrop;
 
 use owned::{Take, IntoOwned};
 
 use crate::pointee::Pointee;
 use crate::ptr::*;
-use crate::zone::*;
 use crate::bag::Bag;
 use crate::refs::Ref;
+use crate::load::*;
+use crate::blob::*;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
-pub struct HeapPtr(NonNull<u16>);
+pub struct HeapPtr(pub(crate) NonNull<u16>);
 
 #[derive(Default,Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Heap;
+
+impl Default for HeapPtr {
+    fn default() -> Self {
+        Self(NonNull::dangling())
+    }
+}
 
 #[inline]
 fn min_align_layout(layout: Layout) -> Layout {
@@ -28,15 +36,50 @@ fn min_align_layout(layout: Layout) -> Layout {
     }
 }
 
+pub(crate) unsafe fn heap_alloc(layout: Layout) -> NonNull<u16> {
+    if layout.size() > 0 {
+        let layout = min_align_layout(layout);
+
+        NonNull::new(std::alloc::alloc(layout))
+                .unwrap_or_else(|| std::alloc::handle_alloc_error(layout))
+                .cast()
+    } else {
+        NonNull::new_unchecked(layout.align() as *mut u16)
+    }
+}
+
+pub(crate) unsafe fn heap_dealloc(ptr: NonNull<u16>, layout: Layout) {
+    if layout.size() > 0 {
+        std::alloc::dealloc(ptr.as_ptr().cast(), min_align_layout(layout))
+    };
+}
+
+pub(crate) unsafe fn alloc_unchecked_impl<T: ?Sized>(src: &mut ManuallyDrop<T>) -> NonNull<u16> {
+    let layout = Layout::for_value(src);
+    let dst = heap_alloc(layout);
+
+    std::ptr::copy_nonoverlapping(src as *const _ as *const u8, dst.as_ptr().cast(),
+                                  layout.size());
+    dst
+}
+
+pub(crate) unsafe fn dealloc_impl<T: ?Sized + Pointee>(ptr: NonNull<u16>, metadata: T::Metadata) {
+    let value = &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata);
+    let layout = Layout::for_value(value);
+
+    std::ptr::drop_in_place(value);
+    heap_dealloc(ptr, layout)
+}
+
 impl Ptr for HeapPtr {
     type Persist = !;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
-        let value = &mut *T::make_fat_ptr_mut(self.0.cast().as_ptr(), metadata);
-        let layout = Layout::for_value(value);
+        dealloc_impl::<T>(self.0, metadata)
+    }
 
-        std::ptr::drop_in_place(value);
-        std::alloc::dealloc(self.0.cast().as_ptr(), layout);
+    unsafe fn alloc_unchecked<T: ?Sized>(src: &mut ManuallyDrop<T>) -> Self {
+        Self(alloc_unchecked_impl(src))
     }
 
     fn duplicate(&self) -> Self {
@@ -44,90 +87,110 @@ impl Ptr for HeapPtr {
     }
 
     unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
-        todo!()
+        let cloned = self.try_get_dirty_unchecked::<T>(()).into_ok()
+                         .clone();
+        let mut cloned = ManuallyDrop::new(cloned);
+        Self::alloc_unchecked::<T>(&mut cloned)
     }
 
     unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
         Ok(&*T::make_fat_ptr(self.0.cast().as_ptr(), metadata))
     }
-}
 
-impl Zone for Heap {
-    type Ptr = HeapPtr;
-
-    /*
-    unsafe fn clone_ptr_unchecked<T: Clone>(ptr: &Self::Ptr) -> Self::Ptr {
-        todo!()
-    }
-
-    fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, Self> {
-        src.take_unsized(|src| unsafe {
-            let metadata = T::metadata(src);
-            let layout = min_align_layout(Layout::for_value(src));
-
-            let ptr = if layout.size() > 0 {
-                let dst = NonNull::new(std::alloc::alloc(layout))
-                    .unwrap_or_else(|| std::alloc::handle_alloc_error(layout));
-
-                std::ptr::copy_nonoverlapping(src as *const _ as *const u8, dst.as_ptr(),
-                                              layout.size());
-
-                dst.cast()
-            } else {
-                NonNull::new_unchecked(layout.align() as *mut u16)
-            };
-
-            Bag::from_owned_ptr(
-                OwnedPtr::new_unchecked(
-                    FatPtr::new(HeapPtr(ptr), metadata)
-                ),
-                Heap,
-            )
-        })
-    }
-    */
-}
-
-/*
-impl Get for Heap {
-    unsafe fn get_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a Self::Ptr, metadata: T::Metadata) -> Ref<'a, T>
+    unsafe fn try_take_dirty_unchecked<T: ?Sized + Pointee>(self, metadata: T::Metadata) -> Result<T::Owned, Self::Persist>
         where T: IntoOwned
     {
-        let r: &'a T = &*T::make_fat_ptr(ptr.0.cast().as_ptr(), metadata);
-        Ref::Ref(r)
-    }
+        let value = &mut *T::make_fat_ptr_mut(self.0.cast().as_ptr(), metadata);
+        let layout = Layout::for_value(value);
 
-    unsafe fn take_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: Self::Ptr, metadata: T::Metadata) -> T::Owned
-        where T: IntoOwned
-    {
-        todo!()
+        let owned = T::into_owned_unchecked(&mut *(value as *mut _ as *mut ManuallyDrop<T>));
+        heap_dealloc(self.0, layout);
+        Ok(owned)
     }
 }
 
-impl GetMut for Heap {
-    unsafe fn get_mut_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut Self::Ptr, metadata: T::Metadata) -> &'a mut T {
+impl ValidateBlob for HeapPtr {
+    const BLOB_LEN: usize = 0;
+    type Error = !;
+
+    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        unsafe { Ok(blob.finish()) }
+    }
+}
+
+impl Decode<HeapPtr> for HeapPtr {
+    fn decode_blob(blob: BlobDecoder<HeapPtr, Self>) -> Self {
+        panic!()
+    }
+}
+
+impl ValidateBlob for Heap {
+    const BLOB_LEN: usize = 0;
+    type Error = !;
+
+    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        unsafe { Ok(blob.finish()) }
+    }
+}
+
+impl Decode<HeapPtr> for Heap {
+    fn decode_blob(blob: BlobDecoder<HeapPtr, Self>) -> Self {
+        unreachable!("HeapPtr is not a BlobPtr")
+    }
+}
+
+impl Get<HeapPtr> for Heap {
+    unsafe fn get_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a HeapPtr, metadata: T::Metadata) -> Ref<'a, T>
+        where T: IntoOwned
+    {
+        ptr.try_get_dirty_unchecked::<T>(metadata)
+           .into_ok().into()
+    }
+
+    unsafe fn take_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: HeapPtr, metadata: T::Metadata) -> T::Owned
+        where T: IntoOwned
+    {
+        ptr.try_take_dirty_unchecked::<T>(metadata)
+           .into_ok()
+    }
+}
+
+impl GetMut<HeapPtr> for Heap {
+    unsafe fn get_mut_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut HeapPtr, metadata: T::Metadata) -> &'a mut T {
         &mut *T::make_fat_ptr_mut(ptr.0.cast().as_ptr(), metadata)
     }
 }
 
-/*
+impl Alloc for Heap {
+    type Zone = Self;
+    type Ptr = HeapPtr;
+
+    fn zone(&self) -> Self::Zone {
+        Heap
+    }
+
+    unsafe fn alloc_unchecked<T: ?Sized>(&mut self, src: &mut ManuallyDrop<T>) -> Self::Ptr {
+        HeapPtr::alloc_unchecked(src)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn get() {
-        let bag = Heap::alloc(123u8);
+        let bag = Bag::new_in(123, Heap);
 
         let r: Ref<u8> = bag.get();
         assert_eq!(*r, 123u8);
 
-        let bag = Heap::alloc(123u8);
+        let bag = Bag::new_in(123u8, Heap);
     }
 
     #[test]
     fn get_mut() {
-        let mut bag = Heap::alloc(1u8);
+        let mut bag = Bag::new_in(1u8, Heap);
 
         let r = bag.get_mut();
         *r += 1;
@@ -135,6 +198,12 @@ mod tests {
         let r = bag.get();
         assert_eq!(*r, 2);
     }
+
+    /*
+    #[test]
+    fn clone() {
+        let bag = Bag::new_in(42u8, Heap);
+        let bag2 = bag.clone();
+    }
+    */
 }
-*/
-*/

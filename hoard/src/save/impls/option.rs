@@ -1,35 +1,43 @@
 use super::*;
 
-use nonzero::NonZero;
+use thiserror::Error;
 
-impl<Z, T: Encoded<Z>> Encoded<Z> for Option<T> {
+impl<R, T: Encoded<R>> Encoded<R> for Option<T> {
     type Encoded = Option<T::Encoded>;
 }
 
-impl<'a, Z: Zone, T: NonZero + Encode<'a, Z>> Encode<'a, Z> for Option<T> {
+impl<'a, Q, R, T: Encode<'a, Q, R>> Encode<'a, Q, R> for Option<T> {
     type State = Option<T::State>;
 
-    fn save_children(&'a self) -> Self::State {
-        self.as_ref().map(T::save_children)
+    fn init_encode_state(&'a self) -> Self::State {
+        self.as_ref().map(T::init_encode_state)
     }
 
-    fn poll<D: Dumper<Z>>(&self, state: &mut Self::State, dumper: D) -> Result<D, D::Error> {
+    fn encode_poll<D>(&'a self, state: &mut Self::State, dst: D) -> Result<D, D::Error>
+        where D: Dumper<Source=Q, Target=R>
+    {
         match (self, state) {
-            (Some(value), Some(state)) => value.poll(state, dumper),
-            (None, None) => Ok(dumper),
-            _ => unreachable!("invalid state"),
+            (Some(value), Some(state)) => value.encode_poll(state, dst),
+            (None, None) => Ok(dst),
+            _ => panic!(),
         }
     }
 
-    fn encode_blob<W: WriteBlob>(&self, state: &Option<T::State>, dst: W) -> Result<W::Ok, W::Error> {
-        // FIXME: assertions?
+    fn encode_blob<W: WriteBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Done, W::Error>
+        where R: ValidateBlob
+    {
         match (self, state) {
-            (None, None) => {
-                dst.write_padding(mem::size_of::<T::Encoded>())?
-                    .finish()
+            (Some(value), Some(state)) => {
+                dst.write_bytes(&[1])?
+                   .write(value, state)?
+                   .done()
             },
-            (Some(value), Some(state)) => value.encode_blob(state, dst),
-            _ => unreachable!("invalid state"),
+            (None, None) => {
+                dst.write_bytes(&[0])?
+                   .write_padding(<T::Encoded as ValidateBlob>::BLOB_LEN)?
+                   .done()
+            },
+            _ => panic!(),
         }
     }
 }

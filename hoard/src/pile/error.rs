@@ -1,195 +1,81 @@
-use core::any::Any;
-use core::fmt;
-use core::marker::PhantomData;
-use core::ptr::NonNull;
+use std::error::Error;
+use std::fmt::Debug;
 
 use thiserror::Error;
 
+use crate::pointee::Pointee;
+
 use super::*;
 
-use crate::pointee::{Metadata, MetadataKind};
-use crate::marshal::load::PersistPointee;
+#[derive(Debug, Error)]
+#[error("fixme")]
+pub enum GetBlobError<LayoutError: Debug> {
+    OutOfRange,
+    Layout(LayoutError),
+}
 
 #[derive(Debug, Error)]
-#[error("pile dereference failed: {0:?}")]
-pub struct Error<'p, 'v>(Box<Inner<'p,'v>>);
-
-#[derive(Debug)]
-struct Inner<'p, 'v> {
-    zone: TryPile<'p, 'v>,
-    offset: Offset<'static, 'static>,
-    metadata: MetadataKind,
-
-    kind: ErrorKind,
+#[error("fixme")]
+pub enum GetValidBlobError<LayoutError: Debug, ValidateError: Debug> {
+    Blob(GetBlobError<LayoutError>),
+    Validate(ValidateError),
 }
 
-#[derive(Debug)]
-pub enum ErrorKind {
-    Offset,
-    Metadata(Box<dyn std::error::Error + 'static + Send + Sync>),
-    Value(Box<dyn std::error::Error + 'static + Send + Sync>),
-}
-
-impl<'p,'v> Error<'p, 'v> {
-    #[cold]
-    pub fn new<Z, T: ?Sized + Pointee>(zone: &Z, ptr: &FatPtr<T, Z::Persist>, kind: ErrorKind) -> Self
-        where Z: PileZone<'p, 'v>,
-    {
-        Self(Box::new(Inner {
-            zone: zone.get_try_pile(),
-            offset: ptr.raw,
-            metadata: ptr.metadata.kind(),
-            kind,
-        }))
+impl<L: Error, V: Error> From<GetBlobError<L>> for GetValidBlobError<L, V> {
+    fn from(err: GetBlobError<L>) -> Self {
+        Self::Blob(err)
     }
 }
 
 /*
-/// Returned when attempting to dereference a `Zone` pointer fails.
-pub enum DerefError<T: ?Sized + PersistPointee, Z: Zone> {
-    /// The pointer is invalid.
-    ///
-    /// If this is returned, the `Zone` couldn't even retrieve a `Blob`, and validation was never
-    /// attempted.
-    Ptr(PtrError<T, Z>),
-
-    /// The value is invalid.
-    ///
-    /// The `Zone` could retrieve a `Blob` of the right size for this type. But validation of that
-    /// `Blob` failed.
-    Value {
-        ptr: Z::ErrorPtr,
-        metadata: T::Metadata,
-        err: <T as PersistPointee>::Error,
-    },
-}
-
-/// Returned when a pointer is invalid.
-pub enum PtrError<T: ?Sized + Pointee, Z: Zone> {
-    Zone {
-        ptr: Z::ErrorPtr,
-        metadata: T::Metadata,
-    },
-    Layout {
-        ptr: Z::ErrorPtr,
-        metadata: T::Metadata,
-        err: T::LayoutError,
-    }
-}
-
-impl<T: ?Sized + PersistPointee, Z: Zone> From<PtrError<T,Z>> for DerefError<T,Z> {
-    fn from(err: PtrError<T, Z>) -> Self {
-        DerefError::Ptr(err)
-    }
-}
-
-impl<T: ?Sized + Pointee, Z: Zone> From<PtrError<T, Z>> for !
-where Z::Error: Into<!>
+#[derive(Debug, Error)]
+#[error("FIXME")]
+pub struct Error<
+    P: Debug,
+    M: ?Sized + Debug,
+    L: Debug,
+    V: Debug,
+>
 {
-    fn from(err: PtrError<T,Z>) -> ! {
-        unreachable!()
-    }
+    pile: P,
+    offset: Offset,
+    kind: ErrorKind<L, V>,
+    metadata: M,
 }
 
-impl<T: ?Sized + PersistPointee, Z: Zone> From<DerefError<T, Z>> for !
-where Z::Error: Into<!>
+#[derive(Debug)]
+pub enum ErrorKind<L, V> {
+    Layout(L),
+    OutOfRange(usize),
+    Validate(V),
+}
+
+impl<P, M, L, V> Error<P, M, L, V>
+where P: Debug, M: Debug, L: Debug, V: Debug
 {
-    fn from(err: DerefError<T,Z>) -> ! {
-        unreachable!()
-    }
-}
-
-pub type Maybe<T, Z> = Result<T, <Z as Zone>::Error>;
-
-pub trait ZoneError : Sized + fmt::Debug {
-    fn into_dyn(self) -> Box<dyn ZoneErrorDyn>;
-}
-
-impl ZoneError for ! {
-    fn into_dyn(self) -> Box<dyn ZoneErrorDyn> {
-        match self {}
-    }
-}
-
-pub trait FromDerefError<Z: Zone> : ZoneError {
-    fn from_deref_error<T: ?Sized + PersistPointee>(err: DerefError<T, Z>) -> Self;
-}
-
-impl<Z: Zone> FromDerefError<Z> for !
-where Z::Error: Into<!>
-{
-    fn from_deref_error<T: ?Sized + PersistPointee>(err: DerefError<T, Z>) -> Self {
-        Into::<!>::into(err)
-    }
-}
-
-pub trait ZoneErrorDyn : 'static + Any + fmt::Debug {
-}
-
-impl<E: 'static + Any + fmt::Debug> ZoneErrorDyn for E {
-}
-
-impl<E: ZoneError> From<E> for Box<dyn ZoneErrorDyn> {
-    fn from(err: E) -> Self {
-        err.into_dyn()
-    }
-}
-
-impl<T: ?Sized + PersistPointee, Z: Zone> From<DerefError<T,Z>> for Box<dyn ZoneErrorDyn> {
-    fn from(err: DerefError<T,Z>) -> Self {
-        Z::Error::from_deref_error(err).into()
-    }
-}
-
-impl<T: ?Sized + PersistPointee, Z: Zone> From<PtrError<T,Z>> for Box<dyn ZoneErrorDyn> {
-    fn from(err: PtrError<T,Z>) -> Self {
-        DerefError::from(err).into()
-    }
-}
-
-
-// Debug impls
-impl<T: ?Sized + Pointee, Z: Zone> fmt::Debug for PtrError<T, Z> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        /*
-        match self {
-            PtrError::Zone { zone, ptr, err } => {
-                f.debug_struct("Zone")
-                 .field("zone", zone)
-                 .field("ptr", ptr)
-                 .field("err", err)
-                 .finish()
-            },
-            PtrError::Layout { zone, ptr, err } => {
-                f.debug_struct("Layout")
-                 .field("zone", zone)
-                 .field("ptr", ptr)
-                 .field("err", err)
-                 .finish()
-            },
+    pub fn new<Z>(pile: P, offset: &Offset<Z>, metadata: M, kind: ErrorKind<L, V>) -> Self {
+        Self {
+            pile,
+            offset: offset.to_static(),
+            metadata: metadata,
+            kind,
         }
-        */ todo!()
     }
 }
 
-impl<T: ?Sized + PersistPointee, Z: Zone> fmt::Debug for DerefError<T, Z>
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        /*
-        match self {
-            DerefError::Ptr(e) => {
-                f.debug_tuple("Ptr")
-                 .field(e)
-                 .finish()
-            },
-            DerefError::Value { zone, ptr, err } => {
-                f.debug_struct("Value")
-                 .field("zone", zone)
-                 .field("ptr", ptr)
-                 .field("err", err)
-                 .finish()
-            },
-        }*/ todo!()
+/*
+    pub fn offset(&self) -> &Offset {
+        &self.offset
+    }
+
+    pub fn metadata(&self) -> &M {
+        &self.metadata
+    }
+
+    pub fn kind(&self) -> &ErrorKind<L, V> {
+        &self.kind
     }
 }
+*/
+
 */

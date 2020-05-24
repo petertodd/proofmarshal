@@ -1,6 +1,6 @@
 //! Copy-on-write pile offsets.
 
-use std::alloc::Layout;
+use std::alloc::{System, Layout};
 use std::cmp;
 use std::fmt;
 use std::marker::PhantomData;
@@ -12,18 +12,85 @@ use thiserror::Error;
 
 use owned::{Take, IntoOwned};
 
+use crate::pointee::Pointee;
+use crate::ptr::*;
 use crate::load::*;
 
 use super::*;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct OffsetMut<'p,'v>(Offset<'p,'v>);
+pub struct OffsetMut<Z, A = System> {
+    marker: PhantomData<A>,
+    inner: Offset<Z>,
+}
 
-impl<'p,'v> Ptr for OffsetMut<'p, 'v> {
-    type Persist = Offset<'static, 'static>;
+impl<Z, A> Clone for OffsetMut<Z, A> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<Z, A> Copy for OffsetMut<Z, A> {}
+
+impl<Z> Default for OffsetMut<Z> {
+    fn default() -> Self {
+        todo!()
+    }
+}
+
+pub enum Kind<Z> {
+    Offset(Offset<Z>),
+    Ptr(NonNull<u16>),
+}
+
+impl<Z, A> OffsetMut<Z, A> {
+    #[inline]
+    pub unsafe fn from_ptr(ptr: NonNull<u16>) -> Self {
+        let raw = ptr.as_ptr() as usize as u64;
+
+        debug_assert_eq!(raw & 1, 0,
+                   "{:p} unaligned", ptr);
+
+        mem::transmute(ptr.as_ptr() as usize as u64)
+    }
+
+    #[inline]
+    pub fn kind(&self) -> Kind<Z> {
+        if self.inner.raw.get().get() & 1 == 1 {
+            Kind::Offset(self.inner)
+        } else {
+            Kind::Ptr(unsafe {
+                let raw = self.inner.raw.get().get();
+                NonNull::new_unchecked(raw as usize as *mut u16)
+            })
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_offset(&self) -> Option<Offset<Z>> {
+        match self.kind() {
+            Kind::Offset(offset) => Some(offset),
+            Kind::Ptr(_) => None,
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_ptr(&self) -> Option<NonNull<u16>> {
+        match self.kind() {
+            Kind::Ptr(ptr) => Some(ptr),
+            Kind::Offset(_) => None,
+        }
+    }
+}
+
+impl<Z, A> Ptr for OffsetMut<Z, A> {
+    type Zone = !;
+    type Persist = Offset;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
+        todo!()
+    }
+
+    fn zone() -> Self::Zone {
         todo!()
     }
 
@@ -40,12 +107,21 @@ impl<'p,'v> Ptr for OffsetMut<'p, 'v> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Kind<'p,'v> {
-    Offset(Offset<'p,'v>),
-    Ptr(NonNull<u16>),
+impl<Z, A> AsPtr<Self> for OffsetMut<Z, A> {
+    fn as_ptr(&self) -> &Self {
+        self
+    }
 }
 
+impl<Z, A> fmt::Debug for OffsetMut<Z, A> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        //fmt::Debug::fmt(&self.kind(), f)
+        todo!()
+    }
+}
+
+
+/*
 #[inline]
 fn min_align_layout(layout: Layout) -> Layout {
     unsafe {
@@ -55,6 +131,7 @@ fn min_align_layout(layout: Layout) -> Layout {
         )
     }
 }
+*/
 
 /*
 impl<'p,'v> Ptr for OffsetMut<'p, 'v> {
@@ -128,7 +205,7 @@ impl<'p, 'v> Load for OffsetMut<'p, 'v> {
     }
 }
 */
-
+/*
 impl<'p,'v> OffsetMut<'p,'v> {
     /*
     fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, Self> {
@@ -199,50 +276,7 @@ impl<'p,'v> OffsetMut<'p,'v> {
     }
     */
 
-    #[inline]
-    pub unsafe fn from_ptr(ptr: NonNull<u16>) -> Self {
-        let raw = ptr.as_ptr() as usize as u64;
 
-        debug_assert_eq!(raw & 1, 0,
-                   "{:p} unaligned", ptr);
-
-        mem::transmute(ptr.as_ptr() as usize as u64)
-    }
-
-    #[inline]
-    pub fn kind(&self) -> Kind<'p,'v> {
-        if self.0.raw.get().get() & 1 == 1 {
-            Kind::Offset(self.0)
-        } else {
-            Kind::Ptr(unsafe {
-                let raw = self.0.raw.get().get();
-                NonNull::new_unchecked(raw as usize as *mut u16)
-            })
-        }
-    }
-
-    #[inline(always)]
-    pub fn get_offset(&self) -> Option<Offset<'p,'v>> {
-        match self.kind() {
-            Kind::Offset(offset) => Some(offset),
-            Kind::Ptr(_) => None,
-        }
-    }
-
-    #[inline(always)]
-    pub fn get_ptr(&self) -> Option<NonNull<u16>> {
-        match self.kind() {
-            Kind::Ptr(ptr) => Some(ptr),
-            Kind::Offset(_) => None,
-        }
-    }
-}
-
-impl fmt::Debug for OffsetMut<'_,'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(&self.kind(), f)
-    }
-}
 
 impl ValidateBlob for OffsetMut<'_, '_> {
     type Error = super::offset::ValidateBlobOffsetError;
@@ -275,3 +309,4 @@ mod tests {
     fn test() {
     }
 }
+*/

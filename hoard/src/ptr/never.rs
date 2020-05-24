@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use super::*;
 
 impl Ptr for ! {
+    type Zone = !;
     type Persist = !;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {

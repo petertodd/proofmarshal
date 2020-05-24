@@ -4,50 +4,99 @@ use std::slice;
 
 use thiserror::Error;
 
+use leint::Le;
+
 use super::*;
 
-macro_rules! unsafe_impl_decode_for_all_valid {
+macro_rules! unsafe_impl_all_valid_persist {
     ($($t:ty,)+) => {$(
-        impl ValidateBlob for $t {
-            type Error = !;
-
+        impl BlobLen for $t {
             const BLOB_LEN: usize = mem::size_of::<Self>();
+        }
+        unsafe impl Persist for $t {}
 
-            fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-                unsafe { Ok(blob.assume_valid()) }
+        impl<R> Encoded<R> for $t {
+            type Encoded = Self;
+        }
+
+        impl<Q, R> Encode<'_, Q, R> for $t {
+            type State = ();
+
+            fn init_encode_state(&self) -> Self::State {}
+
+            fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
+                where D: Dumper<Source=Q, Target=R>
+            {
+                Ok(dst)
+            }
+
+            fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+                let src = unsafe { slice::from_raw_parts(
+                    self as *const _ as *const u8,
+                    mem::size_of::<$t>()
+                )};
+
+                dst.write_bytes(src)?
+                   .done()
             }
         }
 
-        impl<Z> Load<Z> for $t {
-            fn decode_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self {
-                Self::load_blob(blob, zone).clone()
-            }
-
-            fn load_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Ref<'a, Self> {
-                let _ = zone;
-                blob.to_ref().into()
-            }
-        }
+        impl Primitive for $t {}
     )+}
 }
 
-macro_rules! unsafe_impl_persist {
+unsafe_impl_all_valid_persist! {
+    (),
+    u8, Le<u16>, Le<u32>, Le<u64>, Le<u128>,
+    i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
+}
+
+macro_rules! impl_nonzero {
     ($($t:ty,)+) => {$(
-        unsafe impl Persist for $t {
+        impl BlobLen for $t {
+            const BLOB_LEN: usize = mem::size_of::<Self>();
         }
+
+        unsafe impl Persist for $t {}
+
+        impl<R> Encoded<R> for $t {
+            type Encoded = Self;
+        }
+
+        impl<Q, R> Encode<'_, Q, R> for $t {
+            type State = ();
+
+            fn init_encode_state(&self) -> Self::State {}
+
+            fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
+                where D: Dumper<Source=Q, Target=R>
+            {
+                Ok(dst)
+            }
+
+            fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+                let src = unsafe { slice::from_raw_parts(
+                    self as *const _ as *const u8,
+                    mem::size_of::<$t>()
+                )};
+
+                dst.write_bytes(src)?
+                   .done()
+            }
+        }
+
+        impl Primitive for $t {}
     )+}
 }
 
-unsafe_impl_decode_for_all_valid! {
-    (), u8,
+impl_nonzero! {
+    num::NonZeroU8, Le<num::NonZeroU16>, Le<num::NonZeroU32>, Le<num::NonZeroU64>, Le<num::NonZeroU128>,
+    num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
 }
 
-unsafe_impl_persist! {
-    (), u8,
-}
-
+/*
 #[non_exhaustive]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[error("invalid bool blob")]
 pub struct ValidateBoolError;
 
@@ -55,24 +104,35 @@ impl ValidateBlob for bool {
     type Error = ValidateBoolError;
     const BLOB_LEN: usize = mem::size_of::<Self>();
 
-    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        match &blob[..] {
-            [0] | [1] => unsafe { Ok(blob.assume_valid()) },
+    fn validate_blob<'a>(mut blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        match blob.field_bytes(1)[..] {
+            [0] | [1] => unsafe { Ok(blob.finish()) },
             _ => Err(ValidateBoolError),
         }
     }
 }
 
-unsafe impl Persist for bool {}
+macro_rules! unsafe_impl_persist {
+    ($($t:ty,)+) => {$(
+        unsafe impl Persist for $t {
+        }
 
-impl<Z> Load<Z> for bool {
-    fn decode_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Self {
-        Self::load_blob(blob, zone).clone()
-    }
+        impl<Q: Ptr> Load<Q> for $t {
+            fn decode_blob<'a>(blob: BlobLoader<'a, Self, Q>) -> Self {
+                Self::load_blob(blob).clone()
+            }
 
-    fn load_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Ref<'a, Self> {
-        blob.to_ref().into()
-    }
+            fn load_blob<'a>(blob: BlobLoader<'a, Self, Q>) -> Ref<'a, Self> {
+                blob.as_value().into()
+            }
+        }
+    )+}
+}
+
+unsafe_impl_persist! {
+    (), bool,
+    u8, Le<u16>, Le<u32>, Le<u64>, Le<u128>,
+    i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
 }
 
 /*
@@ -87,7 +147,6 @@ impl<Z> Load<Z> for bool {
 }
 
 /*
-use leint::Le;
 
 use super::*;
 
@@ -125,13 +184,6 @@ macro_rules! impl_save {
 	    }
 
 	    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-                let src = unsafe { slice::from_raw_parts(
-                    self as *const _ as *const u8,
-                    mem::size_of::<$t>()
-                )};
-
-                dst.write_bytes(src)?
-                   .done()
 	    }
 
 	    fn save_blob<W: SaveBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
@@ -251,6 +303,7 @@ impl_nonzero! {
     num::NonZeroU8, Le<num::NonZeroU16>, Le<num::NonZeroU32>, Le<num::NonZeroU64>, Le<num::NonZeroU128>,
     num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
 }
+*/
 */
 */
 */

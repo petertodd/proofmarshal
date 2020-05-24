@@ -12,6 +12,8 @@ use owned::Take;
 use super::*;
 
 use crate::load::*;
+use crate::zone::*;
+use crate::refs::Ref;
 
 pub struct OwnedPtr<T: ?Sized + Pointee, P: Ptr, M: 'static = <T as Pointee>::Metadata> {
     marker: PhantomData<T>,
@@ -56,6 +58,24 @@ impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T, P> {
         }
     }
 
+    pub fn get_in<'a, Z>(&'a self, zone: &Z) -> Ref<'a, T>
+        where Z: Get<P>,
+              T: Load<Z>,
+    {
+        unsafe {
+            zone.get_unchecked(&self.inner.raw, self.metadata)
+        }
+    }
+
+    pub fn get_mut_in<'a, Z>(&'a mut self, zone: &Z) -> &'a mut T
+        where Z: GetMut<P>,
+              T: Load<Z>
+    {
+        unsafe {
+            zone.get_mut_unchecked(&mut self.inner.raw, self.inner.metadata)
+        }
+    }
+
     pub fn into_fatptr(self) -> FatPtr<T, P> {
         let this = ManuallyDrop::new(self);
         unsafe {
@@ -69,17 +89,19 @@ impl<T: ?Sized + Pointee, P: Ptr> OwnedPtr<T, P> {
 }
 
 impl<T, P: Ptr, M: 'static> Clone for OwnedPtr<T, P, M>
-where T: Clone, P: Clone,
+where T: Clone, P: Clone, M: Clone
 {
     fn clone(&self) -> Self {
-        /*
         unsafe {
-            OwnedPtr::new_unchecked(FatPtr::new(
-                    self.raw.clone_unchecked::<T>(),
-                    ()
-            ))
+            Self {
+                marker: PhantomData,
+                inner: FatPtr {
+                    marker: PhantomData,
+                    raw: self.inner.raw.clone_unchecked::<T>(),
+                    metadata: self.inner.metadata.clone(),
+                },
+            }
         }
-        */ todo!()
     }
 }
 
@@ -120,7 +142,6 @@ where P: Decode<Z>,
     }
 }
 
-/*
 impl<T: ?Sized + Pointee, P: Ptr> Default for OwnedPtr<T, P>
 where T: Default, P: Default,
 {
@@ -135,4 +156,3 @@ mod tests {
     fn test() {
     }
 }
-*/

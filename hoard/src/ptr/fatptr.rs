@@ -11,7 +11,7 @@ use crate::load::*;
 
 #[repr(C)]
 pub struct FatPtr<T: ?Sized, P, M = <T as Pointee>::Metadata> {
-    marker: PhantomData<*const T>,
+    pub(crate) marker: PhantomData<fn() -> T>,
     pub raw: P,
     pub metadata: M,
 }
@@ -60,6 +60,7 @@ impl<T: ?Sized + Pointee, P> Eq for FatPtr<T, P>
 where P: Eq
 {}
 
+/*
 #[derive(Debug, Error)]
 #[error("fixme")]
 pub enum ValidateBlobFatPtrError<P: fmt::Debug, M: fmt::Debug> {
@@ -104,3 +105,4 @@ where P: Decode<Z>,
         }
     }
 }
+*/

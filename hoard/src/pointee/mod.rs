@@ -4,6 +4,8 @@ use std::hash::Hash;
 use std::ptr::{self, NonNull};
 use std::fmt;
 
+use crate::primitive::Primitive;
+
 /*
 use std::mem::{self, MaybeUninit};
 
@@ -13,30 +15,6 @@ use leint::Le;
 
 mod maybedropped;
 pub use self::maybedropped::MaybeDropped;
-
-pub trait Metadata : 'static + crate::marshal::Primitive + fmt::Debug + Send + Sync {
-    fn kind(&self) -> MetadataKind;
-}
-
-#[derive(Debug)]
-pub enum MetadataKind {
-    Sized,
-    Len(u64),
-}
-
-impl Metadata for () {
-    #[inline(always)]
-    fn kind(&self) -> MetadataKind {
-        MetadataKind::Sized
-    }
-}
-
-impl Metadata for Le<u64> {
-    #[inline(always)]
-    fn kind(&self) -> MetadataKind {
-        MetadataKind::Len(self.get())
-    }
-}
 */
 
 /// A target of a pointer.
@@ -46,7 +24,7 @@ impl Metadata for Le<u64> {
 /// Other code can assume `Pointee` is implemented correctly.
 pub unsafe trait Pointee {
     /// Fat pointer metadata.
-    type Metadata : 'static + Copy + Eq + Ord + Hash + Send + Sync + fmt::Debug;
+    type Metadata : 'static + Primitive + Copy + Eq + Ord + Hash + Send + Sync + fmt::Debug;
 
     type LayoutError : 'static + std::error::Error + Send + Sync;
 
@@ -87,6 +65,9 @@ unsafe impl<T> Pointee for T {
 
     fn metadata(_this: &Self) -> Self::Metadata {
         ()
+    }
+
+    fn make_sized_metadata() -> Self::Metadata {
     }
 
     /*

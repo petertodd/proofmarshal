@@ -24,7 +24,14 @@ impl<'a, T: ?Sized + IntoOwned> fmt::Debug for Ref<'a, T>
 where T: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.deref().fmt(f)
+        match self {
+            Ref::Ref(r) => f.debug_tuple("Ref")
+                                .field(r)
+                                .finish(),
+            Ref::Owned(owned) => f.debug_tuple("Owned")
+                                  .field(&owned.borrow())
+                                  .finish(),
+        }
     }
 }
 

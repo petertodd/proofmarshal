@@ -3,6 +3,8 @@ use std::mem;
 
 use crate::save::*;
 use crate::pointee::Pointee;
+use crate::primitive::Primitive;
+use crate::blob::BlobLen;
 
 pub trait WriteBlob : Sized {
     type Done;
@@ -18,31 +20,27 @@ pub trait WriteBlob : Sized {
         Ok(self)
     }
 
-    /*
-    fn write<'a, Q, R, T: Save<'a, Q, R>>(self, val: &'a T, state: &T::State) -> Result<Self, Self::Error>
-        where T::Saved: Sized,
+    fn write<'a, Q, R: ValidateBlob, T: Encode<'a, Q, R>>(self, val: &'a T, state: &T::State) -> Result<Self, Self::Error>
     {
-        let dst = Limit::new(self, mem::size_of::<T::Saved>());
+        let dst = Limit::new(self, <T::Encoded as ValidateBlob>::BLOB_LEN);
         val.encode_blob(state, dst)
     }
 
-    fn write_primitive<'a, T: Save<'a, !, !>>(self, val: &'a T) -> Result<Self, Self::Error>
-        where T::Saved: Sized,
-    {
-        let mut state = val.init_save_state();
-        val.save_poll(&mut state, DummySavePtr).into_ok();
-        self.write(val, &state)
+    fn write_primitive<T: Primitive>(self, val: &T) -> Result<Self, Self::Error> {
+        let mut state = Encode::<!,!>::init_encode_state(val);
+        val.encode_poll(&mut state, DummySavePtr).into_ok();
+        self.write::<!,!,T>(val, &state)
     }
-    */
 }
 
-/*
 struct DummySavePtr;
 
-impl SavePtr<!, !> for DummySavePtr {
+impl Dumper for DummySavePtr {
+    type Source = !;
+    type Target = !;
     type Error = !;
 
-    fn save<'a, T: ?Sized>(self, value: &'a T, state: &T::State) -> Result<(Self, !), !>
+    fn save_ptr<'a, T: ?Sized>(self, value: &'a T, state: &T::State) -> Result<(Self, !), !>
         where T: Save<'a, !, !>
     {
         panic!()
@@ -52,7 +50,6 @@ impl SavePtr<!, !> for DummySavePtr {
         match *ptr {}
     }
 }
-*/
 
 #[derive(Debug)]
 pub struct Limit<W> {
