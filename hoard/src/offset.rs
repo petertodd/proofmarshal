@@ -312,25 +312,10 @@ impl<'p,'v> Default for OffsetMut<'p, 'v> {
     }
 }
 
-impl<R> Encoded<R> for Offset<'_, '_> {
-    type Encoded = Self;
-}
-
-impl<R> Encoded<R> for OffsetMut<'_, '_> {
-    type Encoded = Self;
-}
-
-impl<Q, R> Encode<'_, Q, R> for Offset<'_, '_> {
-    type State = ();
-    fn init_encode_state(&self) -> () {}
-    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>
-    {
-        Ok(dst)
-    }
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
-        dst.write_primitive(&self.raw)?
-           .done()
+impl<Q, R> Encode<Q, R> for Offset<'_, '_> {
+    type EncodePoll = <Le<NonZeroU64> as Encode<Q, R>>::EncodePoll;
+    fn init_encode(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::EncodePoll {
+        self.raw.init_encode(dst)
     }
 }
 
@@ -343,14 +328,13 @@ pub struct ShallowDumper<'p, 'v> {
     initial_offset: usize,
 }
 
-impl<'p, 'v> Dumper for ShallowDumper<'p, 'v> {
+impl<'p, 'v> SavePtr for ShallowDumper<'p, 'v> {
     type Source = OffsetMut<'p, 'v>;
     type Target = Offset<'p, 'v>;
-
     type Error = !;
-    unsafe fn try_save_ptr<'a, T: ?Sized>(&mut self, ptr: &'a Self::Source, metadata: T::Metadata)
-        -> Result<Self::Target, &'a T>
-    where T: Pointee
+
+    unsafe fn check_dirty<'a, T: ?Sized>(&self, ptr: &'a Self::Source, metadata: T::Metadata) -> Result<Self::Target, &'a T>
+        where T: Pointee
     {
         match ptr.try_get_dirty_unchecked::<T>(metadata) {
             Ok(r) => Err(r),
@@ -358,16 +342,14 @@ impl<'p, 'v> Dumper for ShallowDumper<'p, 'v> {
         }
     }
 
-    fn save_ptr<'a, T: ?Sized>(mut self, value: &'a T, state: &T::State) -> Result<(Self, Self::Target), Self::Error>
-        where T: Save<'a, Self::Source, Self::Target>
-    {
+    fn try_save_ptr(mut self, value: &impl SaveBlob) -> Result<(Self, Self::Target), Self::Error> {
         let offset = self.initial_offset
                          .checked_add(self.written.len())
                          .and_then(Offset::new)
                          .expect("overflow");
 
         let written = mem::replace(&mut self.written, vec![]);
-        self.written = value.save_blob(state, written).into_ok();
+        self.written = value.save_blob(written).into_ok();
         Ok((self, offset))
     }
 }
@@ -381,21 +363,20 @@ impl<'p, 'v> ShallowDumper<'p, 'v> {
         }
     }
 
-    pub fn save<'a, T>(self, value: &'a T) -> (Vec<u8>, Offset<'p, 'v>)
-        where T: Save<'a, OffsetMut<'p, 'v>, Offset<'p, 'v>>
+    pub fn save<T: ?Sized>(self, value: &T) -> (Vec<u8>, Offset<'p, 'v>)
+        where T: Save<OffsetMut<'p, 'v>, Offset<'p, 'v>>
     {
-        let mut state = value.init_save_state();
-        let this = value.save_poll(&mut state, self).into_ok();
-        let (this, offset) = this.save_ptr(value, &state).into_ok();
+        let mut encoder = value.init_save(&self);
+        let this = encoder.save_poll(self).into_ok();
+        let (this, offset) = this.try_save_ptr(&encoder).into_ok();
         (this.written, offset)
     }
 }
 
-/*
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pile::Pile;
     use crate::bag::Bag;
 
     #[test]
@@ -404,15 +385,14 @@ mod tests {
         assert_eq!(offset, 0);
         assert_eq!(buf, &[42]);
 
-        let pile = Pile::default();
-        let bag = Bag::new_in(42u8, pile);
+        let own = OffsetMut::alloc(42u8);
 
-        let (buf, offset) = ShallowDumper::new(0).save(&bag);
+        let (buf, offset) = ShallowDumper::new(0).save(&own);
         assert_eq!(offset, 1);
         assert_eq!(buf, &[42, 1,0,0,0,0,0,0,0]);
 
-        let bag2 = Bag::new_in(bag, pile);
-        let (buf, offset) = ShallowDumper::new(0).save(&bag2);
+        let own2 = OffsetMut::alloc(own);
+        let (buf, offset) = ShallowDumper::new(0).save(&own2);
         assert_eq!(offset, 9);
         assert_eq!(buf,
             &[42,
@@ -421,4 +401,3 @@ mod tests {
             ]);
     }
 }
-*/

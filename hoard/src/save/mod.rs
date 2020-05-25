@@ -3,77 +3,55 @@ use crate::pointee::Pointee;
 pub mod blob;
 pub use self::blob::*;
 
-use crate::blob::*;
-
 pub mod impls;
 
-pub trait Encoded<R> {
-    type Encoded : ValidateBlob;
+pub trait Encode<Q, R> {
+    type EncodePoll : SavePoll<Q, R> + EncodeBlob;
+
+    fn init_encode(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::EncodePoll;
 }
 
-pub trait Saved<R> : Pointee {
-    type Saved : ?Sized + Pointee<Metadata=Self::Metadata> + BlobLen;
+pub trait EncodeBlob {
+    const BLOB_LEN: usize;
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error>;
 }
 
-impl<R, T: Encoded<R>> Saved<R> for T {
-    type Saved = T::Encoded;
+pub trait SavePoll<Q, R> {
+    fn save_poll<D>(&mut self, dst: D) -> Result<D, D::Error>
+        where D: SavePtr<Source=Q, Target=R>;
 }
 
-pub trait Save<'a, Q, R> : Saved<R> {
-    type State : 'a;
-
-    fn init_save_state(&self) -> Self::State;
-
-    fn save_poll<D>(&'a self, state: &mut Self::State, dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>;
-
-    fn save_blob<W: SaveBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Done, W::Error>
-        where R: ValidateBlob;
+pub trait Save<Q, R> {
+    type SavePoll : SavePoll<Q, R> + SaveBlob;
+    fn init_save(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::SavePoll;
 }
 
-pub trait Encode<'a, Q, R> : Encoded<R> {
-    type State : 'a;
-
-    fn init_encode_state(&self) -> Self::State;
-
-    fn encode_poll<D>(&'a self, state: &mut Self::State, dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>;
-
-    fn encode_blob<W: WriteBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Done, W::Error>
-        where R: ValidateBlob;
+pub trait SaveBlob {
+    fn save_blob<W: AllocBlob>(&self, dst: W) -> Result<W::Done, W::Error>;
 }
 
-impl<'a, Q, R, T: Encode<'a, Q, R>> Save<'a, Q, R> for T {
-    type State = T::State;
+impl<Q, R, T: Encode<Q, R>> Save<Q, R> for T {
+    type SavePoll = T::EncodePoll;
 
-    fn init_save_state(&self) -> Self::State {
-        self.init_encode_state()
-    }
-
-    fn save_poll<D>(&'a self, state: &mut Self::State, dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>
-    {
-        self.encode_poll(state, dst)
-    }
-
-    fn save_blob<W: SaveBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Done, W::Error>
-        where R: ValidateBlob
-    {
-        let dst = dst.alloc(<T::Encoded as ValidateBlob>::BLOB_LEN)?;
-        self.encode_blob(state, dst)
+    fn init_save(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::SavePoll {
+        self.init_encode(dst)
     }
 }
 
-pub trait Dumper : Sized {
+impl<T: EncodeBlob> SaveBlob for T {
+    fn save_blob<W: AllocBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        let dst = dst.alloc_blob(T::BLOB_LEN)?;
+        self.encode_blob(dst)
+    }
+}
+
+pub trait SavePtr : Sized {
     type Source;
     type Target;
+    type Error;
 
-    type Error : std::error::Error;
-
-    unsafe fn try_save_ptr<'a, T: ?Sized>(&mut self, ptr: &'a Self::Source, metadata: T::Metadata) -> Result<Self::Target, &'a T>
+    unsafe fn check_dirty<'a, T: ?Sized>(&self, ptr: &'a Self::Source, metadata: T::Metadata) -> Result<Self::Target, &'a T>
         where T: Pointee;
 
-    fn save_ptr<'a, T: ?Sized>(self, value: &'a T, state: &T::State) -> Result<(Self, Self::Target), Self::Error>
-        where T: Save<'a, Self::Source, Self::Target>;
-
+    fn try_save_ptr(self, saver: &impl SaveBlob) -> Result<(Self, Self::Target), Self::Error>;
 }

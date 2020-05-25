@@ -7,12 +7,12 @@ use crate::blob::{Blob, ValidateBlob};
 
 use leint::Le;
 
-pub trait Primitive : Decode<()> + for<'a> Encode<'a, !, !, Encoded=Self> {
-    fn encode_bytes(&self) -> Vec<u8> {
+pub trait Primitive : Decode<()> + Encode<!, !> {
+    fn encode_blob_bytes(&self) -> Vec<u8> {
         vec![].write_primitive(self).into_ok()
     }
 
-    fn try_decode_bytes(src: &[u8]) -> Result<Self, Self::Error> {
+    fn try_decode_blob_bytes(src: &[u8]) -> Result<Self, Self::Error> {
         let blob = Blob::<Self>::try_from(src).unwrap();
         let valid_blob = Self::validate_blob(blob.into())?;
         Ok(Self::decode_blob(BlobDecoder::new(valid_blob, &())))
@@ -43,23 +43,22 @@ pub fn test_option_decode(src: &[u8;2])
     -> Result<Option<bool>,
               crate::blob::impls::option::ValidateBlobOptionError<crate::blob::impls::scalars::ValidateBoolError>>
 {
-    Primitive::try_decode_bytes(src)
+    Primitive::try_decode_blob_bytes(src)
 }
 
 pub fn test_array_decode(src: &[u8;4])
     -> Result<[bool; 4],
               crate::blob::impls::array::ValidateArrayError<crate::blob::impls::scalars::ValidateBoolError, 4>>
 {
-    Primitive::try_decode_bytes(src)
+    Primitive::try_decode_blob_bytes(src)
 }
 
 pub fn test_array_decode2(src: &[u8;2])
     -> Option<[bool; 2]>
 {
-    Primitive::try_decode_bytes(src)
+    Primitive::try_decode_blob_bytes(src)
         .ok()
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -67,22 +66,22 @@ mod tests {
 
     #[test]
     fn test_option() {
-        assert_eq!(Some(42u8).encode_bytes(),
+        assert_eq!(Some(42u8).encode_blob_bytes(),
                    &[1, 42]);
 
-        assert_eq!(<Option<u8> as Primitive>::try_decode_bytes(&[1,42]).unwrap(),
+        assert_eq!(<Option<u8> as Primitive>::try_decode_blob_bytes(&[1,42]).unwrap(),
                    Some(42u8));
 
-        assert_eq!(<Option<bool> as Primitive>::try_decode_bytes(&[1,1]).unwrap(),
+        assert_eq!(<Option<bool> as Primitive>::try_decode_blob_bytes(&[1,1]).unwrap(),
                    Some(true));
     }
 
     #[test]
     fn test_ints() {
-        assert_eq!(0x12345678_u32.encode_bytes(),
+        assert_eq!(0x12345678_u32.encode_blob_bytes(),
                    &[0x78, 0x56, 0x34, 0x12]);
 
-        assert_eq!(<u32 as Primitive>::try_decode_bytes(&[0x78, 0x56, 0x34, 0x12]),
+        assert_eq!(<u32 as Primitive>::try_decode_blob_bytes(&[0x78, 0x56, 0x34, 0x12]),
                    Ok(0x12345678));
     }
 }

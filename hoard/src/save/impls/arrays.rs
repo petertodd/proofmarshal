@@ -8,68 +8,68 @@ use sliceinit::SliceInitializer;
 
 use super::*;
 
-impl<R, T, const N: usize> Encoded<R> for [T; N]
-where T: Encoded<R>,
-{
-    type Encoded = [T::Encoded; N];
-}
-
-pub struct EncodeArrayState<S, const N: usize> {
-    state: [S; N],
+pub struct ArrayEncoder<T, const N: usize> {
+    inner: [T; N],
     idx: usize,
 }
 
-impl<S: fmt::Debug, const N: usize> fmt::Debug for EncodeArrayState<S, N> {
+impl<T: fmt::Debug, const N: usize> fmt::Debug for ArrayEncoder<T, N> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("EncodeArrayState")
-            .field("state", &&self.state[..])
+        f.debug_struct("ArrayEncoder")
+            .field("inner", &&self.inner[..])
             .field("idx", &self.idx)
             .finish()
     }
 }
 
-impl<'a, Q, R, T, const N: usize> Encode<'a, Q, R> for [T; N]
-where T: Encode<'a, Q, R>
+impl<Q, R, T, const N: usize> Encode<Q, R> for [T; N]
+where T: Encode<Q, R>
 {
-    type State = EncodeArrayState<T::State, N>;
+    type EncodePoll = ArrayEncoder<T::EncodePoll, N>;
 
-    fn init_encode_state(&self) -> Self::State {
-        let mut state: [MaybeUninit<T::State>; N] = unsafe { MaybeUninit::uninit().assume_init() };
-        let mut initializer = SliceInitializer::new(&mut state[..]);
+    fn init_encode(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::EncodePoll {
+        let mut inner: [MaybeUninit<T::EncodePoll>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+        let mut initializer = SliceInitializer::new(&mut inner[..]);
 
         for item in self.iter() {
-            initializer.push(item.init_encode_state());
+            initializer.push(item.init_encode(dst));
         }
 
         initializer.done();
 
         // Need a transmute_copy() as Rust doesn't seem to know the two arrays are the same size.
-        let state2 = unsafe { mem::transmute_copy(&state) };
-        assert_eq!(mem::size_of_val(&state), mem::size_of_val(&state2));
-        assert_eq!(mem::align_of_val(&state), mem::align_of_val(&state2));
+        let inner2 = unsafe { mem::transmute_copy(&inner) };
+        assert_eq!(mem::size_of_val(&inner), mem::size_of_val(&inner2));
+        assert_eq!(mem::align_of_val(&inner), mem::align_of_val(&inner2));
 
-        EncodeArrayState {
-            state: state2,
+        ArrayEncoder {
+            inner: inner2,
             idx: 0,
         }
     }
+}
 
-    fn encode_poll<D>(&'a self, state: &mut Self::State, mut dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>,
-    {
-        while state.idx < N {
-            dst = self[state.idx].encode_poll(&mut state.state[state.idx], dst)?;
-            state.idx += 1;
+impl<Q, R, T, const N: usize> SavePoll<Q, R> for ArrayEncoder<T, N>
+where T: SavePoll<Q, R>
+{
+    fn save_poll<D: SavePtr<Source=Q, Target=R>>(&mut self, mut dst: D) -> Result<D, D::Error> {
+        while self.idx < N {
+            dst = self.inner[self.idx].save_poll(dst)?;
+            self.idx += 1;
         }
         Ok(dst)
     }
+}
 
-    fn encode_blob<W: WriteBlob>(&'a self, state: &Self::State, mut dst: W) -> Result<W::Done, W::Error>
-        where R: ValidateBlob
-    {
-        assert!(state.idx >= N);
-        for (item, state) in self.iter().zip(state.state.iter()) {
-            dst = dst.write(item, state)?;
+impl<T, const N: usize> EncodeBlob for ArrayEncoder<T, N>
+where T: EncodeBlob
+{
+    const BLOB_LEN: usize = T::BLOB_LEN * N;
+
+    fn encode_blob<W: WriteBlob>(&self, mut dst: W) -> Result<W::Done, W::Error> {
+        assert!(self.idx == N);
+        for item in self.inner.iter() {
+            dst = dst.write(item)?;
         }
         dst.done()
     }

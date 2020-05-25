@@ -20,36 +20,35 @@ pub trait WriteBlob : Sized {
         Ok(self)
     }
 
-    fn write<'a, Q, R: ValidateBlob, T: Encode<'a, Q, R>>(self, val: &'a T, state: &T::State) -> Result<Self, Self::Error>
+    fn write<T: EncodeBlob>(self, val: &T) -> Result<Self, Self::Error>
     {
-        let dst = Limit::new(self, <T::Encoded as ValidateBlob>::BLOB_LEN);
-        val.encode_blob(state, dst)
+        let dst = Limit::new(self, T::BLOB_LEN);
+        val.encode_blob(dst)
     }
 
     fn write_primitive<T: Primitive>(self, val: &T) -> Result<Self, Self::Error> {
-        let mut state = Encode::<!,!>::init_encode_state(val);
-        val.encode_poll(&mut state, DummySavePtr).into_ok();
-        self.write::<!,!,T>(val, &state)
+        let mut encoder = Encode::<!,!>::init_encode(val, &DummySavePtr);
+        encoder.save_poll(DummySavePtr).into_ok();
+        self.write(&encoder)
     }
 }
 
 struct DummySavePtr;
 
-impl Dumper for DummySavePtr {
+impl SavePtr for DummySavePtr {
     type Source = !;
     type Target = !;
     type Error = !;
 
-    fn save_ptr<'a, T: ?Sized>(self, value: &'a T, state: &T::State) -> Result<(Self, !), !>
-        where T: Save<'a, !, !>
-    {
-        panic!()
-    }
-
-    unsafe fn try_save_ptr<'a, T: ?Sized + Pointee>(&mut self, ptr: &'a !, _: T::Metadata) -> Result<!, &'a T> {
+    unsafe fn check_dirty<'a, T: ?Sized + Pointee>(&self, ptr: &'a !, _: T::Metadata) -> Result<!, &'a T> {
         match *ptr {}
     }
+
+    fn try_save_ptr(self, _: &impl SaveBlob) -> Result<(Self, Self::Target), Self::Error> {
+        panic!()
+    }
 }
+
 
 #[derive(Debug)]
 pub struct Limit<W> {
@@ -95,21 +94,21 @@ impl WriteBlob for Vec<u8> {
     }
 }
 
-pub trait SaveBlob {
+pub trait AllocBlob {
     type Done;
     type Error : error::Error;
 
     type WriteBlob : WriteBlob<Done=Self::Done, Error=Self::Error>;
-    fn alloc(self, size: usize) -> Result<Self::WriteBlob, Self::Error>;
+    fn alloc_blob(self, size: usize) -> Result<Self::WriteBlob, Self::Error>;
 }
 
-impl SaveBlob for Vec<u8> {
+impl AllocBlob for Vec<u8> {
     type Done = Self;
     type Error = !;
 
     type WriteBlob = Limit<Self>;
 
-    fn alloc(self, size: usize) -> Result<Self::WriteBlob, Self::Error> {
+    fn alloc_blob(self, size: usize) -> Result<Self::WriteBlob, Self::Error> {
         Ok(Limit::new(self, size))
     }
 }

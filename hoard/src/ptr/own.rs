@@ -14,8 +14,7 @@ use super::*;
 use crate::blob::*;
 use crate::load::*;
 use crate::save::*;
-use crate::primitive::*;
-
+use crate::primitive::Primitive;
 
 #[repr(C)]
 pub struct Own<T: ?Sized + Pointee, P: Ptr, M: 'static = <T as Pointee>::Metadata> {
@@ -38,8 +37,6 @@ impl<T: ?Sized + Pointee, P: Ptr, M> Drop for Own<T, P, M> {
         }
     }
 }
-
-
 
 impl<T: ?Sized + Pointee, P: Ptr, M> Deref for Own<T, P, M> {
     type Target = Fat<T, P, M>;
@@ -118,75 +115,64 @@ where P: Persist,
       M: Persist,
 {}
 
-impl<R: Ptr, T: ?Sized + Pointee, P: Ptr, M> Encoded<R> for Own<T, P, M>
-where R: Primitive,
-      T: Saved<R>,
-      M: Primitive,
-{
-    type Encoded = Own<T::Saved, R, M>;
+#[derive(Debug)]
+pub struct OwnEncoder<T, M, R> {
+    state: State<T, R>,
+    metadata: M,
 }
 
 #[derive(Debug)]
-pub enum EncodeOwnState<'a, R, T: ?Sized, TState> {
-    Ready,
-    Poll {
-        value: &'a T,
-        value_state: TState,
-    },
-    SaveBlob {
-        value: &'a T,
-        value_state: TState,
-    },
+enum State<T, R> {
+    Poll(T),
     Done(R),
 }
 
-impl<'a, Q: 'a, R: 'a + Ptr, T: 'a + ?Sized + Pointee, P: Ptr> Encode<'a, Q, R> for Own<T, P>
+impl<Q, R, T: ?Sized + Pointee, P: Ptr> Encode<Q, R> for Own<T, P>
 where R: Primitive,
-      T: Save<'a, Q, R>,
+      T: Save<Q, R>,
+      T::Metadata: Primitive,
       P: std::borrow::Borrow<Q>,
 {
-    type State = EncodeOwnState<'a, R, T, T::State>;
+    type EncodePoll = OwnEncoder<T::SavePoll, T::Metadata, R>;
 
-    fn init_encode_state(&self) -> Self::State {
-        EncodeOwnState::Ready
+    fn init_encode(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::EncodePoll {
+        OwnEncoder {
+            metadata: self.metadata,
+            state: match unsafe { dst.check_dirty::<T>(&self.raw.borrow(), self.metadata) } {
+                Ok(r_ptr) => State::Done(r_ptr),
+                Err(value) => State::Poll(value.init_save(dst)),
+            },
+        }
     }
+}
 
-    fn encode_poll<D>(&'a self, state: &mut Self::State, mut dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>
-    {
+impl<Q, T, M, R> SavePoll<Q, R> for OwnEncoder<T, M, R>
+where T: SavePoll<Q, R> + SaveBlob
+{
+    fn save_poll<D: SavePtr<Source=Q, Target=R>>(&mut self, mut dst: D) -> Result<D, D::Error> {
         loop {
-            *state = match state {
-                EncodeOwnState::Ready => {
-                    match unsafe { dst.try_save_ptr::<T>(self.raw.borrow(), self.metadata) } {
-                        Ok(r_ptr) => EncodeOwnState::Done(r_ptr),
-                        Err(value) => EncodeOwnState::Poll {
-                            value_state: value.init_save_state(),
-                            value,
-                        },
-                    }
-                },
-                EncodeOwnState::Poll { value, value_state } => {
-                    dst = value.save_poll(value_state, dst)?;
+            self.state = match &mut self.state {
+                State::Poll(value) => {
+                    dst = value.save_poll(dst)?;
 
-                    EncodeOwnState::SaveBlob {
-                        value,
-                        value_state: mem::replace(value_state, value.init_save_state()),
-                    }
-                },
-                EncodeOwnState::SaveBlob { value, value_state } => {
-                    let (d, r_ptr) = dst.save_ptr::<T>(value, value_state)?;
+                    let (d, r_ptr) = dst.try_save_ptr(value)?;
                     dst = d;
-                    EncodeOwnState::Done(r_ptr)
+                    State::Done(r_ptr)
                 },
-                EncodeOwnState::Done(_) => break Ok(dst),
+                State::Done(_) => break Ok(dst),
             }
         }
     }
+}
 
-    fn encode_blob<W: WriteBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Done, W::Error>
-        where R: ValidateBlob
-    {
-        if let EncodeOwnState::Done(r_ptr) = state {
+impl<T, M, R> EncodeBlob for OwnEncoder<T, M, R>
+where R: Primitive,
+      M: Primitive,
+{
+    const BLOB_LEN: usize = R::BLOB_LEN + M::BLOB_LEN;
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        if let State::Done(r_ptr) = &self.state {
             dst.write_primitive(r_ptr)?
                .write_primitive(&self.metadata)?
                .done()

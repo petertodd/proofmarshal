@@ -122,54 +122,19 @@ where P: Persist,
       M: Persist,
 {}
 
-impl<R: Ptr, T: ?Sized + Pointee, P: Ptr, Z, M> Encoded<R> for Bag<T, P, Z, M>
+impl<Q, R, T: ?Sized + Pointee, P: Ptr, Z> Encode<Q, R> for Bag<T, P, Z>
 where R: Primitive,
-      T: Saved<R>,
-      Z: Encoded<R>,
-      M: Primitive,
-{
-    type Encoded = Bag<T::Saved, R, Z::Encoded, M>;
-}
-
-#[derive(Debug)]
-pub struct EncodeBagState<OwnState, ZoneState> {
-    inner_state: OwnState,
-    zone_state: ZoneState,
-}
-
-/*
-impl<'a, Q: 'a, R: 'a + Ptr, T: 'a + ?Sized + Pointee, P: Ptr, Z> Encode<'a, Q, R> for Bag<T, P, Z>
-where R: Primitive,
-      T: Save<'a, Q, R>,
-      Z: Encode<'a, Q, R>,
+      T: Save<Q, R>,
+      Z: Encode<Q, R>,
       P: std::borrow::Borrow<Q>,
 {
-    type State = EncodeBagState<<Own<T, P> as Encode<'a, Q, R>>::State, Z::State>;
-    //type State = EncodeBagState<crate::ptr::own::EncodeOwnState<'a, R, T, T::State>, Z::State>;
-    //type State = EncodeBagState<(), Z::State>;
+    type EncodePoll = (<Own<T, P> as Encode<Q, R>>::EncodePoll, Z::EncodePoll);
 
-    fn init_encode_state(&self) -> Self::State {
-        /*
-        EncodeBagState {
-            inner_state: self.inner.init_encode_state(),
-            zone_state: self.zone.init_encode_state(),
-        }
-        */ todo!()
-    }
-
-    fn encode_poll<D>(&self, state: &mut Self::State, mut dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>
-    {
-        todo!()
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error>
-        where R: ValidateBlob
-    {
-        todo!()
+    fn init_encode(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::EncodePoll {
+        (self.inner.init_encode(dst),
+         self.zone.init_encode(dst))
     }
 }
-*/
 
 /*
 
