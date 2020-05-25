@@ -1,4 +1,3 @@
-use std::alloc::Layout;
 use std::borrow::{Borrow, BorrowMut};
 use std::cell::{Cell, UnsafeCell};
 use std::convert::{TryFrom, TryInto};
@@ -9,17 +8,13 @@ use std::num::NonZeroU8;
 use std::slice;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::ptr;
+use std::ops;
 
 use thiserror::Error;
 
 use owned::{IntoOwned, Take};
 
 use hoard::prelude::*;
-use hoard::save::*;
-use hoard::load::*;
-use hoard::primitive::*;
-use hoard::ptr::*;
-
 use proofmarshal_core::commit::{Digest, Commit, Verbatim, WriteVerbatim};
 
 use crate::merklesum::MerkleSum;
@@ -30,45 +25,65 @@ use self::height::*;
 mod flags;
 use self::flags::*;
 
-/// Perfect merkle sum tree.
+mod std_impls;
+mod marshal_impls;
+mod pointee_impls;
+mod drop_impls;
+
+#[cfg(test)]
+mod tests;
+
 #[repr(C)]
-pub struct SumTree<T, S, P: Ptr, H: ?Sized + GetHeight = Height> {
+struct SumTreeData<T, S, P> {
     marker: PhantomData<T>,
     flags: AtomicU8,
     tip_digest: UnsafeCell<Digest>,
     sum: UnsafeCell<S>,
     tip: P,
-    height: H,
 }
 
-pub type DynSumTree<T, S, P> = SumTree<T, S, P, DynHeight>;
-
-pub type Tree<T, P, H> = SumTree<T, (), P, H>;
-pub type DynTree<T, P> = SumTree<T, (), P, DynHeight>;
-
+/// Perfect merkle sum tree.
+#[repr(C)]
+pub struct SumTree<T, S, P: Ptr, Z> {
+    data: SumTreeData<T, S, P>,
+    zone: Z,
+    height: Height,
+}
 
 #[repr(C)]
-pub struct Inner<T, S, P: Ptr, H: ?Sized + GetHeight = NonZeroHeight> {
-    left:  ManuallyDrop<SumTree<T,S,P,()>>,
-    right: ManuallyDrop<SumTree<T,S,P,()>>,
-    height: H,
+pub struct SumTreeDyn<T, S, P: Ptr, Z> {
+    data: SumTreeData<T, S, P>,
+    zone: Z,
+    height: HeightDyn,
 }
-pub type DynInner<T, S, P> = Inner<T, S, P, DynNonZeroHeight>;
+
+/// Perfect merkle tree.
+pub type Tree<T, P, Z> = SumTree<T, (), P, Z>;
+
+pub type TreeDyn<T, P, Z> = SumTreeDyn<T, (), P, Z>;
+
+#[repr(C)]
+pub struct Inner<T, S, P: Ptr> {
+    left:   ManuallyDrop<SumTreeData<T, S, P>>,
+    right:  ManuallyDrop<SumTreeData<T, S, P>>,
+    height: NonZeroHeight,
+}
+
+#[repr(C)]
+pub struct InnerDyn<T, S, P: Ptr> {
+    left:   ManuallyDrop<SumTreeData<T, S, P>>,
+    right:  ManuallyDrop<SumTreeData<T, S, P>>,
+    height: NonZeroHeightDyn,
+}
 
 #[derive(Debug)]
-enum Tip<'a, T, S, P: Ptr> {
-    Inner(&'a DynInner<T, S, P>),
+pub enum TipRef<'a, T, S, P: Ptr> {
     Leaf(&'a T),
-}
-
-#[derive(Debug)]
-enum TipMut<'a, T, S, P: Ptr> {
-    Inner(&'a mut DynInner<T, S, P>),
-    Leaf(&'a mut T),
+    Inner(&'a InnerDyn<T, S, P>),
 }
 
 #[derive(Debug, Error)]
-pub enum JoinError<SumError: std::fmt::Debug> {
+pub enum JoinError<SumError: std::error::Error> {
     #[error("height mismatch")]
     HeightMismatch,
 
@@ -79,126 +94,138 @@ pub enum JoinError<SumError: std::fmt::Debug> {
     SumOverflow(SumError),
 }
 
-/*
-impl<T, S: MerkleSum<T>, P: Ptr> SumTree<T,S,P> {
-    pub fn new_leaf(value: T) -> Self
-        where P: Default
-    {
-        let bag = P::alloc(value);
-
+impl<T, S: MerkleSum<T>, P: Ptr, Z> SumTree<T, S, P, Z> {
+    pub fn new_leaf_in(value: T, mut alloc: impl Alloc<Ptr=P, Zone=Z>) -> Self {
         Self {
-            flags: (Flags::DIGEST_DIRTY | Flags::SUM_DIRTY).into(),
-            marker: PhantomData,
-            tip_digest: Digest::default().into(),
-            sum: S::MAX.into(),
-            tip: bag.into_inner().raw,
+            data: SumTreeData {
+                flags: (Flags::DIGEST_DIRTY | Flags::SUM_DIRTY).into(),
+                marker: PhantomData,
+                tip_digest: Default::default(),
+                sum: S::MAX.into(),
+                tip: alloc.alloc_ptr(value),
+            },
+            zone: alloc.zone(),
             height: Height::new(0).unwrap(),
         }
     }
 
-    pub fn try_join(self, rhs: Self) -> Result<Self, JoinError<S::Error>>
-        where P: Default
-    {
+    pub fn try_join_in(self, rhs: Self, mut alloc: impl Alloc<Zone=Z, Ptr=P>) -> Result<Self, JoinError<S::Error>> {
         let tip = Inner::new(self, rhs)?;
         let height: Height = tip.height.into();
         let sum = tip.sum();
 
-        let tip: Bag<DynInner<T, S, P>, P> = P::alloc(tip);
-
         Ok(Self {
-            flags: (Flags::DIGEST_DIRTY).into(),
-            marker: PhantomData,
-            tip_digest: Digest::default().into(),
-            sum: sum.into(),
-            tip: tip.into_inner().raw,
+            data: SumTreeData {
+                flags: Flags::DIGEST_DIRTY.into(),
+                marker: PhantomData,
+                tip_digest: Default::default(),
+                sum: sum.into(),
+                tip: alloc.alloc_ptr::<InnerDyn<T, S, P>,_>(tip),
+            },
+            zone: alloc.zone(),
             height,
         })
     }
+}
 
-    /// Strips the height.
-    fn strip_height(self) -> SumTree<T, S, P, ()> {
-        let mut this = ManuallyDrop::new(self);
-
-        // SAFETY: H should be Copy anyway, but easier to just drop it.
-        unsafe { ptr::drop_in_place(&mut this.height) };
-
-        // SAFETY: SumTree is #[repr(C)]
-        unsafe { mem::transmute_copy::<
-            ManuallyDrop<SumTree<T,S,P>>,
-                         SumTree<T,S,P,()>,
-            >(&this)
+impl<T, S, P: Ptr, Z> SumTree<T, S, P, Z> {
+    fn into_raw_parts(self) -> (SumTreeData<T, S, P>, Z, Height) {
+        let this = ManuallyDrop::new(self);
+        unsafe {
+            (ptr::read(&this.data),
+             ptr::read(&this.zone),
+             ptr::read(&this.height))
         }
+    }
+
+    fn into_data(self) -> SumTreeData<T, S, P> {
+        let (data, _, _) = self.into_raw_parts();
+        data
     }
 }
 
-*/
-
-impl<T, S, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
-    /// Gets the height of the tree.
-    pub fn height(&self) -> Height {
-        self.height.get()
-    }
-
+impl<T, S, P: Ptr, Z> SumTreeDyn<T, S, P, Z> {
+    #[inline]
     pub fn len(&self) -> usize {
         1 << u8::from(self.height())
     }
 
+    /// Gets the height of the tree.
+    pub fn height(&self) -> Height {
+        self.height.to_owned()
+    }
+
     #[inline]
-    pub fn sum(&self) -> S {
-        /*
+    pub fn sum(&self) -> S
+        where S: MerkleSum<T>
+    {
         if let Some(sum) = self.try_sum() {
-            sum
+            *sum
         } else {
             self.fix_dirty_sum()
         }
-        */ todo!()
     }
 
-    /*
     /// Tries to get the sum, if already calculated.
-    pub fn try_sum(&self) -> Option<S> {
-        if mem::size_of::<S>() == 0 {
-            // Fast path for S = ()
-            unsafe { Some(MaybeUninit::zeroed().assume_init()) }
-        } else {
-            let flags = self.load_flags(Ordering::Relaxed);
-            if flags.contains(Flags::SUM_DIRTY) {
-                None
-            } else {
-                unsafe { Some(*self.sum.get()) }
-            }
+    pub fn try_sum(&self) -> Option<&S> {
+        self.data.try_sum()
+    }
+
+    fn fix_dirty_sum(&self) -> S
+        where S: MerkleSum<T>
+    {
+        let sum = match self.get_dirty_tip().expect("dirty tip pointer") {
+            TipRef::Leaf(leaf) => S::from_item(leaf),
+            TipRef::Inner(inner) => inner.sum(),
+        };
+
+        match self.data.try_lock(Flags::SUM_LOCKED) {
+            Ok(old_flags) => {
+                unsafe {
+                    *self.data.sum.get() = sum;
+                }
+
+                self.data.unlock(Flags::SUM_LOCKED, Flags::SUM_DIRTY);
+
+                sum
+            },
+            Err(old_flags) => {
+                todo!("race: {:?}", old_flags)
+            },
         }
     }
 
-    /// Tries to get the tip digest, if already calculated.
+    fn get_dirty_tip<'a>(&'a self) -> Result<TipRef<'a, T, S, P>, P::Persist> {
+        unsafe {
+            if let Ok(height) = NonZeroHeight::try_from(self.height()) {
+                self.data.tip.try_get_dirty_unchecked(height)
+                    .map(TipRef::Inner)
+            } else {
+                self.data.tip.try_get_dirty_unchecked::<T>(())
+                    .map(TipRef::Leaf)
+            }
+        }
+    }
+}
+
+impl<T, S, P> SumTreeData<T, S, P> {
+    /// Tries to get the sum, if already calculated.
+    pub fn try_sum(&self) -> Option<&S> {
+        let flags = self.load_flags(Ordering::Relaxed);
+        if flags.contains(Flags::SUM_DIRTY) {
+            None
+        } else {
+            unsafe { Some(&*self.sum.get()) }
+        }
+    }
+
+    /// Tries to get the sum, if already calculated.
     pub fn try_tip_digest(&self) -> Option<Digest> {
         let flags = self.load_flags(Ordering::Relaxed);
         if flags.contains(Flags::DIGEST_DIRTY) {
             None
         } else {
             unsafe { Some(*self.tip_digest.get()) }
-        }
-    }
-
-    fn fix_dirty_sum(&self) -> S {
-        let sum = match self.get_dirty_tip().expect("dirty tip pointer") {
-            Tip::Leaf(leaf) => S::from_item(leaf),
-            Tip::Inner(inner) => inner.sum(),
-        };
-
-        match self.try_lock(Flags::SUM_LOCKED) {
-            Ok(old_flags) => {
-                unsafe {
-                    *self.sum.get() = sum;
-                }
-
-                self.unlock(Flags::SUM_LOCKED, Flags::SUM_DIRTY);
-
-                sum
-            },
-            Err(old_flags) => {
-                todo!("race")
-            },
         }
     }
 
@@ -213,7 +240,7 @@ impl<T, S, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
     }
 
     fn try_lock(&self, lock_flag: Flags) -> Result<Flags, Flags> {
-        let old_flags = self.flags.fetch_or(lock_flag.bits, Ordering::SeqCst);
+        let old_flags = self.flags.fetch_or(lock_flag.bits(), Ordering::SeqCst);
         match Flags::from_bits(old_flags) {
             Some(old_flags) if old_flags.contains(lock_flag) => Err(old_flags),
             Some(old_flags) => Ok(old_flags),
@@ -224,36 +251,83 @@ impl<T, S, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
     }
 
     fn unlock(&self, lock_flag: Flags, dirty_bit: Flags) {
-        let old_flags = self.flags.fetch_and(!(lock_flag | dirty_bit).bits, Ordering::SeqCst);
+        let old_flags = self.flags.fetch_and(!(lock_flag | dirty_bit).bits(), Ordering::SeqCst);
         let old_flags = Flags::from_bits(old_flags).expect("valid flags");
         assert!(old_flags.contains(lock_flag | dirty_bit),
                 "{:?}", old_flags);
     }
-
-    fn get_dirty_tip<'a>(&'a self) -> Option<Tip<'a, T, S, P>>
-    {
-        match NonZeroHeight::try_from(self.height.get()) {
-            Ok(inner_height) => {
-                unsafe {
-                    self.tip.try_get_dirty_unchecked(inner_height)
-                            .map(Tip::Inner)
-                }
-            },
-            Err(_) => {
-                unsafe {
-                    self.tip.try_get_dirty_unchecked(())
-                            .map(Tip::Leaf)
-                }
-            }
-        }
-    }
-    */
 
     /// Sets all dirty bits.
     fn set_dirty(&mut self) {
         *self.flags.get_mut() |= (Flags::DIGEST_DIRTY | Flags::SUM_DIRTY).bits();
     }
 }
+
+impl<T, S: MerkleSum<T>, P: Ptr> Inner<T, S, P> {
+    pub fn new<Z>(left: SumTree<T, S, P, Z>, right: SumTree<T, S, P, Z>) -> Result<Self, JoinError<S::Error>> {
+        if left.height != right.height {
+            Err(JoinError::HeightMismatch)
+        } else {
+            S::try_sum(&left.sum(), &right.sum()).map_err(JoinError::SumOverflow)?;
+
+            match left.height.try_increment() {
+                None => Err(JoinError::HeightOverflow),
+                Some(height) => {
+                    Ok(Inner {
+                        left: ManuallyDrop::new(left.into_data()),
+                        right: ManuallyDrop::new(right.into_data()),
+                        height,
+                    })
+                }
+            }
+        }
+    }
+}
+
+impl<T, S, P: Ptr> InnerDyn<T, S, P> {
+    /// Gets the height of the tree.
+    pub fn height(&self) -> NonZeroHeight {
+        self.height.to_owned()
+    }
+
+    pub fn sum(&self) -> S
+        where S: MerkleSum<T>
+    {
+        S::try_sum(&self.left().sum(), &self.right().sum()).expect("sum to be valid")
+    }
+
+    pub fn left(&self) -> &SumTreeDyn<T, S, P, ()> {
+        let next_height = self.height().decrement().into();
+        unsafe {
+            mem::transmute(slice::from_raw_parts(&self.left, next_height))
+        }
+    }
+
+    pub fn left_mut(&mut self) -> &mut SumTreeDyn<T, S, P, ()> {
+        self.left.set_dirty();
+        let next_height = self.height().decrement().into();
+        unsafe {
+            mem::transmute(slice::from_raw_parts_mut(&mut self.left, next_height))
+        }
+    }
+
+    pub fn right(&self) -> &SumTreeDyn<T, S, P, ()> {
+        let next_height = self.height().decrement().into();
+        unsafe {
+            mem::transmute(slice::from_raw_parts(&self.right, next_height))
+        }
+    }
+
+    pub fn right_mut(&mut self) -> &mut SumTreeDyn<T, S, P, ()> {
+        self.right.set_dirty();
+        let next_height = self.height().decrement().into();
+        unsafe {
+            mem::transmute(slice::from_raw_parts_mut(&mut self.right, next_height))
+        }
+    }
+}
+
+/*
 
 impl<T, S, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
     #[inline]
@@ -301,137 +375,13 @@ impl<T, S, P: Ptr, H: ?Sized + GetHeight> SumTree<T, S, P, H> {
     }
 */
 }
-
-/*
-impl<T, S: MerkleSum<T>, P: Ptr> Inner<T, S, P, NonZeroHeight> {
-    pub fn new(left: SumTree<T, S, P>, right: SumTree<T, S, P>) -> Result<Self, JoinError<S::Error>> {
-        if left.height != right.height {
-            Err(JoinError::HeightMismatch)
-        } else {
-            S::try_sum(&left.sum(), &right.sum()).map_err(JoinError::SumOverflow)?;
-
-            match left.height.try_increment() {
-                None => Err(JoinError::HeightOverflow),
-                Some(height) => {
-                    Ok(Inner {
-                        left: ManuallyDrop::new(left.strip_height()),
-                        right: ManuallyDrop::new(right.strip_height()),
-                        height,
-                    })
-                }
-            }
-        }
-    }
-}
 */
 
-impl<T, S, P: Ptr, H: ?Sized + GetHeight> Inner<T, S, P, H> {
-    /*
-    pub fn sum(&self) -> S {
-        S::try_sum(&self.left.sum(), &self.right.sum()).expect("sum to be valid")
-    }
-    */
-
-    pub fn height(&self) -> NonZeroHeight {
-        NonZeroHeight::try_from(self.height.get()).expect("inner node to have non-zero height")
-    }
-
-    pub fn left(&self) -> &DynSumTree<T,S,P> {
-        let next_height = self.height().decrement().into();
-        unsafe {
-            mem::transmute(slice::from_raw_parts(&self.left, next_height))
-        }
-    }
-
-    pub fn left_mut(&mut self) -> &mut DynSumTree<T,S,P> {
-        self.left.set_dirty();
-        let next_height = self.height().decrement().into();
-        unsafe {
-            mem::transmute(slice::from_raw_parts_mut(&mut self.left, next_height))
-        }
-    }
-
-    pub fn right(&self) -> &DynSumTree<T, S, P> {
-        let next_height = self.height().decrement().into();
-        unsafe {
-            mem::transmute(slice::from_raw_parts(&self.right, next_height))
-        }
-    }
-
-    pub fn right_mut(&mut self) -> &mut DynSumTree<T, S, P> {
-        self.right.set_dirty();
-        let next_height = self.height().decrement().into();
-        unsafe {
-            mem::transmute(slice::from_raw_parts_mut(&mut self.right, next_height))
-        }
-    }
-}
 
 // ----- hoard impls --------
 
+/*
 // ----- Pointee ------
-
-unsafe impl<T, S, P: Ptr> Pointee for DynSumTree<T, S, P> {
-    type Metadata = Height;
-    type LayoutError = !;
-
-    /*
-    #[inline(always)]
-    fn try_layout(_: Height) -> Result<Layout, !> {
-        Ok(Layout::new::<SumTree<T, S, P, ()>>())
-    }
-    */
-
-    #[inline(always)]
-    fn metadata(this: &Self) -> Height {
-        this.height.get()
-    }
-
-    #[inline(always)]
-    fn make_fat_ptr(thin: *const (), height: Height) -> *const Self {
-        unsafe {
-            mem::transmute(slice::from_raw_parts(thin, height.into()))
-        }
-    }
-
-    #[inline(always)]
-    fn make_fat_ptr_mut(thin: *mut (), height: Height) -> *mut Self {
-        unsafe {
-            mem::transmute(slice::from_raw_parts_mut(thin, height.into()))
-        }
-    }
-}
-
-unsafe impl<T, S, P: Ptr> Pointee for DynInner<T, S, P> {
-    type Metadata = NonZeroHeight;
-    type LayoutError = !;
-
-    /*
-    #[inline(always)]
-    fn try_layout(_: Height) -> Result<Layout, !> {
-        Ok(Layout::new::<SumTree<T, S, P, ()>>())
-    }
-    */
-
-    #[inline(always)]
-    fn metadata(this: &Self) -> NonZeroHeight {
-        this.height.get().try_into().unwrap()
-    }
-
-    #[inline(always)]
-    fn make_fat_ptr(thin: *const (), height: NonZeroHeight) -> *const Self {
-        unsafe {
-            mem::transmute(slice::from_raw_parts(thin, height.into()))
-        }
-    }
-
-    #[inline(always)]
-    fn make_fat_ptr_mut(thin: *mut (), height: NonZeroHeight) -> *mut Self {
-        unsafe {
-            mem::transmute(slice::from_raw_parts_mut(thin, height.into()))
-        }
-    }
-}
 
 /*
 // Drop
@@ -562,36 +512,6 @@ impl<T, S: MerkleSum<T>, P: Ptr, H: GetHeight> AsMut<DynInner<T, S, P>> for Inne
 }
 
 // ---- Load ------
-
-#[derive(Debug, Error)]
-#[error("invalid flags")]
-pub enum LoadSumTreeError<S: fmt::Debug, P: fmt::Debug, H: fmt::Debug> {
-    Flags(LoadFlagsError),
-    Sum(S),
-    Tip(P),
-    Height(H),
-}
-
-impl<T, S, P: Ptr, H: GetHeight> Load for SumTree<T, S, P, H>
-where S: Load, P: Load, H: Load,
-{
-    type Error = LoadSumTreeError<<S as Load>::Error, P::Error, H::Error>;
-
-    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        todo!()
-    }
-}
-
-impl<T, S, P: Ptr> Load for DynSumTree<T, S, P>
-where S: Load, P: Load,
-{
-    type Error = LoadSumTreeError<<S as Load>::Error, P::Error, !>;
-
-    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        todo!()
-    }
-}
-
 
 #[derive(Debug, Error)]
 #[error("invalid flags")]
@@ -1437,49 +1357,17 @@ where T: 'a + Commit + Encode<'a, Y>,
     }
 }
 */
+*/
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use hoard::prelude::*;
 
     #[test]
     fn new_leaf() {
-        let ll = SumTree::<u8, u8, Heap>::new_leaf(0);
-        dbg!(&ll);
-
-        let lr = SumTree::<u8, u8, Heap>::new_leaf(1);
-        dbg!(&lr);
-
-        let tip_l = ll.try_join(lr).unwrap();
-        dbg!(&tip_l);
-
-        assert_eq!(tip_l.sum(), 1);
-
-        /*
-        assert_eq!(tip_l.sum(), 1);
-        assert_eq!(tip_l.len(), 2);
-        tip_l.commit();
-        dbg!(&tip_l);
-
-        let ll = SumTree::<u8, u8, _>::new_leaf_in(2, pile);
-        let lr = SumTree::<u8, u8, _>::new_leaf_in(3, pile);
-        let tip_r = ll.try_join_in(lr, pile).unwrap();
-        assert_eq!(tip_r.sum(), 5);
-        assert_eq!(tip_r.len(), 2);
-
-        let tip = tip_l.try_join_in(tip_r, pile).unwrap();
-
-        assert_eq!(tip.sum(), 6);
-        assert_eq!(tip.len(), 4);
-        dbg!(&tip);
-
-        for i in 0 .. 4 {
-            assert_eq!(tip.get(i, pile), Some(&(i as u8)));
-        }
-        assert_eq!(tip.get(4, pile), None);
-        */
+        let mut pile = Pile::default();
+        let tree = Tree::new_leaf_in(42u8, pile);
     }
 }
 */

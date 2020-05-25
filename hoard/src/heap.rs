@@ -9,7 +9,7 @@ use owned::{Take, IntoOwned};
 
 use crate::pointee::Pointee;
 use crate::ptr::*;
-use crate::bag::Bag;
+//use crate::bag::Bag;
 use crate::refs::Ref;
 use crate::load::*;
 use crate::blob::*;
@@ -78,19 +78,32 @@ impl Ptr for HeapPtr {
         dealloc_impl::<T>(self.0, metadata)
     }
 
-    unsafe fn alloc_unchecked<T: ?Sized>(src: &mut ManuallyDrop<T>) -> Self {
-        Self(alloc_unchecked_impl(src))
+    fn alloc<T: ?Sized + Pointee, U: Take<T>>(src: U) -> Own<T, Self> {
+        src.take_unsized(|src| unsafe {
+            let metadata = T::metadata(src);
+            let layout = Layout::for_value(src);
+            let dst = heap_alloc(layout);
+
+            std::ptr::copy_nonoverlapping(src as *const _ as *const u8, dst.as_ptr().cast(),
+                                          layout.size());
+
+            Own::new_unchecked(Fat::new(HeapPtr(dst), metadata))
+        })
     }
 
     fn duplicate(&self) -> Self {
         *self
     }
 
-    unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
-        let cloned = self.try_get_dirty_unchecked::<T>(()).into_ok()
-                         .clone();
-        let mut cloned = ManuallyDrop::new(cloned);
-        Self::alloc_unchecked::<T>(&mut cloned)
+    unsafe fn clone_unchecked_with<T, U, F>(&self, metadata: T::Metadata, f: F) -> Own<T, Self>
+        where T: ?Sized + Pointee,
+              F: FnOnce(&T) -> U,
+              U: Take<T>,
+    {
+        let owned = self.try_get_dirty_unchecked::<T>(metadata)
+                        .map(f).into_ok();
+
+        Self::alloc(owned)
     }
 
     unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
@@ -169,11 +182,12 @@ impl Alloc for Heap {
         Heap
     }
 
-    unsafe fn alloc_unchecked<T: ?Sized>(&mut self, src: &mut ManuallyDrop<T>) -> Self::Ptr {
-        HeapPtr::alloc_unchecked(src)
+    fn alloc_own<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Own<T, Self::Ptr> {
+        HeapPtr::alloc(src)
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,3 +221,4 @@ mod tests {
     }
     */
 }
+*/

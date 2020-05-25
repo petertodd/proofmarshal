@@ -28,6 +28,7 @@ use std::hash;
 use std::marker::PhantomData;
 use std::mem;
 
+use hoard::blob::*;
 use hoard::load::*;
 use hoard::save::*;
 use hoard::primitive::*;
@@ -195,30 +196,35 @@ impl<T: ?Sized> Ord for Digest<T> {
     }
 }
 
-impl<T: ?Sized> Load for Digest<T> {
+impl<T: ?Sized> ValidateBlob for Digest<T> {
     type Error = !;
+    const BLOB_LEN: usize = mem::size_of::<Self>();
 
-    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, !> {
-        unsafe { Ok(blob.assume_valid()) }
+    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        unsafe { Ok(Blob::from(blob).assume_valid()) }
     }
 }
 
-impl<R, T: ?Sized> Saved<R> for Digest<T> {
-    type Saved = Self;
+impl<Z, T: ?Sized> Decode<Z> for Digest<T> {
+    fn decode_blob(blob: hoard::load::BlobDecoder<Z, Self>) -> Self {
+        blob.to_value().clone()
+    }
 }
 
-impl<Q, R, T: ?Sized> Save<'_, Q, R> for Digest<T> {
+unsafe impl<T: ?Sized> Persist for Digest<T> {}
+
+impl<R, T: ?Sized> Encoded<R> for Digest<T> {
+    type Encoded = Digest<T>;
+}
+
+impl<Q, R, T: ?Sized> Encode<'_, Q, R> for Digest<T> {
     type State = ();
+    fn init_encode_state(&self) -> () {}
 
-    fn init_save_state(&self) -> Self::State {}
-
-    fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut Self::State, dst: D) -> Result<D, D::Error> {
+    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
+        where D: Dumper<Source=Q, Target=R>
+    {
         Ok(dst)
-    }
-
-    fn save_blob<W: SaveBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
-        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
-        <Self as Save<Q,R>>::encode_blob(self, state, dst)
     }
 
     fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {

@@ -183,7 +183,7 @@ impl<'p, 'v> Alloc for TryPile<'p, 'v> {
         *self
     }
 
-    unsafe fn alloc_unchecked<T: ?Sized>(&mut self, src: &mut ManuallyDrop<T>) -> Self::Ptr {
+    unsafe fn alloc_unchecked<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> FatPtr<T, Self::Ptr> {
         OffsetMut::alloc_unchecked(src)
     }
 }

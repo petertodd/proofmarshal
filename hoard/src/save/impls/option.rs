@@ -9,7 +9,7 @@ impl<R, T: Encoded<R>> Encoded<R> for Option<T> {
 impl<'a, Q, R, T: Encode<'a, Q, R>> Encode<'a, Q, R> for Option<T> {
     type State = Option<T::State>;
 
-    fn init_encode_state(&'a self) -> Self::State {
+    fn init_encode_state(&self) -> Self::State {
         self.as_ref().map(T::init_encode_state)
     }
 

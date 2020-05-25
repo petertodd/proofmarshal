@@ -1,4 +1,5 @@
 #![feature(never_type)]
+#![feature(unwrap_infallible)]
 
 #![allow(unused_imports)]
 #![allow(unused_variables)]

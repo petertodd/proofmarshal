@@ -4,6 +4,7 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
 use std::ptr;
+use std::error::Error;
 
 use thiserror::Error;
 
@@ -19,33 +20,21 @@ use crate::primitive::*;
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct Bag<T: ?Sized + Pointee, P: Ptr, Z, M: 'static = <T as Pointee>::Metadata> {
-    marker: PhantomData<T>,
-    ptr: P,
-    metadata: M,
+pub struct Bag<T: ?Sized + Pointee, P: Ptr, Z = (), M: 'static = <T as Pointee>::Metadata> {
+    inner: Own<T, P, M>,
     zone: Z,
-}
-
-impl<T: ?Sized + Pointee, P: Ptr, Z, M> Drop for Bag<T, P, Z, M> {
-    fn drop(&mut self) {
-        let metadata: &dyn Any = &self.metadata;
-        let metadata = metadata.downcast_ref()
-                               .expect("metadata to be the correct type");
-        unsafe { self.ptr.dealloc::<T>(*metadata) }
-    }
 }
 
 impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z> {
     pub fn new_in(value: impl Take<T>, mut alloc: impl Alloc<Ptr=P, Zone=Z>) -> Self {
-        let zone = alloc.zone();
-        value.take_unsized(|src| unsafe {
-            let metadata = T::metadata(src);
-            let ptr = alloc.alloc_unchecked(src);
-            Self::from_raw_parts(ptr, metadata, zone)
-        })
+        Self {
+            inner: alloc.alloc_own(value),
+            zone: alloc.zone(),
+        }
     }
 }
 
+/*
 impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z>
 where T: Load<Z>,
 {
@@ -69,59 +58,56 @@ where T: Load<Z>,
         unsafe { self.zone.get_mut_unchecked::<T>(&mut self.ptr, self.metadata) }
     }
 }
+*/
 
-impl<T: ?Sized + Pointee, P: Ptr, Z, M> Bag<T, P, Z, M> {
-    pub unsafe fn from_raw_parts(ptr: P, metadata: M, zone: Z) -> Self {
-        Self { marker: PhantomData, ptr, metadata, zone }
+impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z> {
+    pub fn from_parts(inner: Own<T, P>, zone: Z) -> Self {
+        Self { inner, zone }
     }
 
-    pub fn into_raw_parts(self) -> (P, M, Z) {
-        let this = ManuallyDrop::new(self);
+    pub fn into_parts(self) -> (Own<T, P>, Z) {
+        (self.inner, self.zone)
+    }
+}
 
-        unsafe {
-            (ptr::read(&this.ptr),
-             ptr::read(&this.metadata),
-             ptr::read(&this.zone))
-        }
+impl<T: ?Sized + Pointee, P: Ptr, Z, M> From<Bag<T, P, Z, M>> for Own<T, P, M> {
+    fn from(bag: Bag<T, P, Z, M>) -> Self {
+        bag.inner
     }
 }
 
 #[derive(Debug, Error)]
 #[error("FIXME")]
-pub enum ValidateBlobBagError<P: fmt::Debug, M: fmt::Debug, Z: fmt::Debug> {
-    Ptr(P),
-    Metadata(M),
-    Zone(Z),
+pub enum ValidateBagBlobError<OwnError: Error, ZoneError: Error> {
+    Own(OwnError),
+    Zone(ZoneError),
 }
 
-impl<T: ?Sized + Pointee, P: Ptr, Z, M> ValidateBlob for Bag<T, P, Z, M>
+impl<T: ?Sized + Pointee, P: Ptr, Z, M: 'static> ValidateBlob for Bag<T, P, Z, M>
 where P: ValidateBlob,
       M: ValidateBlob,
       Z: ValidateBlob,
 {
-    type Error = ValidateBlobBagError<P::Error, M::Error, Z::Error>;
+    type Error = ValidateBagBlobError<<Own<T, P, M> as ValidateBlob>::Error, Z::Error>;
 
-    const BLOB_LEN: usize = P::BLOB_LEN + M::BLOB_LEN + Z::BLOB_LEN;
+    const BLOB_LEN: usize = <Own<T, P, M> as ValidateBlob>::BLOB_LEN + Z::BLOB_LEN;
 
     fn validate_blob<'a>(mut blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        blob.field::<P>().map_err(ValidateBlobBagError::Ptr)?;
-        blob.field::<M>().map_err(ValidateBlobBagError::Metadata)?;
-        blob.field::<Z>().map_err(ValidateBlobBagError::Zone)?;
+        blob.field::<Own<T, P, M>>().map_err(ValidateBagBlobError::Own)?;
+        blob.field::<Z>().map_err(ValidateBagBlobError::Zone)?;
         unsafe { Ok(blob.finish()) }
     }
 }
 
 impl<Y, T: ?Sized + Pointee, P: Ptr, Z> Decode<Y> for Bag<T, P, Z>
-where T::Metadata: Decode<Y>,
-      P: Decode<Y>,
+where P: Decode<Y>,
       Z: Decode<Y>,
+      T::Metadata: Decode<Y>,
 {
     fn decode_blob(mut blob: BlobDecoder<Y, Self>) -> Self {
         let r = unsafe {
             Self {
-                marker: PhantomData,
-                ptr: blob.field_unchecked(),
-                metadata: blob.field_unchecked(),
+                inner: blob.field_unchecked(),
                 zone: blob.field_unchecked(),
             }
         };
@@ -146,87 +132,44 @@ where R: Primitive,
 }
 
 #[derive(Debug)]
-pub struct EncodeBagState<'a, R, T: ?Sized, TState, ZState> {
-    zone_state: ZState,
-    pointee_state: PointeeState<'a, R, T, TState>,
+pub struct EncodeBagState<OwnState, ZoneState> {
+    inner_state: OwnState,
+    zone_state: ZoneState,
 }
 
-#[derive(Debug)]
-enum PointeeState<'a, R, T: ?Sized, TState> {
-    Ready,
-    Poll {
-        value: &'a T,
-        value_state: TState,
-    },
-    SaveBlob {
-        value: &'a T,
-        value_state: TState,
-    },
-    Done(R),
-}
-
-impl<'a, Q: 'a, R: Ptr, T: 'a + ?Sized + Pointee, P: Ptr, Z> Encode<'a, Q, R> for Bag<T, P, Z>
+/*
+impl<'a, Q: 'a, R: 'a + Ptr, T: 'a + ?Sized + Pointee, P: Ptr, Z> Encode<'a, Q, R> for Bag<T, P, Z>
 where R: Primitive,
       T: Save<'a, Q, R>,
       Z: Encode<'a, Q, R>,
       P: std::borrow::Borrow<Q>,
 {
-    type State = EncodeBagState<'a, R, T, T::State, Z::State>;
+    type State = EncodeBagState<<Own<T, P> as Encode<'a, Q, R>>::State, Z::State>;
+    //type State = EncodeBagState<crate::ptr::own::EncodeOwnState<'a, R, T, T::State>, Z::State>;
+    //type State = EncodeBagState<(), Z::State>;
 
-    fn init_encode_state(&'a self) -> Self::State {
+    fn init_encode_state(&self) -> Self::State {
+        /*
         EncodeBagState {
+            inner_state: self.inner.init_encode_state(),
             zone_state: self.zone.init_encode_state(),
-            pointee_state: PointeeState::Ready,
         }
+        */ todo!()
     }
 
-    fn encode_poll<D>(&'a self, state: &mut Self::State, mut dst: D) -> Result<D, D::Error>
+    fn encode_poll<D>(&self, state: &mut Self::State, mut dst: D) -> Result<D, D::Error>
         where D: Dumper<Source=Q, Target=R>
     {
-        dst = self.zone.encode_poll(&mut state.zone_state, dst)?;
-
-        loop {
-            state.pointee_state = match &mut state.pointee_state {
-                PointeeState::Ready => {
-                    match unsafe { dst.try_save_ptr::<T>(self.ptr.borrow(), self.metadata) } {
-                        Ok(r_ptr) => PointeeState::Done(r_ptr),
-                        Err(value) => PointeeState::Poll {
-                            value_state: value.init_save_state(),
-                            value,
-                        },
-                    }
-                },
-                PointeeState::Poll { value, value_state } => {
-                    dst = value.save_poll(value_state, dst)?;
-
-                    PointeeState::SaveBlob {
-                        value,
-                        value_state: mem::replace(value_state, value.init_save_state()),
-                    }
-                },
-                PointeeState::SaveBlob { value, value_state } => {
-                    let (d, r_ptr) = dst.save_ptr::<T>(value, value_state)?;
-                    dst = d;
-                    PointeeState::Done(r_ptr)
-                },
-                PointeeState::Done(_) => break Ok(dst),
-            }
-        }
+        todo!()
     }
 
-    fn encode_blob<W: WriteBlob>(&'a self, state: &Self::State, dst: W) -> Result<W::Done, W::Error>
+    fn encode_blob<W: WriteBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error>
         where R: ValidateBlob
     {
-        if let PointeeState::Done(r_ptr) = &state.pointee_state {
-            dst.write_primitive(r_ptr)?
-               .write_primitive(&self.metadata)?
-               .write(&self.zone, &state.zone_state)?
-               .done()
-        } else {
-            panic!()
-        }
+        todo!()
     }
 }
+*/
 
 /*
 

@@ -1,13 +1,15 @@
+use std::borrow::{Borrow, ToOwned};
 use std::cmp;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::mem;
 use std::num::NonZeroU8;
 use std::ops;
+use std::slice;
 
 use thiserror::Error;
 
-// use hoard::pointee::{Metadata, MetadataKind};
+use hoard::blob::*;
 use hoard::load::*;
 use hoard::save::*;
 use hoard::primitive::*;
@@ -18,6 +20,7 @@ use proofmarshal_core::commit::{Digest, Commit, Verbatim, WriteVerbatim};
 ///
 /// Valid range: `0 ..= 63`
 #[derive(Clone, Copy, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
 pub struct Height(u8);
 
 impl fmt::Debug for Height {
@@ -27,39 +30,9 @@ impl fmt::Debug for Height {
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
-#[error("out of range")]
+#[error("height out of range: {0:?}")]
 #[non_exhaustive]
-pub struct TryFromIntError;
-
-/// The height of an inner node in a perfect binary tree.
-///
-/// Valid range: `1 ..= 63`
-#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct NonZeroHeight(NonZeroU8);
-
-impl fmt::Debug for NonZeroHeight {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DynHeight([()]);
-
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DynNonZeroHeight([()]);
-
-impl fmt::Debug for DynHeight {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.len().fmt(f)
-    }
-}
-
-impl fmt::Debug for DynNonZeroHeight {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.len().fmt(f)
-    }
-}
+pub struct HeightError<T: std::fmt::Debug>(T);
 
 impl Height {
     pub const MAX: u8 = 63;
@@ -70,11 +43,11 @@ impl Height {
     }
 
     #[inline(always)]
-    pub fn new(n: u8) -> Result<Self, TryFromIntError> {
+    pub fn new(n: u8) -> Result<Self, HeightError<u8>> {
         if n <= Self::MAX {
             Ok(Self(n))
         } else {
-            Err(TryFromIntError)
+            Err(HeightError(n))
         }
     }
 
@@ -106,150 +79,6 @@ impl Height {
     }
 }
 
-impl NonZeroHeight {
-    #[inline(always)]
-    pub fn new(n: NonZeroU8) -> Result<Self, TryFromIntError> {
-        if n.get() <= Height::MAX {
-            Ok(Self(n))
-        } else {
-            Err(TryFromIntError)
-        }
-    }
-
-    #[inline(always)]
-    pub const unsafe fn new_unchecked(n: NonZeroU8) -> Self {
-        Self(n)
-    }
-
-    #[inline]
-    pub fn decrement(self) -> Height {
-        Height::new(self.0.get().checked_sub(1).unwrap()).unwrap()
-    }
-}
-
-/*
-
-hoard::impl_encode_for_primitive!(Height, |this, dst| {
-    dst.write_bytes(&[this.0])?
-        .finish()
-});
-
-hoard::impl_decode_for_primitive!(Height);
-
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
-#[error("out of range")]
-#[non_exhaustive]
-pub struct ValidateHeightError;
-
-impl ValidateBlob for Height {
-    type Error = ValidateHeightError;
-
-    #[inline]
-    fn validate<'a, V>(blob: BlobCursor<'a, Self, V>) -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
-        where V: PaddingValidator
-    {
-        blob.validate_bytes(|blob| {
-            if blob[0] <= Self::MAX {
-                Ok(unsafe { blob.assume_valid() })
-            } else {
-                Err(ValidateHeightError)
-            }
-        })
-    }
-}
-
-impl Primitive for Height {}
-
-hoard::impl_encode_for_primitive!(NonZeroHeight, |this, dst| {
-    dst.write_bytes(&[this.0.get()])?
-        .finish()
-});
-
-hoard::impl_decode_for_primitive!(NonZeroHeight);
-
-impl ValidateBlob for NonZeroHeight {
-    type Error = ValidateHeightError;
-
-    #[inline]
-    fn validate<'a, V>(blob: BlobCursor<'a, Self, V>) -> Result<ValidBlob<'a, Self>, BlobError<Self::Error, V::Error>>
-        where V: PaddingValidator
-    {
-        blob.validate_bytes(|blob| {
-            if 0 < blob[0] && blob[0] <= Height::MAX {
-                Ok(unsafe { blob.assume_valid() })
-            } else {
-                Err(ValidateHeightError)
-            }
-        })
-    }
-}
-
-impl Primitive for NonZeroHeight {}
-
-impl Metadata for NonZeroHeight {
-    #[inline]
-    fn kind(&self) -> MetadataKind {
-        MetadataKind::Len(self.0.get() as u64)
-    }
-}
-
-impl Metadata for Height {
-    #[inline]
-    fn kind(&self) -> MetadataKind {
-        MetadataKind::Len(self.0 as u64)
-    }
-}
-*/
-
-impl TryFrom<u8> for Height {
-    type Error = TryFromIntError;
-    #[inline]
-    fn try_from(n: u8) -> Result<Self, Self::Error> {
-        Self::new(n)
-    }
-}
-
-impl TryFrom<NonZeroU8> for Height {
-    type Error = TryFromIntError;
-    #[inline]
-    fn try_from(n: NonZeroU8) -> Result<Self, Self::Error> {
-        Self::new(n.get())
-    }
-}
-
-impl TryFrom<usize> for Height {
-    type Error = TryFromIntError;
-
-    #[inline]
-    fn try_from(n: usize) -> Result<Self, Self::Error> {
-        if n <= Height::MAX as usize {
-            Ok(Height::new(n as u8).unwrap())
-        } else {
-            Err(TryFromIntError)
-        }
-    }
-}
-
-
-impl TryFrom<Height> for NonZeroHeight {
-    type Error = TryFromIntError;
-
-    #[inline]
-    fn try_from(n: Height) -> Result<Self, Self::Error> {
-        NonZeroU8::new(n.0).map(|n| NonZeroHeight(n))
-            .ok_or(TryFromIntError)
-    }
-}
-
-impl TryFrom<usize> for NonZeroHeight {
-    type Error = TryFromIntError;
-    #[inline]
-    fn try_from(n: usize) -> Result<Self, Self::Error> {
-        let height = Height::try_from(n)?;
-        NonZeroHeight::try_from(height)
-    }
-}
-
 impl From<Height> for u8 {
     #[inline]
     fn from(height: Height) -> u8 {
@@ -264,24 +93,33 @@ impl From<Height> for usize {
     }
 }
 
-impl From<NonZeroHeight> for Height {
+impl TryFrom<u8> for Height {
+    type Error = HeightError<u8>;
     #[inline]
-    fn from(height: NonZeroHeight) -> Height {
-        Self(height.0.get())
+    fn try_from(n: u8) -> Result<Self, Self::Error> {
+        Self::new(n)
     }
 }
 
-impl From<NonZeroHeight> for u8 {
+impl TryFrom<NonZeroU8> for Height {
+    type Error = HeightError<NonZeroU8>;
     #[inline]
-    fn from(height: NonZeroHeight) -> u8 {
-        height.0.get()
+    fn try_from(n: NonZeroU8) -> Result<Self, Self::Error> {
+        Self::new(n.into())
+             .ok().ok_or(HeightError(n))
     }
 }
 
-impl From<NonZeroHeight> for usize {
+impl TryFrom<usize> for Height {
+    type Error = HeightError<usize>;
+
     #[inline]
-    fn from(height: NonZeroHeight) -> usize {
-        height.0.get() as usize
+    fn try_from(n: usize) -> Result<Self, Self::Error> {
+        if n <= Height::MAX as usize {
+            Ok(Height::new(n as u8).unwrap())
+        } else {
+            Err(HeightError(n))
+        }
     }
 }
 
@@ -307,113 +145,282 @@ impl cmp::PartialOrd<Height> for u8 {
     }
 }
 
-pub unsafe trait GetHeight {
-    fn get(&self) -> Height;
-}
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[error("nonzero height out of range: {0:?}")]
+#[non_exhaustive]
+pub struct NonZeroHeightError<T: fmt::Debug>(T);
 
-unsafe impl GetHeight for DynHeight {
-    #[inline]
-    fn get(&self) -> Height {
-        Height::try_from(self.0.len()).expect("invalid height")
+impl<T: fmt::Debug, U: fmt::Debug> From<HeightError<T>> for NonZeroHeightError<U>
+where T: Into<U>
+{
+    fn from(err: HeightError<T>) -> Self {
+        Self(err.0.into())
     }
 }
 
-unsafe impl GetHeight for DynNonZeroHeight {
-    #[inline]
-    fn get(&self) -> Height {
-        NonZeroHeight::try_from(self.0.len()).expect("invalid height").into()
+/// The height of an inner node in a perfect binary tree.
+///
+/// Valid range: `1 ..= 63`
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct NonZeroHeight(NonZeroU8);
+
+impl fmt::Debug for NonZeroHeight {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
-unsafe impl GetHeight for Height {
+impl NonZeroHeight {
+    pub const MAX: u8 = 63;
+
+    #[inline(always)]
+    pub fn new(n: NonZeroU8) -> Result<Self, NonZeroHeightError<NonZeroU8>> {
+        if n.get() <= Height::MAX {
+            Ok(Self(n))
+        } else {
+            Err(NonZeroHeightError(n))
+        }
+    }
+
+    #[inline(always)]
+    pub const unsafe fn new_unchecked(n: NonZeroU8) -> Self {
+        Self(n)
+    }
+
     #[inline]
-    fn get(&self) -> Height {
+    pub fn decrement(self) -> Height {
+        Height::new(self.0.get().checked_sub(1).unwrap()).unwrap()
+    }
+
+    #[inline(always)]
+    pub fn get(self) -> NonZeroU8 {
+        self.0
+    }
+}
+
+
+impl TryFrom<Height> for NonZeroHeight {
+    type Error = NonZeroHeightError<Height>;
+
+    #[inline]
+    fn try_from(n: Height) -> Result<Self, Self::Error> {
+        NonZeroU8::new(n.0).map(|n| NonZeroHeight(n))
+            .ok_or(NonZeroHeightError(n))
+    }
+}
+
+impl TryFrom<usize> for NonZeroHeight {
+    type Error = NonZeroHeightError<usize>;
+    #[inline]
+    fn try_from(n: usize) -> Result<Self, Self::Error> {
+        let height = Height::try_from(n)?;
+        NonZeroHeight::try_from(height)
+            .ok().ok_or(NonZeroHeightError(n))
+    }
+}
+
+
+impl From<NonZeroHeight> for Height {
+    #[inline]
+    fn from(height: NonZeroHeight) -> Height {
+        Self(height.0.get())
+    }
+}
+
+impl From<NonZeroHeight> for u8 {
+    #[inline]
+    fn from(height: NonZeroHeight) -> u8 {
+        height.0.get()
+    }
+}
+
+impl From<NonZeroHeight> for usize {
+    #[inline]
+    fn from(height: NonZeroHeight) -> usize {
+        height.0.get() as usize
+    }
+}
+
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct HeightDyn([()]);
+
+impl fmt::Debug for HeightDyn {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.len().fmt(f)
+    }
+}
+
+impl Borrow<HeightDyn> for Height {
+    fn borrow(&self) -> &HeightDyn {
+        unsafe {
+            let slice: &[()] = slice::from_raw_parts(&(), (*self).into());
+            mem::transmute(slice)
+        }
+    }
+}
+
+impl ToOwned for HeightDyn {
+    type Owned = Height;
+    fn to_owned(&self) -> Self::Owned {
+        self.0.len().try_into()
+              .expect("height to be valid")
+    }
+}
+
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NonZeroHeightDyn([()]);
+
+impl fmt::Debug for NonZeroHeightDyn {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.len().fmt(f)
+    }
+}
+
+impl Borrow<NonZeroHeightDyn> for NonZeroHeight {
+    fn borrow(&self) -> &NonZeroHeightDyn {
+        unsafe {
+            let slice: &[()] = slice::from_raw_parts(&(), (*self).into());
+            mem::transmute(slice)
+        }
+    }
+}
+
+impl ToOwned for NonZeroHeightDyn {
+    type Owned = NonZeroHeight;
+    fn to_owned(&self) -> Self::Owned {
+        self.0.len().try_into()
+              .expect("non-zero height to be valid")
+    }
+}
+
+pub trait ToHeight {
+    fn to_height(&self) -> Height;
+}
+
+impl ToHeight for Height {
+    fn to_height(&self) -> Height {
         *self
     }
 }
 
-unsafe impl GetHeight for NonZeroHeight {
-    #[inline]
-    fn get(&self) -> Height {
-        Height::from(*self)
+impl ToHeight for HeightDyn {
+    fn to_height(&self) -> Height {
+        self.to_owned()
     }
 }
 
-unsafe impl GetHeight for () {
-    #[inline]
-    fn get(&self) -> Height {
-        panic!()
+pub trait ToNonZeroHeight {
+    fn to_nonzero_height(&self) -> NonZeroHeight;
+}
+
+impl<T: ?Sized + ToNonZeroHeight> ToHeight for T {
+    fn to_height(&self) -> Height {
+        self.to_nonzero_height().into()
+    }
+}
+
+impl ToNonZeroHeight for NonZeroHeight {
+    fn to_nonzero_height(&self) -> NonZeroHeight {
+        (*self).into()
+    }
+}
+
+impl ToNonZeroHeight for NonZeroHeightDyn {
+    fn to_nonzero_height(&self) -> NonZeroHeight {
+        self.to_owned().into()
     }
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 #[error("out of range: {0}")]
-pub struct LoadHeightError(u8);
+pub struct ValidateBlobHeightError(u8);
 
-impl Load for Height {
-    type Error = LoadHeightError;
+impl ValidateBlob for Height {
+    type Error = ValidateBlobHeightError;
+    const BLOB_LEN: usize = mem::size_of::<Self>();
 
-    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        todo!()
+    fn validate_blob<'a>(mut blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        match blob.field_bytes(1)[0] {
+            0 ..= Self::MAX => unsafe { Ok(blob.finish()) },
+            x => Err(ValidateBlobHeightError(x)),
+        }
     }
 }
 
-impl<R> Saved<R> for Height {
-    type Saved = Self;
+impl<Z> Decode<Z> for Height {
+    fn decode_blob(blob: hoard::load::BlobDecoder<Z, Self>) -> Self {
+        blob.to_value().clone()
+    }
 }
-impl<Q, R> Save<'_, Q, R> for Height {
+
+unsafe impl Persist for Height {}
+
+impl<R> Encoded<R> for Height {
+    type Encoded = Self;
+}
+
+impl<Q, R> Encode<'_, Q, R> for Height {
     type State = ();
+    fn init_encode_state(&self) -> () {}
 
-    fn init_save_state(&self) -> Self::State {}
-
-    fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut Self::State, dst: D) -> Result<D, D::Error> {
+    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
+        where D: Dumper<Source=Q, Target=R>
+    {
         Ok(dst)
     }
 
-    fn save_blob<W: SaveBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
-        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
-        <Self as Save<Q,R>>::encode_blob(self, state, dst)
-    }
-
     fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
-        dst.write_bytes(&[self.0])?
+        dst.write_primitive(&self.0)?
            .done()
     }
 }
+
 impl Primitive for Height {}
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 #[error("out of range: {0}")]
-pub struct LoadNonZeroHeightError(u8);
+pub struct ValidateBlobNonZeroHeightError(u8);
 
-impl Load for NonZeroHeight {
-    type Error = LoadNonZeroHeightError;
+impl ValidateBlob for NonZeroHeight {
+    type Error = ValidateBlobNonZeroHeightError;
+    const BLOB_LEN: usize = mem::size_of::<Self>();
 
-    fn load<'a>(blob: BlobCursor<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        todo!()
+    fn validate_blob<'a>(mut blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        match blob.field_bytes(1)[0] {
+            1 ..= Self::MAX => unsafe { Ok(blob.finish()) },
+            x => Err(ValidateBlobNonZeroHeightError(x)),
+        }
     }
 }
 
-impl<R> Saved<R> for NonZeroHeight {
-    type Saved = Self;
+impl<Z> Decode<Z> for NonZeroHeight {
+    fn decode_blob(blob: hoard::load::BlobDecoder<Z, Self>) -> Self {
+        blob.to_value().clone()
+    }
 }
-impl<Q, R> Save<'_, Q, R> for NonZeroHeight {
+
+unsafe impl Persist for NonZeroHeight {}
+
+impl<R> Encoded<R> for NonZeroHeight {
+    type Encoded = Self;
+}
+
+impl<Q, R> Encode<'_, Q, R> for NonZeroHeight {
     type State = ();
+    fn init_encode_state(&self) -> () {}
 
-    fn init_save_state(&self) -> Self::State {}
-
-    fn save_poll<D: SavePtr<Q, R>>(&self, _: &mut Self::State, dst: D) -> Result<D, D::Error> {
+    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
+        where D: Dumper<Source=Q, Target=R>
+    {
         Ok(dst)
     }
 
-    fn save_blob<W: SaveBlob>(&self, state: &Self::State, dst: W) -> Result<W::Done, W::Error> {
-        let dst = dst.alloc(mem::size_of::<Self::Saved>())?;
-        <Self as Save<Q,R>>::encode_blob(self, state, dst)
-    }
-
     fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
-        dst.write_bytes(&[self.0.get()])?
+        dst.write_primitive(&self.0)?
            .done()
     }
 }
+
 impl Primitive for NonZeroHeight {}

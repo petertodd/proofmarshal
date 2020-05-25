@@ -11,7 +11,7 @@ use std::ptr::NonNull;
 use thiserror::Error;
 use leint::Le;
 
-use owned::IntoOwned;
+use owned::{IntoOwned, Take};
 
 use crate::pointee::Pointee;
 use crate::blob::*;
@@ -19,6 +19,8 @@ use crate::load::*;
 use crate::save::*;
 use crate::primitive::*;
 use crate::ptr::*;
+
+use crate::heap::HeapPtr;
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
@@ -226,9 +228,8 @@ impl<'p, 'v> Ptr for Offset<'p, 'v> {
         }
     }
 
-    unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
-        //*self
-        todo!()
+    unsafe fn clone_unchecked_with<T: ?Sized + Pointee, U, F>(&self, metadata: T::Metadata, _: F) -> Own<T, Self> {
+        Own::new_unchecked(Fat::new(*self, metadata))
     }
 
     unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, _: T::Metadata) -> Result<&T, Self::Persist> {
@@ -248,13 +249,16 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
         match self.kind() {
             Kind::Offset(_) => {},
-            Kind::Ptr(ptr) => crate::heap::dealloc_impl::<T>(ptr, metadata),
+            Kind::Ptr(ptr) => HeapPtr(ptr).dealloc::<T>(metadata),
         }
     }
 
-    unsafe fn alloc_unchecked<T: ?Sized>(src: &mut ManuallyDrop<T>) -> Self {
-        let ptr = crate::heap::alloc_unchecked_impl::<T>(src);
-        Self::from_ptr(ptr)
+    fn alloc<T: ?Sized + Pointee, U: Take<T>>(src: U) -> Own<T, Self> {
+        let fat = HeapPtr::alloc(src).into_inner();
+
+        unsafe {
+            Own::new_unchecked(Fat::new(Self::from_ptr(fat.raw.0), fat.metadata))
+        }
     }
 
     fn duplicate(&self) -> Self {
@@ -264,19 +268,22 @@ impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
         }
     }
 
-    unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
-        match self.try_get_dirty_unchecked::<T>(()) {
+    unsafe fn clone_unchecked_with<T: ?Sized, U, F>(&self, metadata: T::Metadata, f: F) -> Own<T, Self>
+        where T: Pointee,
+              F: FnOnce(&T) -> U,
+              U: Take<T>,
+    {
+        match self.try_get_dirty_unchecked::<T>(metadata) {
             Err(offset) => {
-                Self {
-                    marker: PhantomData,
-                    inner: offset.cast(),
-                }
+                Own::new_unchecked(Fat::new(
+                        Self {
+                            marker: PhantomData,
+                            inner: offset.cast(),
+                        },
+                        metadata
+                ))
             },
-            Ok(value) => {
-                let mut cloned = ManuallyDrop::new(value.clone());
-                let ptr = crate::heap::alloc_unchecked_impl::<T>(&mut cloned);
-                Self::from_ptr(ptr)
-            }
+            Ok(value) => Self::alloc(f(value)),
         }
     }
 
@@ -384,6 +391,7 @@ impl<'p, 'v> ShallowDumper<'p, 'v> {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,3 +421,4 @@ mod tests {
             ]);
     }
 }
+*/

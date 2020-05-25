@@ -9,5 +9,5 @@ members = [
 	"hoard",
 
 	"proofmarshal-core",
- 	"proofmarshal-collections",
+	"proofmarshal-collections",
 ]

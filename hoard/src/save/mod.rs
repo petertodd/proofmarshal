@@ -20,9 +20,9 @@ impl<R, T: Encoded<R>> Saved<R> for T {
 }
 
 pub trait Save<'a, Q, R> : Saved<R> {
-    type State;
+    type State : 'a;
 
-    fn init_save_state(&'a self) -> Self::State;
+    fn init_save_state(&self) -> Self::State;
 
     fn save_poll<D>(&'a self, state: &mut Self::State, dst: D) -> Result<D, D::Error>
         where D: Dumper<Source=Q, Target=R>;
@@ -32,9 +32,9 @@ pub trait Save<'a, Q, R> : Saved<R> {
 }
 
 pub trait Encode<'a, Q, R> : Encoded<R> {
-    type State;
+    type State : 'a;
 
-    fn init_encode_state(&'a self) -> Self::State;
+    fn init_encode_state(&self) -> Self::State;
 
     fn encode_poll<D>(&'a self, state: &mut Self::State, dst: D) -> Result<D, D::Error>
         where D: Dumper<Source=Q, Target=R>;
@@ -46,7 +46,7 @@ pub trait Encode<'a, Q, R> : Encoded<R> {
 impl<'a, Q, R, T: Encode<'a, Q, R>> Save<'a, Q, R> for T {
     type State = T::State;
 
-    fn init_save_state(&'a self) -> Self::State {
+    fn init_save_state(&self) -> Self::State {
         self.init_encode_state()
     }
 

@@ -33,7 +33,7 @@ where T: Encode<'a, Q, R>
 {
     type State = EncodeArrayState<T::State, N>;
 
-    fn init_encode_state(&'a self) -> Self::State {
+    fn init_encode_state(&self) -> Self::State {
         let mut state: [MaybeUninit<T::State>; N] = unsafe { MaybeUninit::uninit().assume_init() };
         let mut initializer = SliceInitializer::new(&mut state[..]);
 
