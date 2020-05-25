@@ -19,6 +19,8 @@ use std::ops::Deref;
 use thiserror::Error;
 use singlelife::Unique;
 
+use owned::Take;
+
 use crate::pointee::Pointee;
 use crate::offset::*;
 use crate::ptr::*;
@@ -30,47 +32,12 @@ use crate::blob::*;
 pub mod error;
 use self::error::*;
 
+mod marshal_impls;
+
 #[derive(Debug, Clone, Copy)]
 pub struct TryPile<'p, 'v> {
     marker: PhantomData<fn(&'p ()) -> &'p ()>,
     buf: &'v [u8],
-}
-
-impl<'p, 'v> ValidateBlob for TryPile<'p, 'v> {
-    const BLOB_LEN: usize = 0;
-    type Error = !;
-
-    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        unsafe { Ok(blob.finish()) }
-    }
-}
-
-impl<'p, 'v, Z> Decode<Z> for TryPile<'p, 'v>
-where Z: Borrow<Self>
-{
-    fn decode_blob(decoder: BlobDecoder<Z, Self>) -> Self {
-        decoder.zone().borrow().clone()
-    }
-}
-
-impl<'p, 'v, R> Encoded<R> for TryPile<'p, 'v> {
-    type Encoded = Self;
-}
-
-impl<'p, 'v, Q, R> Encode<'_, Q, R> for TryPile<'p, 'v> {
-    type State = ();
-
-    fn init_encode_state(&self) -> () {}
-
-    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>
-    {
-        Ok(dst)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
-        dst.done()
-    }
 }
 
 impl<'p> Default for TryPile<'p, 'static> {
@@ -183,52 +150,13 @@ impl<'p, 'v> Alloc for TryPile<'p, 'v> {
         *self
     }
 
-    unsafe fn alloc_unchecked<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> FatPtr<T, Self::Ptr> {
-        OffsetMut::alloc_unchecked(src)
+    fn alloc_own<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Own<T, Self::Ptr> {
+        OffsetMut::alloc(src)
     }
 }
-
-
 
 #[derive(Debug, Clone, Copy)]
 pub struct Pile<'p, 'v>(TryPile<'p, 'v>);
-
-impl<'p, 'v> ValidateBlob for Pile<'p, 'v> {
-    const BLOB_LEN: usize = 0;
-    type Error = !;
-
-    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        unsafe { Ok(blob.finish()) }
-    }
-}
-
-impl<'p, 'v, Z> Decode<Z> for Pile<'p, 'v>
-where Z: Borrow<Self>
-{
-    fn decode_blob(decoder: BlobDecoder<Z, Self>) -> Self {
-        decoder.zone().borrow().clone()
-    }
-}
-
-impl<'p, 'v, R> Encoded<R> for Pile<'p, 'v> {
-    type Encoded = Self;
-}
-
-impl<'p, 'v, Q, R> Encode<'_, Q, R> for Pile<'p, 'v> {
-    type State = ();
-
-    fn init_encode_state(&self) -> () {}
-
-    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>
-    {
-        Ok(dst)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
-        dst.done()
-    }
-}
 
 impl<'p, 'v> Deref for Pile<'p, 'v> {
     type Target = TryPile<'p, 'v>;
@@ -330,8 +258,8 @@ impl<'p, 'v> Alloc for Pile<'p, 'v> {
         *self
     }
 
-    unsafe fn alloc_unchecked<T: ?Sized>(&mut self, src: &mut ManuallyDrop<T>) -> Self::Ptr {
-        OffsetMut::alloc_unchecked(src)
+    fn alloc_own<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Own<T, Self::Ptr> {
+        OffsetMut::alloc(src)
     }
 }
 

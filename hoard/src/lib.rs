@@ -58,7 +58,7 @@ pub mod heap;
 pub mod bag;
 
 pub mod offset;
-//pub mod pile;
+pub mod pile;
 
 /*
 pub mod prelude {

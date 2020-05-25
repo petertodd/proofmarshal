@@ -57,6 +57,46 @@ where P: fmt::Debug,
     }
 }
 
+impl<T: ?Sized + Pointee, P: Ptr> Own<T, P> {
+    pub fn get_in<'a, Z: Get<P>>(&'a self, zone: &Z) -> Ref<'a, T>
+        where T: Load<Z>
+    {
+        unsafe { zone.get_unchecked::<T>(&self.inner.raw, self.inner.metadata) }
+    }
+
+    pub fn try_get_in<'a, Z: TryGet<P>>(&'a self, zone: &Z) -> Result<Ref<'a, T>, Z::Error>
+        where T: Load<Z>
+    {
+        unsafe { zone.try_get_unchecked::<T>(&self.inner.raw, self.inner.metadata) }
+    }
+
+    pub fn get_mut_in<'a, Z: GetMut<P>>(&'a mut self, zone: &Z) -> &'a mut T
+        where T: Load<Z>
+    {
+        unsafe { zone.get_mut_unchecked::<T>(&mut self.inner.raw, self.inner.metadata) }
+    }
+
+    pub fn try_get_mut_in<'a, Z: TryGetMut<P>>(&'a mut self, zone: &Z) -> Result<&'a mut T, Z::Error>
+        where T: Load<Z>
+    {
+        unsafe { zone.try_get_mut_unchecked::<T>(&mut self.inner.raw, self.inner.metadata) }
+    }
+
+    pub fn take_in<'a, Z: Get<P>>(self, zone: &Z) -> T::Owned
+        where T: Load<Z>
+    {
+        let fat = self.into_inner();
+        unsafe { zone.take_unchecked::<T>(fat.raw, fat.metadata) }
+    }
+
+    pub fn try_take_in<'a, Z: TryGet<P>>(self, zone: &Z) -> Result<T::Owned, Z::Error>
+        where T: Load<Z>
+    {
+        let fat = self.into_inner();
+        unsafe { zone.try_take_unchecked::<T>(fat.raw, fat.metadata) }
+    }
+}
+
 impl<T: ?Sized + Pointee, P: Ptr, M> Own<T, P, M> {
     pub unsafe fn new_unchecked(inner: Fat<T, P, M>) -> Self {
         Self { marker: PhantomData, inner, }

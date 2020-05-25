@@ -34,31 +34,47 @@ impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z> {
     }
 }
 
-/*
 impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z>
 where T: Load<Z>,
 {
     pub fn get<'a>(&'a self) -> Ref<'a, T>
         where Z: Get<P>
     {
-        unsafe { self.zone.get_unchecked::<T>(&self.ptr, self.metadata) }
+        self.inner.get_in(&self.zone)
     }
 
-    pub fn take(self) -> T::Owned
-        where Z: Get<P>
+    pub fn try_get<'a>(&'a self) -> Result<Ref<'a, T>, Z::Error>
+        where Z: TryGet<P>
     {
-        let (ptr, metadata, zone) = self.into_raw_parts();
-
-        unsafe { zone.take_unchecked::<T>(ptr, metadata) }
+        self.inner.try_get_in(&self.zone)
     }
 
     pub fn get_mut<'a>(&'a mut self) -> &'a mut T
         where Z: GetMut<P>
     {
-        unsafe { self.zone.get_mut_unchecked::<T>(&mut self.ptr, self.metadata) }
+        self.inner.get_mut_in(&self.zone)
+    }
+
+    pub fn try_get_mut<'a>(&'a mut self) -> Result<&'a mut T, Z::Error>
+        where Z: TryGetMut<P>
+    {
+        self.inner.try_get_mut_in(&self.zone)
+    }
+
+    pub fn take(self) -> T::Owned
+        where Z: Get<P>
+    {
+        let (own, zone) = self.into_parts();
+        own.take_in(&zone)
+    }
+
+    pub fn try_take(self) -> Result<T::Owned, Z::Error>
+        where Z: TryGet<P>
+    {
+        let (own, zone) = self.into_parts();
+        own.try_take_in(&zone)
     }
 }
-*/
 
 impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z> {
     pub fn from_parts(inner: Own<T, P>, zone: Z) -> Self {
