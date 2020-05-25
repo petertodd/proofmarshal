@@ -1,31 +1,60 @@
 use super::*;
 
-impl<Z, T: Encoded<Z>> Saved<Z> for [T] {
-    type Saved = [T::Encoded];
+#[derive(Debug)]
+pub struct SliceEncoder<T> {
+    inner: Box<[T]>,
+    idx: usize,
 }
 
-impl<'a, Z: Zone, T: Encode<'a, Z>> Save<'a, Z> for [T] {
-    /// Remember that `Vec<T::State>` doesn't actually allocate if `T::State` is a zero-sized-type.
-    type State = Vec<T::State>;
+impl<Q, R, T: Encode<Q, R>> Save<Q, R> for [T] {
+    type SavePoll = SliceEncoder<T::EncodePoll>;
 
-    fn save_children(&'a self) -> Self::State {
-        self.iter().map(T::save_children).collect()
-    }
-
-    fn poll<D: Dumper<Z>>(&self, state: &mut Self::State, mut dumper: D) -> Result<D, D::Error> {
-        for (item, state) in self.iter().zip(state.iter_mut()) {
-            dumper = item.poll(state, dumper)?;
+    fn init_save(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::SavePoll {
+        let mut inner = Vec::with_capacity(self.len());
+        for item in self {
+            inner.push(item.init_save(dst))
         }
-        Ok(dumper)
-    }
-
-    fn save_blob<D: Dumper<Z>>(&self, state: &Self::State, dumper: D)
-        -> Result<(D, FatPtr<[T::Encoded], Z::Persist>),
-                  D::Error>
-    {
-        for (item, state) in self.iter().zip(state) {
-            todo!()
+        SliceEncoder {
+            inner: inner.into(),
+            idx: 0,
         }
-        todo!()
+    }
+}
+
+impl<Q, R, T: SavePoll<Q, R>> SavePoll<Q, R> for SliceEncoder<T> {
+    fn save_poll<D: SavePtr<Source=Q, Target=R>>(&mut self, mut dst: D) -> Result<D, D::Error> {
+        while self.idx < self.inner.len() {
+            dst = self.inner[self.idx].save_poll(dst)?;
+            self.idx += 1;
+        }
+        Ok(dst)
+    }
+}
+
+impl<T: EncodeBlob> SaveBlob for SliceEncoder<T> {
+    fn save_blob<W: AllocBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        assert_eq!(self.idx, self.inner.len());
+        let blob_len = T::BLOB_LEN.checked_mul(self.inner.len())
+                                  .expect("FIXME: overflow");
+        let mut dst = dst.alloc_blob(blob_len)?;
+
+        for item in self.inner.iter() {
+            dst = dst.write(item)?;
+        }
+        dst.done()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::offset::ShallowDumper;
+
+    #[test]
+    fn test() {
+        let slice: &[u8] = &[1,2,3,4];
+        let (buf, _) = ShallowDumper::new(0).save(slice);
+        assert_eq!(buf, &[1,2,3,4]);
     }
 }
