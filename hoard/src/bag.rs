@@ -126,7 +126,7 @@ impl<Q, R, T: ?Sized + Pointee, P: Ptr, Z> Encode<Q, R> for Bag<T, P, Z>
 where R: Primitive,
       T: Save<Q, R>,
       Z: Encode<Q, R>,
-      P: std::borrow::Borrow<Q>,
+      P: AsPtr<Q>,
 {
     type EncodePoll = (<Own<T, P> as Encode<Q, R>>::EncodePoll, Z::EncodePoll);
 

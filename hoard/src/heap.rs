@@ -71,6 +71,12 @@ pub(crate) unsafe fn dealloc_impl<T: ?Sized + Pointee>(ptr: NonNull<u16>, metada
     heap_dealloc(ptr, layout)
 }
 
+impl AsPtr<HeapPtr> for HeapPtr {
+    fn as_ptr(&self) -> &Self {
+        self
+    }
+}
+
 impl Ptr for HeapPtr {
     type Persist = !;
 

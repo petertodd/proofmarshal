@@ -131,14 +131,14 @@ impl<Q, R, T: ?Sized + Pointee, P: Ptr> Encode<Q, R> for Own<T, P>
 where R: Primitive,
       T: Save<Q, R>,
       T::Metadata: Primitive,
-      P: std::borrow::Borrow<Q>,
+      P: AsPtr<Q>,
 {
     type EncodePoll = OwnEncoder<T::SavePoll, T::Metadata, R>;
 
     fn init_encode(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::EncodePoll {
         OwnEncoder {
             metadata: self.metadata,
-            state: match unsafe { dst.check_dirty::<T>(&self.raw.borrow(), self.metadata) } {
+            state: match unsafe { dst.check_dirty::<T>(&self.raw.as_ptr(), self.metadata) } {
                 Ok(r_ptr) => State::Done(r_ptr),
                 Err(value) => State::Poll(value.init_save(dst)),
             },

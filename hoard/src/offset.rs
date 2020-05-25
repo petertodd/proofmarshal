@@ -55,12 +55,14 @@ unsafe impl<'p, 'v> Persist for Offset<'p, 'v> {}
 unsafe impl<'p, 'v, A> Persist for OffsetMut<'p, 'v, A> {}
 
 impl<'p, 'v, A> Borrow<OffsetMut<'p, 'v, A>> for Offset<'p, 'v> {
+    #[inline(always)]
     fn borrow(&self) -> &OffsetMut<'p, 'v, A> {
         self.as_ref()
     }
 }
 
 impl<'p, 'v, A> AsRef<OffsetMut<'p, 'v, A>> for Offset<'p, 'v> {
+    #[inline(always)]
     fn as_ref(&self) -> &OffsetMut<'p, 'v, A> {
         // SAFETY: #[repr(transparent)]
         unsafe { &*(self as *const Self as *const _) }
@@ -214,13 +216,22 @@ impl<'p, 'v, A> OffsetMut<'p, 'v, A> {
     }
 }
 
-impl<'p, 'v> Ptr for Offset<'p, 'v> {
-    type Persist = Offset<'static, 'static>;
+impl<'p, 'v> AsPtr<Self> for Offset<'p, 'v> {
+    #[inline(always)]
+    fn as_ptr(&self) -> &Self {
+        self
+    }
+}
 
+impl<'p, 'v> Ptr for Offset<'p, 'v> {
+    type Persist = Self;
+
+    #[inline(always)]
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
         // nothing to do here
     }
 
+    #[inline(always)]
     fn duplicate(&self) -> Self {
         Self {
             marker: PhantomData,
@@ -228,23 +239,50 @@ impl<'p, 'v> Ptr for Offset<'p, 'v> {
         }
     }
 
+    #[inline(always)]
     unsafe fn clone_unchecked_with<T: ?Sized + Pointee, U, F>(&self, metadata: T::Metadata, _: F) -> Own<T, Self> {
         Own::new_unchecked(Fat::new(*self, metadata))
     }
 
+    #[inline(always)]
     unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, _: T::Metadata) -> Result<&T, Self::Persist> {
-        Err(self.cast())
+        Err(*self)
     }
 
+    #[inline(always)]
     unsafe fn try_take_dirty_unchecked<T: ?Sized + Pointee>(self, _: T::Metadata) -> Result<T::Owned, Self::Persist>
         where T: IntoOwned
     {
-        Err(self.cast())
+        Err(self)
+    }
+}
+
+impl<'p, 'v, A> AsPtr<Self> for OffsetMut<'p, 'v, A> {
+    #[inline(always)]
+    fn as_ptr(&self) -> &Self {
+        self
+    }
+}
+
+impl<'p, 'v, A> AsPtr<OffsetMut<'p, 'v, A>> for Offset<'p, 'v> {
+    #[inline(always)]
+    fn as_ptr(&self) -> &OffsetMut<'p, 'v, A> {
+        self.as_ref()
+    }
+}
+
+impl<'p, 'v, A> AsPtr<OffsetMut<'p, 'v, A>> for HeapPtr {
+    #[inline(always)]
+    fn as_ptr(&self) -> &OffsetMut<'p, 'v, A> {
+        static_assertions::assert_eq_size!(OffsetMut, HeapPtr);
+        unsafe {
+            &*(self as *const _ as *const _)
+        }
     }
 }
 
 impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
-    type Persist = Offset<'static, 'static>;
+    type Persist = Offset<'p, 'v>;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
         match self.kind() {

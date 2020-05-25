@@ -17,8 +17,18 @@ pub use self::fat::Fat;
 pub mod own;
 pub use self::own::Own;
 
-pub trait Ptr : Sized + fmt::Debug {
-    type Persist : 'static + Clone + fmt::Debug;
+pub trait AsPtr<Q> {
+    fn as_ptr(&self) -> &Q;
+}
+
+impl<Q> AsPtr<Q> for ! {
+    fn as_ptr(&self) -> &Q {
+        match *self {}
+    }
+}
+
+pub trait Ptr : Sized + AsPtr<Self> + fmt::Debug {
+    type Persist : AsPtr<Self> + Clone + fmt::Debug;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata);
 
@@ -50,30 +60,6 @@ pub trait Ptr : Sized + fmt::Debug {
     unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist>;
     unsafe fn try_take_dirty_unchecked<T: ?Sized + Pointee>(self, metadata: T::Metadata) -> Result<T::Owned, Self::Persist>
         where T: IntoOwned;
-}
-
-impl Ptr for ! {
-    type Persist = !;
-
-    unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
-        match *self {}
-    }
-    fn duplicate(&self) -> Self { *self }
-
-    unsafe fn clone_unchecked_with<T, U, F>(&self, _: T::Metadata, _: F) -> Own<T, Self>
-        where T: ?Sized + Pointee
-    {
-        match *self {}
-    }
-
-    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, _: T::Metadata) -> Result<&T, Self::Persist> {
-        match *self {}
-    }
-    unsafe fn try_take_dirty_unchecked<T: ?Sized + Pointee>(self, _: T::Metadata) -> Result<T::Owned, Self::Persist>
-        where T: IntoOwned
-    {
-        match self {}
-    }
 }
 
 pub trait Get<P: Ptr> : Sized {
@@ -138,7 +124,7 @@ where Z: GetMut<P>
     }
 }
 
-pub trait Alloc : Sized {
+pub trait Alloc {
     type Zone;
     type Ptr : Ptr;
 
@@ -147,7 +133,6 @@ pub trait Alloc : Sized {
     fn alloc_own<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Own<T, Self::Ptr>;
 }
 
-/*
 impl<A: ?Sized + Alloc> Alloc for &'_ mut A {
     type Zone = A::Zone;
     type Ptr = A::Ptr;
@@ -156,8 +141,8 @@ impl<A: ?Sized + Alloc> Alloc for &'_ mut A {
         (**self).zone()
     }
 
-    fn alloc<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> FatPtr<T, Self> {
-        (**self).alloc(src)
+    fn alloc_own<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Own<T, Self::Ptr> {
+        (**self).alloc_own(src)
     }
 }
 
@@ -169,60 +154,31 @@ impl<A: ?Sized + Alloc> Alloc for Box<A> {
         (**self).zone()
     }
 
-    fn alloc<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> FatPtr<T, Self> {
-        (**self).alloc(src)
-    }
-}
-*/
-
-/*
-pub trait AsZone<Y> {
-    fn as_zone(&self) -> &Y;
-}
-
-impl<Z: ?Sized> AsZone<()> for Z {
-    fn as_zone(&self) -> &() {
-        &()
-    }
-}
-
-pub trait AsPtr<Q> {
-    fn as_ptr(&self) -> &Q;
-}
-
-impl<P> AsPtr<!> for P {
-    fn as_ptr(&self) -> &! {
-        panic!()
-    }
-}
-
-impl<P> AsPtr<()> for P {
-    fn as_ptr(&self) -> &() {
-        &()
+    fn alloc_own<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Own<T, Self::Ptr> {
+        (**self).alloc_own(src)
     }
 }
 
 impl Ptr for ! {
-    type Zone = ();
-    type ZoneError = !;
     type Persist = !;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
         match *self {}
     }
+    fn duplicate(&self) -> Self { *self }
 
-    fn zone() -> Self::Zone {}
-
-    unsafe fn clone_unchecked<T: Clone>(&self) -> Self {
-        match *self {}
-    }
-
-    fn duplicate(&self) -> Self {
+    unsafe fn clone_unchecked_with<T, U, F>(&self, _: T::Metadata, _: F) -> Own<T, Self>
+        where T: ?Sized + Pointee
+    {
         match *self {}
     }
 
     unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, _: T::Metadata) -> Result<&T, Self::Persist> {
         match *self {}
     }
+    unsafe fn try_take_dirty_unchecked<T: ?Sized + Pointee>(self, _: T::Metadata) -> Result<T::Owned, Self::Persist>
+        where T: IntoOwned
+    {
+        match self {}
+    }
 }
-*/
