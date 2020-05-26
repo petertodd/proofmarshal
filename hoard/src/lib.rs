@@ -73,6 +73,7 @@ pub mod prelude {
             TryPile,
             Pile,
         },
+        heap::{Heap, HeapPtr},
         load::{Load, Decode},
         refs::Ref,
     };

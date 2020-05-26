@@ -6,6 +6,7 @@ use std::mem;
 use std::num::NonZeroU8;
 use std::ops;
 use std::slice;
+use std::hint::unreachable_unchecked;
 
 use thiserror::Error;
 
@@ -40,7 +41,10 @@ impl Height {
 
     #[inline(always)]
     fn assert_valid(&self) {
-        assert!(self.0 <= Self::MAX);
+        if self.0 > Self::MAX {
+            debug_assert!(false);
+            unsafe { unreachable_unchecked() };
+        }
     }
 
     #[inline(always)]
@@ -72,9 +76,10 @@ impl Height {
     #[inline]
     pub fn try_increment(self) -> Option<NonZeroHeight> {
         if self.0 < Self::MAX {
-            Some(NonZeroHeight::new(NonZeroU8::new(self.0 + 1).unwrap()).unwrap())
+            NonZeroU8::new(self.0 + 1)
+                .and_then(|n| NonZeroHeight::new(n).ok())
         } else {
-            assert!(self.0 == Self::MAX);
+            debug_assert!(self.0 == Self::MAX);
             None
         }
     }
@@ -117,7 +122,7 @@ impl TryFrom<usize> for Height {
     #[inline]
     fn try_from(n: usize) -> Result<Self, Self::Error> {
         if n <= Height::MAX as usize {
-            Ok(Height::new(n as u8).unwrap())
+            Ok(unsafe { Height::new_unchecked(n as u8) })
         } else {
             Err(HeightError(n))
         }
@@ -202,7 +207,13 @@ impl NonZeroHeight {
 
     #[inline]
     pub fn decrement(self) -> Height {
-        Height::new(self.0.get().checked_sub(1).unwrap()).unwrap()
+        self.0.get()
+            .checked_sub(1)
+            .and_then(|height| Height::new(height).ok())
+            .unwrap_or_else(|| {
+                debug_assert!(false);
+                unsafe { unreachable_unchecked() }
+            })
     }
 
     #[inline(always)]
@@ -277,7 +288,10 @@ impl ToOwned for HeightDyn {
     type Owned = Height;
     fn to_owned(&self) -> Self::Owned {
         self.0.len().try_into()
-              .expect("height to be valid")
+              .unwrap_or_else(|_| {
+                  debug_assert!(false);
+                  unsafe { unreachable_unchecked() }
+              })
     }
 }
 
@@ -303,7 +317,10 @@ impl ToOwned for NonZeroHeightDyn {
     type Owned = NonZeroHeight;
     fn to_owned(&self) -> Self::Owned {
         self.0.len().try_into()
-              .expect("non-zero height to be valid")
+              .unwrap_or_else(|_| {
+                  debug_assert!(false);
+                  unsafe { unreachable_unchecked() }
+              })
     }
 }
 

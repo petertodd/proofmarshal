@@ -102,8 +102,8 @@ pub enum JoinError<SumError: 'static + std::error::Error> {
 
 #[derive(Debug, Error)]
 pub enum TryFromIterError<SumError: 'static + std::error::Error> {
-    #[error("join error")]
-    JoinError(#[from] JoinError<SumError>),
+    #[error("sum overflow")]
+    SumOverflow(SumError),
 
     #[error("length not a power of two: {0}")]
     NonPowerOfTwoLength(usize),
@@ -158,7 +158,11 @@ impl<T, S: MerkleSum<T>, P: Ptr, Z> SumTree<T, S, P, Z> {
 
             while tips.last().map_or(false, |last_tip| last_tip.len() == tip.len()) {
                 let last_tip = tips.pop().unwrap();
-                tip = last_tip.try_join_in(tip, &mut alloc)?;
+                tip = last_tip.try_join_in(tip, &mut alloc)
+                              .map_err(|err| match err {
+                                  JoinError::SumOverflow(err) => TryFromIterError::SumOverflow(err),
+                                  _ => unreachable!(),
+                              })?;
             }
             tips.push(tip);
         }
@@ -169,6 +173,11 @@ impl<T, S: MerkleSum<T>, P: Ptr, Z> SumTree<T, S, P, Z> {
             Some(_) => Err(TryFromIterError::NonPowerOfTwoLength(len)),
         }
     }
+}
+
+pub fn test_get(tip: &Tree<u8, HeapPtr, Heap>, idx: usize) -> Option<Ref<u8>>
+{
+    tip.get(idx)
 }
 
 impl<T, S, P: Ptr, Z> SumTree<T, S, P, Z> {
