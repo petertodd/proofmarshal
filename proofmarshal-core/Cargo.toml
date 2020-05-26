@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 hoard = { path = "../hoard" }
+anyref = { path = "../anyref" }
 
 thiserror = "1.0.9"
 static_assertions = "1.1.0"
