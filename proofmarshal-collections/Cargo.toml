@@ -7,7 +7,6 @@ edition = "2018"
 [dependencies]
 hoard = { path = "../hoard" }
 proofmarshal-core = { path = "../proofmarshal-core" }
-proofmarshal-derive = { path = "../proofmarshal-derive" }
 
 owned = "0.1.0"
 thiserror = "1.0.9"
