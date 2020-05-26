@@ -1,5 +1,6 @@
 [workspace]
 members = [
+	"anyref",
 	"singlelife",
 	"leint",
 	"owned",
