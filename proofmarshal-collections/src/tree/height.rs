@@ -134,6 +134,17 @@ impl cmp::PartialEq<Height> for u8 {
     }
 }
 
+impl cmp::PartialEq<u8> for NonZeroHeight {
+    fn eq(&self, rhs: &u8) -> bool {
+        self.0.get() == *rhs
+    }
+}
+impl cmp::PartialEq<NonZeroHeight> for u8 {
+    fn eq(&self, rhs: &NonZeroHeight) -> bool {
+        rhs.get().get() == *self
+    }
+}
+
 impl cmp::PartialOrd<u8> for Height {
     fn partial_cmp(&self, rhs: &u8) -> Option<cmp::Ordering> {
         self.0.partial_cmp(rhs)
@@ -357,23 +368,11 @@ impl<Z> Decode<Z> for Height {
 
 unsafe impl Persist for Height {}
 
-impl<R> Encoded<R> for Height {
-    type Encoded = Self;
-}
+impl<Q, R> Encode<Q, R> for Height {
+    type EncodePoll = u8;
 
-impl<Q, R> Encode<'_, Q, R> for Height {
-    type State = ();
-    fn init_encode_state(&self) -> () {}
-
-    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>
-    {
-        Ok(dst)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
-        dst.write_primitive(&self.0)?
-           .done()
+    fn init_encode(&self, _: &impl SavePtr) -> u8 {
+        self.get()
     }
 }
 
@@ -403,24 +402,50 @@ impl<Z> Decode<Z> for NonZeroHeight {
 
 unsafe impl Persist for NonZeroHeight {}
 
-impl<R> Encoded<R> for NonZeroHeight {
-    type Encoded = Self;
-}
+impl<Q, R> Encode<Q, R> for NonZeroHeight {
+    type EncodePoll = NonZeroU8;
 
-impl<Q, R> Encode<'_, Q, R> for NonZeroHeight {
-    type State = ();
-    fn init_encode_state(&self) -> () {}
-
-    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>
-    {
-        Ok(dst)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
-        dst.write_primitive(&self.0)?
-           .done()
+    fn init_encode(&self, _: &impl SavePtr) -> NonZeroU8 {
+        self.get()
     }
 }
 
 impl Primitive for NonZeroHeight {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn height_marshalling() {
+        assert_eq!(Height::new(42).unwrap().encode_blob_bytes(),
+                   &[42]);
+
+        assert_eq!(Height::try_decode_blob_bytes(&[0]).unwrap(),
+                   0);
+
+        assert_eq!(Height::try_decode_blob_bytes(&[Height::MAX]).unwrap(),
+                   63);
+
+        assert_eq!(Height::try_decode_blob_bytes(&[Height::MAX + 1]).unwrap_err(),
+                   ValidateBlobHeightError(64));
+    }
+
+    #[test]
+    fn non_zero_height_marshalling() {
+        assert_eq!(NonZeroHeight::try_from(42).unwrap().encode_blob_bytes(),
+                   &[42]);
+
+        assert_eq!(NonZeroHeight::try_decode_blob_bytes(&[1]).unwrap(),
+                   1);
+
+        assert_eq!(NonZeroHeight::try_decode_blob_bytes(&[NonZeroHeight::MAX]).unwrap(),
+                   63);
+
+        assert_eq!(NonZeroHeight::try_decode_blob_bytes(&[0]).unwrap_err(),
+                   ValidateBlobNonZeroHeightError(0));
+
+        assert_eq!(NonZeroHeight::try_decode_blob_bytes(&[64]).unwrap_err(),
+                   ValidateBlobNonZeroHeightError(64));
+    }
+}

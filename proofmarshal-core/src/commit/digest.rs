@@ -213,21 +213,24 @@ impl<Z, T: ?Sized> Decode<Z> for Digest<T> {
 
 unsafe impl<T: ?Sized> Persist for Digest<T> {}
 
-impl<R, T: ?Sized> Encoded<R> for Digest<T> {
-    type Encoded = Digest<T>;
+impl<Q, R, T: ?Sized> Encode<Q, R> for Digest<T> {
+    type EncodePoll = Self;
+
+    fn init_encode(&self, _: &impl SavePtr) -> Self::EncodePoll {
+        *self
+    }
 }
 
-impl<Q, R, T: ?Sized> Encode<'_, Q, R> for Digest<T> {
-    type State = ();
-    fn init_encode_state(&self) -> () {}
-
-    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>
-    {
+impl<Q, R, T: ?Sized> SavePoll<Q, R> for Digest<T> {
+    fn save_poll<D: SavePtr>(&mut self, dst: D) -> Result<D, D::Error> {
         Ok(dst)
     }
+}
 
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
+impl<T: ?Sized> EncodeBlob for Digest<T> {
+    const BLOB_LEN: usize = mem::size_of::<Self>();
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
         dst.write_bytes(&self.buf)?
            .done()
     }

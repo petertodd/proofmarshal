@@ -131,6 +131,11 @@ pub trait Alloc {
     fn zone(&self) -> Self::Zone;
 
     fn alloc_own<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Own<T, Self::Ptr>;
+
+    fn alloc_ptr<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Self::Ptr {
+        let fat = self.alloc_own(src).into_inner();
+        fat.raw
+    }
 }
 
 impl<A: ?Sized + Alloc> Alloc for &'_ mut A {

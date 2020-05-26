@@ -55,3 +55,19 @@ pub trait SavePtr : Sized {
 
     fn try_save_ptr(self, saver: &impl SaveBlob) -> Result<(Self, Self::Target), Self::Error>;
 }
+
+impl<Q, R, T: SavePoll<Q, R>> SavePoll<Q, R> for &'_ mut T {
+    fn save_poll<D>(&mut self, dst: D) -> Result<D, D::Error>
+        where D: SavePtr<Source=Q, Target=R>
+    {
+        (**self).save_poll(dst)
+    }
+}
+
+impl<Q, R, T: SavePoll<Q, R>> SavePoll<Q, R> for Box<T> {
+    fn save_poll<D>(&mut self, dst: D) -> Result<D, D::Error>
+        where D: SavePtr<Source=Q, Target=R>
+    {
+        (**self).save_poll(dst)
+    }
+}

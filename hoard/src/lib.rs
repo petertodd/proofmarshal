@@ -60,7 +60,6 @@ pub mod bag;
 pub mod offset;
 pub mod pile;
 
-/*
 pub mod prelude {
     pub use crate::{
         pointee::Pointee,
@@ -74,4 +73,3 @@ pub mod prelude {
         },
     };
 }
-*/

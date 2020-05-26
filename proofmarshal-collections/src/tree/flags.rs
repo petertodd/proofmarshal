@@ -24,7 +24,7 @@ impl From<Flags> for AtomicU8 {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
 #[error("invalid flags: {0}")]
 pub struct ValidateFlagsBlobError(u8);
 
@@ -48,23 +48,12 @@ impl<Z> Decode<Z> for Flags {
 
 unsafe impl Persist for Flags {}
 
-impl<R> Encoded<R> for Flags {
-    type Encoded = Self;
-}
+impl<Q, R> Encode<Q, R> for Flags {
+    type EncodePoll = u8;
 
-impl<Q, R> Encode<'_, Q, R> for Flags {
-    type State = ();
-    fn init_encode_state(&self) -> () {}
-
-    fn encode_poll<D>(&self, _: &mut (), dst: D) -> Result<D, D::Error>
-        where D: Dumper<Source=Q, Target=R>
-    {
-        Ok(dst)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, _: &(), dst: W) -> Result<W::Done, W::Error> {
-        dst.write_primitive(&[self.bits])?
-           .done()
+    fn init_encode(&self, _: &impl SavePtr) -> u8 {
+        assert!(self.is_empty(), "some flags set: {:?}", self);
+        0
     }
 }
 
@@ -72,7 +61,25 @@ impl Primitive for Flags {}
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn test() {
+    fn flags_marshalling() {
+        assert_eq!(Flags::try_decode_blob_bytes(&[0]),
+                   Ok(Flags::empty()));
+
+        // having any flags set at all is invalid
+        for i in 1 ..= 255 {
+            assert_eq!(Flags::try_decode_blob_bytes(&[i]),
+                       Err(ValidateFlagsBlobError(i)));
+        }
+
+        assert_eq!(Flags::empty().encode_blob_bytes(), &[0]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn flags_marshalling_panics_if_not_empty() {
+        Flags::DIGEST_DIRTY.encode_blob_bytes();
     }
 }

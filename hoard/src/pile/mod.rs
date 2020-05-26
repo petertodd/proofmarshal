@@ -81,6 +81,13 @@ impl<'p, 'v> TryPile<'p, 'v> {
         debug_assert!(new_buf.starts_with(self.buf));
         TryPile::new_unchecked(new_buf)
     }
+
+    pub fn save_to_vec<T: ?Sized>(&self, tip: &T) -> (Vec<u8>, Offset<'p, 'v>)
+        where T: Save<OffsetMut<'p, 'v>, Offset<'p, 'v>>
+    {
+        ShallowDumper::from_buf(self.buf)
+                      .save(tip)
+    }
 }
 
 impl<'p, 'v> TryGet<Offset<'p, 'v>> for TryPile<'p, 'v> {

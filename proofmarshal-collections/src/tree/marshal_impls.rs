@@ -1,10 +1,14 @@
 use super::*;
 
 use std::error::Error;
+use std::ops::Deref;
 use thiserror::Error;
 
 use hoard::blob::*;
 use hoard::load::*;
+use hoard::save::*;
+use hoard::primitive::Primitive;
+use hoard::ptr::AsPtr;
 
 use super::flags::ValidateFlagsBlobError;
 
@@ -143,5 +147,253 @@ where S: Decode<Y>,
                 height: blob.field_unchecked(),
             }
         }
+    }
+}
+
+pub struct SumTreeSaver<Q, R, T: Encode<Q, R>, S, P: Ptr, Z: Encode<Q, R> = (), H = ()> {
+    tip_digest: Digest,
+    sum: S,
+    tip: TipState<Q, R, T, S, P>,
+    zone: Z::EncodePoll,
+    height: Height,
+    height_field: H,
+}
+
+enum TipState<Q, R, T: Encode<Q, R>, S, P: Ptr> {
+    Ready(P::Persist),
+    Inner(Box<InnerSaver<Q, R, T, S, P>>),
+    Value(T::EncodePoll),
+    Done(R),
+}
+
+pub struct InnerSaver<Q, R, T: Encode<Q, R>, S, P: Ptr, H = ()> {
+    state: InnerSaverState,
+    left: SumTreeSaver<Q, R, T, S, P>,
+    right: SumTreeSaver<Q, R, T, S, P>,
+    height_field: H,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InnerSaverState {
+    Ready,
+    DoneLeft,
+    Done,
+}
+
+impl<Q, R, T: Encode<Q, R>, S, P: Ptr, Z> Save<Q, R> for SumTreeDyn<T, S, P, Z>
+where R: Primitive,
+      S: MerkleSum<T> + Primitive,
+      Z: Encode<Q, R>,
+      P: AsPtr<Q>,
+{
+    type SavePoll = SumTreeSaver<Q, R, T, S, P, Z>;
+
+    fn init_save(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::SavePoll {
+        SumTreeSaver {
+            tip_digest: self.tip_digest(),
+            sum: self.sum(),
+            zone: self.zone.init_encode(dst),
+            height: self.height(),
+            height_field: (),
+            tip: match self.get_dirty_tip() {
+                Err(persist_ptr) => TipState::Ready(persist_ptr),
+                Ok(TipRef::Leaf(value)) => TipState::Value(value.init_encode(dst)),
+                Ok(TipRef::Inner(inner)) => TipState::Inner(inner.init_save(dst).into()),
+            }
+        }
+    }
+}
+
+impl<Q, R, T: Encode<Q, R>, S, P: Ptr, Z> Encode<Q, R> for SumTree<T, S, P, Z>
+where R: Primitive,
+      S: MerkleSum<T> + Primitive,
+      Z: Encode<Q, R>,
+      P: AsPtr<Q>,
+{
+    type EncodePoll = SumTreeSaver<Q, R, T, S, P, Z, Height>;
+
+    fn init_encode(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::EncodePoll {
+        let saver = self.deref().init_save(dst);
+
+        // Add in the height field
+        SumTreeSaver {
+            height_field: self.height(),
+            tip_digest: saver.tip_digest,
+            sum: saver.sum,
+            zone: saver.zone,
+            height: saver.height,
+            tip: saver.tip,
+        }
+    }
+}
+
+impl<Q, R, T: Encode<Q, R>, S, P: Ptr, Z: Encode<Q, R>, H> SavePoll<Q, R> for SumTreeSaver<Q, R, T, S, P, Z, H>
+where R: Primitive,
+      S: MerkleSum<T> + Primitive,
+      H: Primitive,
+      P: AsPtr<Q>,
+{
+    fn save_poll<D: SavePtr<Source=Q, Target=R>>(&mut self, mut dst: D) -> Result<D, D::Error> {
+        dst = self.zone.save_poll(dst)?;
+
+        loop {
+            self.tip = match &mut self.tip {
+                TipState::Ready(persist_ptr) => {
+                    let ptr: &P = persist_ptr.as_ptr();
+                    let ptr: &Q = ptr.as_ptr();
+                    if let Ok(height) = NonZeroHeight::try_from(self.height) {
+                        match unsafe { dst.check_dirty::<InnerDyn<T, S, P>>(ptr, height) } {
+                            Ok(r_ptr) => TipState::Done(r_ptr),
+                            Err(inner) => TipState::Inner(inner.init_save(&dst).into()),
+                        }
+                    } else {
+                        match unsafe { dst.check_dirty::<T>(ptr, ()) } {
+                            Ok(r_ptr) => TipState::Done(r_ptr),
+                            Err(value) => TipState::Value(value.init_encode(&dst)),
+                        }
+                    }
+                },
+                TipState::Inner(inner) => {
+                    dst = inner.save_poll(dst)?;
+                    let (d, r_ptr) = dst.try_save_ptr(&**inner)?;
+                    dst = d;
+                    TipState::Done(r_ptr)
+                },
+                TipState::Value(value) => {
+                    dst = value.save_poll(dst)?;
+                    let (d, r_ptr) = dst.try_save_ptr(value)?;
+                    dst = d;
+                    TipState::Done(r_ptr)
+                },
+                TipState::Done(_) => break Ok(dst),
+            }
+        }
+    }
+}
+
+impl<Q, R, T: Encode<Q, R>, S, P: Ptr, Z: Encode<Q, R>, H> EncodeBlob for SumTreeSaver<Q, R, T, S, P, Z, H>
+where R: Primitive,
+      S: Primitive,
+      H: Primitive,
+{
+    const BLOB_LEN: usize = <Flags as ValidateBlob>::BLOB_LEN +
+                            <Digest as ValidateBlob>::BLOB_LEN +
+                            <S as ValidateBlob>::BLOB_LEN +
+                            <R as ValidateBlob>::BLOB_LEN +
+                            <H as ValidateBlob>::BLOB_LEN;
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        if let TipState::Done(r_ptr) = &self.tip {
+            dst.write_primitive(&0u8)?
+               .write_primitive(&self.tip_digest)?
+               .write_primitive(&self.sum)?
+               .write_primitive(r_ptr)?
+               .write_primitive(&self.height_field)?
+               .done()
+        } else {
+            panic!()
+        }
+    }
+}
+
+impl<Q, R, T: Encode<Q, R>, S, P: Ptr> Save<Q, R> for InnerDyn<T, S, P>
+where R: Primitive,
+      S: MerkleSum<T> + Primitive,
+      P: AsPtr<Q>,
+{
+    type SavePoll = InnerSaver<Q, R, T, S, P>;
+
+    fn init_save(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::SavePoll {
+        InnerSaver {
+            state: InnerSaverState::Ready,
+            left: self.left().init_save(dst),
+            right: self.right().init_save(dst),
+            height_field: (),
+        }
+    }
+}
+
+impl<Q, R, T: Encode<Q, R>, S, P: Ptr> SavePoll<Q, R> for InnerSaver<Q, R, T, S, P>
+where R: Primitive,
+      S: MerkleSum<T> + Primitive,
+      P: AsPtr<Q>,
+{
+    fn save_poll<D: SavePtr<Source=Q, Target=R>>(&mut self, mut dst: D) -> Result<D, D::Error> {
+        loop {
+            self.state = match self.state {
+                InnerSaverState::Ready => {
+                    dst = self.left.save_poll(dst)?;
+                    InnerSaverState::DoneLeft
+                },
+                InnerSaverState::DoneLeft => {
+                    dst = self.right.save_poll(dst)?;
+                    InnerSaverState::Done
+                },
+                InnerSaverState::Done => break Ok(dst),
+            }
+        }
+    }
+}
+
+impl<Q, R, T: Encode<Q, R>, S, P: Ptr, H> EncodeBlob for InnerSaver<Q, R, T, S, P, H>
+where R: Primitive,
+      S: Primitive,
+      H: Primitive,
+{
+    const BLOB_LEN: usize = (<SumTreeSaver<Q, R, T, S, P> as EncodeBlob>::BLOB_LEN * 2) + H::BLOB_LEN;
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
+        assert_eq!(self.state, InnerSaverState::Done);
+        dst.write(&self.left)?
+           .write(&self.right)?
+           .write_primitive(&self.height_field)?
+           .done()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use hoard::prelude::*;
+
+    #[test]
+    fn test() {
+        let pile = Pile::default();
+        let tip = Tree::new_leaf_in(42u8, pile);
+
+        let (buf, offset) = pile.save_to_vec(&tip);
+        assert_eq!(offset, 1);
+        assert_eq!(buf,
+            &[42,
+              0, // flags
+              0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
+              1,0,0,0,0,0,0,0, // tip ptr
+              0, // height
+            ][..]
+        );
+
+        let tip2 = Tree::new_leaf_in(43u8, pile);
+        let tip = tip.try_join_in(tip2, pile).unwrap();
+
+        let (buf, offset) = pile.save_to_vec(&tip);
+        assert_eq!(offset, 1 + 1 + (41*2));
+        assert_eq!(buf,
+            &[42, 43, // leaf values
+
+              // inner
+              0, // flags
+              0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
+              1,0,0,0,0,0,0,0, // tip ptr, left leaf
+              0, // flags
+              0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
+              3,0,0,0,0,0,0,0, // tip ptr, right leaf
+
+              // tip
+              0, // flags
+              0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
+              5,0,0,0,0,0,0,0, // tip ptr, inner
+              1, // height
+            ][..]
+        );
     }
 }

@@ -195,6 +195,48 @@ impl<T, S, P: Ptr, Z> SumTreeDyn<T, S, P, Z> {
         }
     }
 
+    #[inline]
+    pub fn tip_digest(&self) -> Digest
+        where S: MerkleSum<T>
+    {
+        if let Some(digest) = self.try_tip_digest() {
+            digest
+        } else {
+            self.fix_dirty_tip_digest()
+        }
+    }
+
+    /// Tries to get the sum, if already calculated.
+    pub fn try_tip_digest(&self) -> Option<Digest> {
+        self.data.try_tip_digest()
+    }
+
+    fn fix_dirty_tip_digest(&self) -> Digest
+    {
+        Digest::default()
+        /*
+        let sum = match self.get_dirty_tip().expect("dirty tip pointer") {
+            TipRef::Leaf(leaf) => S::from_item(leaf),
+            TipRef::Inner(inner) => inner.sum(),
+        };
+
+        match self.data.try_lock(Flags::SUM_LOCKED) {
+            Ok(old_flags) => {
+                unsafe {
+                    *self.data.sum.get() = sum;
+                }
+
+                self.data.unlock(Flags::SUM_LOCKED, Flags::SUM_DIRTY);
+
+                sum
+            },
+            Err(old_flags) => {
+                todo!("race: {:?}", old_flags)
+            },
+        }
+        */
+    }
+
     fn get_dirty_tip<'a>(&'a self) -> Result<TipRef<'a, T, S, P>, P::Persist> {
         unsafe {
             if let Ok(height) = NonZeroHeight::try_from(self.height()) {

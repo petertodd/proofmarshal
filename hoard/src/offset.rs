@@ -401,6 +401,15 @@ impl<'p, 'v> ShallowDumper<'p, 'v> {
         }
     }
 
+    pub fn from_buf(buf: &[u8]) -> Self {
+        Self {
+            marker: PhantomData,
+            initial_offset: buf.len(),
+            written: Vec::from(buf),
+        }
+    }
+
+
     pub fn save<T: ?Sized>(self, value: &T) -> (Vec<u8>, Offset<'p, 'v>)
         where T: Save<OffsetMut<'p, 'v>, Offset<'p, 'v>>
     {
