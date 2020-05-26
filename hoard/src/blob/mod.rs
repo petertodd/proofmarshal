@@ -31,7 +31,7 @@ impl<'a, T: ?Sized + Pointee> Borrow<Blob<'a, T>> for ValidBlob<'a, T> {
     }
 }
 
-pub trait ValidateBlob : Sized {
+pub trait ValidateBlob : Pointee {
     const BLOB_LEN: usize;
     type Error : 'static + std::error::Error;
 
@@ -42,8 +42,8 @@ pub unsafe trait BlobLen : Pointee {
     fn try_blob_len(metadata: Self::Metadata) -> Result<usize, Self::LayoutError>;
 }
 
-unsafe impl<T: ValidateBlob> BlobLen for T {
-    fn try_blob_len(_: ()) -> Result<usize, Self::LayoutError> {
+unsafe impl<T: ?Sized + ValidateBlob> BlobLen for T {
+    fn try_blob_len(_: T::Metadata) -> Result<usize, Self::LayoutError> {
         Ok(T::BLOB_LEN)
     }
 }
@@ -54,7 +54,7 @@ pub trait ValidateBlobPtr : BlobLen {
     fn validate_blob_ptr<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error>;
 }
 
-impl<T: ValidateBlob> ValidateBlobPtr for T {
+impl<T: ?Sized + ValidateBlob> ValidateBlobPtr for T {
     type Error = T::Error;
 
     fn validate_blob_ptr<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
@@ -172,6 +172,10 @@ where B: Borrow<Blob<'a, T>>
 
     pub fn into_inner(self) -> B {
         self.blob
+    }
+
+    pub fn metadata(&self) -> T::Metadata {
+        self.blob.borrow().metadata
     }
 }
 

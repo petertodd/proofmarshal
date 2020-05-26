@@ -26,7 +26,7 @@ pub trait WriteBlob : Sized {
         val.encode_blob(dst)
     }
 
-    fn write_primitive<T: Primitive>(self, val: &T) -> Result<Self, Self::Error> {
+    fn write_primitive<T: ?Sized + Primitive>(self, val: &T) -> Result<Self, Self::Error> {
         let mut encoder = Encode::<!,!>::init_encode(val, &DummySavePtr);
         encoder.save_poll(DummySavePtr).into_ok();
         self.write(&encoder)

@@ -64,12 +64,16 @@ pub mod prelude {
     pub use crate::{
         pointee::Pointee,
         ptr::{
-            Alloc, Get, GetMut,
+            Alloc,
+            Get, GetMut,
+            TryGet, TryGetMut,
             Ptr,
         },
         pile::{
             TryPile,
             Pile,
         },
+        load::Load,
+        refs::Ref,
     };
 }

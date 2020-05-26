@@ -12,7 +12,9 @@ pub trait Primitive : Decode<()> + Encode<!, !> {
         vec![].write_primitive(self).into_ok()
     }
 
-    fn try_decode_blob_bytes(src: &[u8]) -> Result<Self, Self::Error> {
+    fn try_decode_blob_bytes(src: &[u8]) -> Result<Self, Self::Error>
+        where Self: Sized
+    {
         let blob = Blob::<Self>::try_from(src).unwrap();
         let valid_blob = Self::validate_blob(blob.into())?;
         Ok(Self::decode_blob(BlobDecoder::new(valid_blob, &())))
