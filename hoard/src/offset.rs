@@ -21,6 +21,7 @@ use crate::primitive::*;
 use crate::ptr::*;
 
 use crate::heap::HeapPtr;
+use crate::pile::Pile;
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
@@ -158,14 +159,14 @@ impl<'p, 'v, A> ValidateBlob for OffsetMut<'p, 'v, A> {
     }
 }
 
-impl<'p, 'v, Z> Decode<Z> for Offset<'p, 'v> {
-    fn decode_blob(blob: BlobDecoder<Z, Self>) -> Self {
+impl<Q: Ptr> Decode<Q> for Offset<'_, '_> {
+    fn decode_blob(blob: BlobDecoder<Q, Self>) -> Self {
         todo!()
     }
 }
 
-impl<'p, 'v, Z> Decode<Z> for OffsetMut<'p, 'v> {
-    fn decode_blob(blob: BlobDecoder<Z, Self>) -> Self {
+impl<Q: Ptr> Decode<Q> for OffsetMut<'_, '_> {
+    fn decode_blob(blob: BlobDecoder<Q, Self>) -> Self {
         todo!()
     }
 }
@@ -225,6 +226,7 @@ impl<'p, 'v> AsPtr<Self> for Offset<'p, 'v> {
 
 impl<'p, 'v> Ptr for Offset<'p, 'v> {
     type Persist = Self;
+    type PersistZone = Pile<'p, 'v>;
 
     #[inline(always)]
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
@@ -283,6 +285,7 @@ impl<'p, 'v, A> AsPtr<OffsetMut<'p, 'v, A>> for HeapPtr {
 
 impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
     type Persist = Offset<'p, 'v>;
+    type PersistZone = Pile<'p, 'v>;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
         match self.kind() {

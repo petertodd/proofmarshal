@@ -7,7 +7,7 @@ use crate::blob::{Blob, ValidateBlob};
 
 use leint::Le;
 
-pub trait Primitive : Decode<()> + Encode<!, !> {
+pub trait Primitive : Decode<!> + Encode<!, !> {
     fn encode_blob_bytes(&self) -> Vec<u8> {
         vec![].write_primitive(self).into_ok()
     }

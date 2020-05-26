@@ -8,7 +8,7 @@ use hoard::blob::*;
 use hoard::load::*;
 use hoard::save::*;
 use hoard::primitive::Primitive;
-use hoard::ptr::AsPtr;
+use hoard::ptr::{Ptr, AsPtr};
 
 use super::flags::ValidateFlagsBlobError;
 
@@ -40,11 +40,11 @@ where S: ValidateBlob,
     }
 }
 
-impl<Z, T, S, P> Decode<Z> for SumTreeData<T, S, P>
-where S: Decode<Z>,
-      P: Decode<Z>,
+impl<Q: Ptr, T, S, P> Decode<Q> for SumTreeData<T, S, P>
+where S: Decode<Q>,
+      P: Decode<Q>,
 {
-    fn decode_blob(mut blob: BlobDecoder<Z, Self>) -> Self {
+    fn decode_blob(mut blob: BlobDecoder<Q, Self>) -> Self {
         unsafe {
             Self {
                 marker: PhantomData,
@@ -90,12 +90,12 @@ where S: ValidateBlob,
 unsafe impl<T, S, P:Ptr, Z> Persist for SumTree<T, S, P, Z>
 where S: Persist, P: Persist, Z: Persist {}
 
-impl<Y, T, S, P: Ptr, Z> Decode<Y> for SumTree<T, S, P, Z>
-where S: Decode<Y>,
-      P: Decode<Y>,
-      Z: Decode<Y>,
+impl<Q: Ptr, T, S, P: Ptr, Z> Decode<Q> for SumTree<T, S, P, Z>
+where S: Decode<Q>,
+      P: Decode<Q>,
+      Z: Decode<Q>,
 {
-    fn decode_blob(mut blob: BlobDecoder<Y, Self>) -> Self {
+    fn decode_blob(mut blob: BlobDecoder<Q, Self>) -> Self {
         unsafe {
             Self {
                 data: blob.field_unchecked(),
@@ -135,16 +135,50 @@ where S: ValidateBlob,
 unsafe impl<T, S, P: Ptr> Persist for Inner<T, S, P>
 where S: Persist, P: Persist, {}
 
-impl<Y, T, S, P: Ptr> Decode<Y> for Inner<T, S, P>
-where S: Decode<Y>,
-      P: Decode<Y>,
+impl<Q: Ptr, T, S, P: Ptr> Decode<Q> for Inner<T, S, P>
+where S: Decode<Q>,
+      P: Decode<Q>,
 {
-    fn decode_blob(mut blob: BlobDecoder<Y, Self>) -> Self {
+    fn decode_blob(mut blob: BlobDecoder<Q, Self>) -> Self {
         unsafe {
             Self {
                 left: ManuallyDrop::new(blob.field_unchecked()),
                 right: ManuallyDrop::new(blob.field_unchecked()),
                 height: blob.field_unchecked(),
+            }
+        }
+    }
+}
+
+impl<T, S, P: Ptr> ValidateBlob for InnerDyn<T, S, P>
+where S: ValidateBlob,
+      P: ValidateBlob,
+{
+    const BLOB_LEN: usize = <SumTreeData<T, S, P> as ValidateBlob>::BLOB_LEN +
+                            <SumTreeData<T, S, P> as ValidateBlob>::BLOB_LEN;
+
+    type Error = ValidateInnerBlobError<S::Error, P::Error>;
+
+    fn validate_blob<'a>(mut blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        /*
+        blob.field::<SumTreeData<T, S, P>>().map_err(ValidateInnerBlobError::Left)?;
+        blob.field::<SumTreeData<T, S, P>>().map_err(ValidateInnerBlobError::Right)?;
+        blob.field::<Height>().map_err(ValidateInnerBlobError::Height)?;
+        unsafe { Ok(blob.finish()) }
+        */ todo!()
+    }
+}
+
+impl<Q: Ptr, T, S, P: Ptr> Load<Q> for InnerDyn<T, S, P>
+where S: Decode<Q>,
+      P: Decode<Q>,
+{
+    fn load_blob(mut blob: BlobDecoder<Q, Self>) -> Self::Owned {
+        unsafe {
+            Inner {
+                left: ManuallyDrop::new(blob.field_unchecked()),
+                right: ManuallyDrop::new(blob.field_unchecked()),
+                height: blob.metadata(),
             }
         }
     }

@@ -15,30 +15,30 @@ use crate::ptr::Ptr;
 
 pub mod impls;
 
-pub trait Decode<Z> : ValidateBlob {
-    fn decode_blob(blob: BlobDecoder<Z, Self>) -> Self;
+pub trait Decode<Q: Ptr> : ValidateBlob {
+    fn decode_blob(blob: BlobDecoder<Q, Self>) -> Self;
 }
 
-pub trait Load<Z> : IntoOwned + ValidateBlobPtr {
-    fn load_blob(blob: BlobDecoder<Z, Self>) -> Self::Owned;
+pub trait Load<Q: Ptr> : IntoOwned + ValidateBlobPtr {
+    fn load_blob(blob: BlobDecoder<Q, Self>) -> Self::Owned;
 
-    fn deref_blob<'a>(blob: BlobDecoder<'a, '_, Z, Self>) -> Ref<'a, Self> {
+    fn deref_blob<'a>(blob: BlobDecoder<'a, '_, Q, Self>) -> Ref<'a, Self> {
         Ref::Owned(Self::load_blob(blob))
     }
 }
 
-impl<Z, T: Decode<Z>> Load<Z> for T {
-    fn load_blob<'a>(blob: BlobDecoder<'a, '_, Z, Self>) -> Self {
+impl<Q: Ptr, T: Decode<Q>> Load<Q> for T {
+    fn load_blob<'a>(blob: BlobDecoder<'a, '_, Q, Self>) -> Self {
         Self::decode_blob(blob)
     }
 }
 
-pub struct BlobDecoder<'a, 'z, Z, T: ?Sized + BlobLen> {
+pub struct BlobDecoder<'a, 'z, Q: Ptr, T: ?Sized + BlobLen> {
     cursor: BlobCursor<'a, T, ValidBlob<'a, T>>,
-    zone: &'z Z,
+    zone: &'z Q::PersistZone,
 }
 
-impl<'a, 'z, Z, T: ?Sized + BlobLen> ops::Deref for BlobDecoder<'a, 'z, Z, T> {
+impl<'a, 'z, Q: Ptr, T: ?Sized + BlobLen> ops::Deref for BlobDecoder<'a, 'z, Q, T> {
     type Target = BlobCursor<'a, T, ValidBlob<'a, T>>;
 
     fn deref(&self) -> &Self::Target {
@@ -46,26 +46,26 @@ impl<'a, 'z, Z, T: ?Sized + BlobLen> ops::Deref for BlobDecoder<'a, 'z, Z, T> {
     }
 }
 
-impl<'a, 'z, Z, T: ?Sized + BlobLen> ops::DerefMut for BlobDecoder<'a, 'z, Z, T> {
+impl<'a, 'z, Q: Ptr, T: ?Sized + BlobLen> ops::DerefMut for BlobDecoder<'a, 'z, Q, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cursor
     }
 }
 
-impl<'a, 'z, Z, T: ?Sized + BlobLen> BlobDecoder<'a, 'z, Z, T> {
-    pub fn new(blob: ValidBlob<'a, T>, zone: &'z Z) -> Self {
+impl<'a, 'z, Q: Ptr, T: ?Sized + BlobLen> BlobDecoder<'a, 'z, Q, T> {
+    pub fn new(blob: ValidBlob<'a, T>, zone: &'z Q::PersistZone) -> Self {
         Self {
             cursor: blob.into(),
             zone
         }
     }
 
-    pub unsafe fn field_unchecked<F: Decode<Z>>(&mut self) -> F {
+    pub unsafe fn field_unchecked<F: Decode<Q>>(&mut self) -> F {
         let blob = self.field_blob::<F>().assume_valid();
         F::decode_blob(BlobDecoder::new(blob, self.zone))
     }
 
-    pub fn zone(&self) -> &'z Z {
+    pub fn zone(&self) -> &'z Q::PersistZone {
         self.zone
     }
 

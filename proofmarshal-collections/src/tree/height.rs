@@ -13,6 +13,7 @@ use hoard::blob::*;
 use hoard::load::*;
 use hoard::save::*;
 use hoard::primitive::*;
+use hoard::ptr::Ptr;
 
 use proofmarshal_core::commit::{Digest, Commit, Verbatim, WriteVerbatim};
 
@@ -360,8 +361,8 @@ impl ValidateBlob for Height {
     }
 }
 
-impl<Z> Decode<Z> for Height {
-    fn decode_blob(blob: hoard::load::BlobDecoder<Z, Self>) -> Self {
+impl<Q: Ptr> Decode<Q> for Height {
+    fn decode_blob(blob: hoard::load::BlobDecoder<Q, Self>) -> Self {
         blob.to_value().clone()
     }
 }
@@ -394,8 +395,8 @@ impl ValidateBlob for NonZeroHeight {
     }
 }
 
-impl<Z> Decode<Z> for NonZeroHeight {
-    fn decode_blob(blob: hoard::load::BlobDecoder<Z, Self>) -> Self {
+impl<Q: Ptr> Decode<Q> for NonZeroHeight {
+    fn decode_blob(blob: hoard::load::BlobDecoder<Q, Self>) -> Self {
         blob.to_value().clone()
     }
 }

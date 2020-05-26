@@ -40,6 +40,12 @@ pub struct TryPile<'p, 'v> {
     buf: &'v [u8],
 }
 
+impl<'p, 'v> AsZone<Self> for TryPile<'p, 'v> {
+    fn as_zone(&self) -> &Self {
+        self
+    }
+}
+
 impl<'p> Default for TryPile<'p, 'static> {
     fn default() -> Self {
         unsafe { Self::new_unchecked(&[]) }
@@ -88,6 +94,10 @@ impl<'p, 'v> TryPile<'p, 'v> {
         ShallowDumper::from_buf(self.buf)
                       .save(tip)
     }
+
+    fn coerce_valid(&self) -> &Pile<'p, 'v> {
+        unsafe { &*(self as *const _ as *const _) }
+    }
 }
 
 impl<'p, 'v> TryGet<Offset<'p, 'v>> for TryPile<'p, 'v> {
@@ -95,20 +105,20 @@ impl<'p, 'v> TryGet<Offset<'p, 'v>> for TryPile<'p, 'v> {
 
     unsafe fn try_get_unchecked<'a, T: ?Sized>(&self, ptr: &'a Offset<'p, 'v>, metadata: T::Metadata)
         -> Result<Ref<'a, T>, Self::Error>
-        where T: Load<Self>
+        where T: Load<Offset<'p, 'v>>
     {
         let blob = self.get_valid_blob::<T>(*ptr, metadata)?;
 
-        let loader = BlobDecoder::new(blob, self);
+        let loader = BlobDecoder::new(blob, self.coerce_valid());
         Ok(T::deref_blob(loader))
     }
 
     unsafe fn try_take_unchecked<'a, T: ?Sized>(&self, ptr: Offset<'p, 'v>, metadata: T::Metadata)
         -> Result<T::Owned, Self::Error>
-        where T: Load<Self>
+        where T: Load<Offset<'p, 'v>>
     {
         let blob = self.get_valid_blob::<T>(ptr, metadata)?;
-        let loader = BlobDecoder::new(blob, self);
+        let loader = BlobDecoder::new(blob, self.coerce_valid());
         Ok(T::load_blob(loader))
     }
 }
@@ -118,7 +128,7 @@ impl<'p, 'v> TryGet<OffsetMut<'p, 'v>> for TryPile<'p, 'v> {
 
     unsafe fn try_get_unchecked<'a, T: ?Sized>(&self, ptr: &'a OffsetMut<'p, 'v>, metadata: T::Metadata)
         -> Result<Ref<'a, T>, Self::Error>
-        where T: Load<Self>
+        where T: Load<OffsetMut<'p, 'v>>
     {
         match ptr.try_get_dirty_unchecked::<T>(metadata) {
             Ok(r) => Ok(Ref::Ref(r)),
@@ -126,7 +136,7 @@ impl<'p, 'v> TryGet<OffsetMut<'p, 'v>> for TryPile<'p, 'v> {
                 let blob = self.get_valid_blob::<T>(offset.cast(), metadata)
                                .ok().unwrap();
 
-                let loader = BlobDecoder::new(blob, self);
+                let loader = BlobDecoder::new(blob, self.coerce_valid());
                 Ok(T::deref_blob(loader))
             }
         }
@@ -134,7 +144,7 @@ impl<'p, 'v> TryGet<OffsetMut<'p, 'v>> for TryPile<'p, 'v> {
 
     unsafe fn try_take_unchecked<'a, T: ?Sized>(&self, ptr: OffsetMut<'p, 'v>, metadata: T::Metadata)
         -> Result<T::Owned, Self::Error>
-        where T: Load<Self>
+        where T: Load<OffsetMut<'p, 'v>>
     {
         match ptr.try_take_dirty_unchecked::<T>(metadata) {
             Ok(owned) => Ok(owned),
@@ -142,7 +152,7 @@ impl<'p, 'v> TryGet<OffsetMut<'p, 'v>> for TryPile<'p, 'v> {
                 let blob = self.get_valid_blob::<T>(offset.cast(), metadata)
                                .ok().unwrap();
 
-                let loader = BlobDecoder::new(blob, self);
+                let loader = BlobDecoder::new(blob, self.coerce_valid());
                 Ok(T::load_blob(loader))
             }
         }
@@ -164,6 +174,18 @@ impl<'p, 'v> Alloc for TryPile<'p, 'v> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Pile<'p, 'v>(TryPile<'p, 'v>);
+
+impl<'p, 'v> AsZone<Self> for Pile<'p, 'v> {
+    fn as_zone(&self) -> &Self {
+        self
+    }
+}
+
+impl<'p, 'v> AsZone<TryPile<'p, 'v>> for Pile<'p, 'v> {
+    fn as_zone(&self) -> &TryPile<'p, 'v> {
+        &self.0
+    }
+}
 
 impl<'p, 'v> Deref for Pile<'p, 'v> {
     type Target = TryPile<'p, 'v>;
@@ -206,7 +228,7 @@ impl<'p, 'v> Pile<'p, 'v> {
 
 impl<'p, 'v> Get<Offset<'p, 'v>> for Pile<'p, 'v> {
     unsafe fn get_unchecked<'a, T: ?Sized>(&self, ptr: &'a Offset<'p, 'v>, metadata: T::Metadata) -> Ref<'a, T>
-        where T: Load<Self>
+        where T: Load<Offset<'p, 'v>>
     {
         let blob = self.get_valid_blob::<T>(*ptr, metadata)
                        .unwrap();
@@ -216,7 +238,7 @@ impl<'p, 'v> Get<Offset<'p, 'v>> for Pile<'p, 'v> {
     }
 
     unsafe fn take_unchecked<'a, T: ?Sized>(&self, ptr: Offset<'p, 'v>, metadata: T::Metadata) -> T::Owned
-        where T: Load<Self>
+        where T: Load<Offset<'p, 'v>>
     {
         let blob = self.get_valid_blob::<T>(ptr, metadata)
                        .unwrap();
@@ -227,7 +249,7 @@ impl<'p, 'v> Get<Offset<'p, 'v>> for Pile<'p, 'v> {
 
 impl<'p, 'v> Get<OffsetMut<'p, 'v>> for Pile<'p, 'v> {
     unsafe fn get_unchecked<'a, T: ?Sized>(&self, ptr: &'a OffsetMut<'p, 'v>, metadata: T::Metadata) -> Ref<'a, T>
-        where T: Load<Self>
+        where T: Load<OffsetMut<'p, 'v>>
     {
         match ptr.try_get_dirty_unchecked::<T>(metadata) {
             Ok(r) => Ref::Ref(r),
@@ -242,7 +264,7 @@ impl<'p, 'v> Get<OffsetMut<'p, 'v>> for Pile<'p, 'v> {
     }
 
     unsafe fn take_unchecked<'a, T: ?Sized>(&self, ptr: OffsetMut<'p, 'v>, metadata: T::Metadata) -> T::Owned
-        where T: Load<Self>
+        where T: Load<OffsetMut<'p, 'v>>
     {
         match ptr.try_take_dirty_unchecked::<T>(metadata) {
             Ok(owned) => owned,

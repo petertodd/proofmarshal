@@ -27,8 +27,19 @@ impl<Q> AsPtr<Q> for ! {
     }
 }
 
+pub trait AsZone<Z> {
+    fn as_zone(&self) -> &Z;
+}
+
+impl<Z> AsZone<Z> for ! {
+    fn as_zone(&self) -> &Z {
+        match *self {}
+    }
+}
+
 pub trait Ptr : Sized + AsPtr<Self> + fmt::Debug {
     type Persist : AsPtr<Self> + Clone + fmt::Debug;
+    type PersistZone;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata);
 
@@ -64,15 +75,15 @@ pub trait Ptr : Sized + AsPtr<Self> + fmt::Debug {
 
 pub trait Get<P: Ptr> : Sized {
     unsafe fn get_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a P, metadata: T::Metadata) -> Ref<'a, T>
-        where T: Load<Self>;
+        where T: Load<P>;
 
     unsafe fn take_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: P, metadata: T::Metadata) -> T::Owned
-        where T: Load<Self>;
+        where T: Load<P>;
 }
 
 pub trait GetMut<P: Ptr> : Get<P> {
     unsafe fn get_mut_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut P, metadata: T::Metadata) -> &'a mut T
-        where T: Load<Self>;
+        where T: Load<P>;
 }
 
 pub trait TryGet<P: Ptr> : Sized {
@@ -80,17 +91,17 @@ pub trait TryGet<P: Ptr> : Sized {
 
     unsafe fn try_get_unchecked<'a, T: ?Sized>(&self, ptr: &'a P, metadata: T::Metadata)
         -> Result<Ref<'a, T>, Self::Error>
-        where T: Load<Self>;
+        where T: Load<P>;
 
     unsafe fn try_take_unchecked<'a, T: ?Sized>(&self, ptr: P, metadata: T::Metadata)
         -> Result<T::Owned, Self::Error>
-        where T: Load<Self>;
+        where T: Load<P>;
 }
 
 pub trait TryGetMut<P: Ptr> : TryGet<P> {
     unsafe fn try_get_mut_unchecked<'a, T: ?Sized>(&self, ptr: &'a mut P, metadata: T::Metadata)
         -> Result<&'a mut T, Self::Error>
-        where T: Load<Self>;
+        where T: Load<P>;
 }
 
 impl<P: Ptr, Z> TryGet<P> for Z
@@ -100,14 +111,14 @@ where Z: Get<P>
 
     unsafe fn try_get_unchecked<'a, T: ?Sized>(&self, ptr: &'a P, metadata: T::Metadata)
         -> Result<Ref<'a, T>, Self::Error>
-        where T: Load<Self>
+        where T: Load<P>
     {
         Ok(self.get_unchecked::<T>(ptr, metadata))
     }
 
     unsafe fn try_take_unchecked<'a, T: ?Sized>(&self, ptr: P, metadata: T::Metadata)
         -> Result<T::Owned, Self::Error>
-        where T: Load<Self>
+        where T: Load<P>
     {
         Ok(self.take_unchecked::<T>(ptr, metadata))
     }
@@ -118,7 +129,7 @@ where Z: GetMut<P>
 {
     unsafe fn try_get_mut_unchecked<'a, T: ?Sized>(&self, ptr: &'a mut P, metadata: T::Metadata)
         -> Result<&'a mut T, Self::Error>
-        where T: Load<Self>
+        where T: Load<P>
     {
         Ok(self.get_mut_unchecked::<T>(ptr, metadata))
     }
@@ -166,6 +177,7 @@ impl<A: ?Sized + Alloc> Alloc for Box<A> {
 
 impl Ptr for ! {
     type Persist = !;
+    type PersistZone = ();
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
         match *self {}

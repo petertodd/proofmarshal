@@ -8,10 +8,10 @@ use sliceinit::SliceInitializer;
 
 use super::*;
 
-impl<Z, T, const N: usize> Decode<Z> for [T; N]
-where T: Decode<Z>
+impl<Q: Ptr, T, const N: usize> Decode<Q> for [T; N]
+where T: Decode<Q>
 {
-    fn decode_blob<'a>(mut blob: BlobDecoder<Z, Self>) -> Self {
+    fn decode_blob<'a>(mut blob: BlobDecoder<Q, Self>) -> Self {
         let mut r: [MaybeUninit<T>; N] = unsafe { MaybeUninit::uninit().assume_init() };
         let mut initializer = SliceInitializer::new(&mut r[..]);
 

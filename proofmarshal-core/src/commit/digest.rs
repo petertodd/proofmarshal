@@ -31,6 +31,7 @@ use std::mem;
 use hoard::blob::*;
 use hoard::load::*;
 use hoard::save::*;
+use hoard::ptr::Ptr;
 use hoard::primitive::*;
 
 use super::*;
@@ -205,8 +206,8 @@ impl<T: ?Sized> ValidateBlob for Digest<T> {
     }
 }
 
-impl<Z, T: ?Sized> Decode<Z> for Digest<T> {
-    fn decode_blob(blob: hoard::load::BlobDecoder<Z, Self>) -> Self {
+impl<Q: Ptr, T: ?Sized> Decode<Q> for Digest<T> {
+    fn decode_blob(blob: hoard::load::BlobDecoder<Q, Self>) -> Self {
         blob.to_value().clone()
     }
 }

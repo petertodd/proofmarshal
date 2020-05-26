@@ -13,9 +13,11 @@ impl ValidateBlob for TryPile<'_, '_> {
     }
 }
 
-impl<Z: Borrow<Self>> Decode<Z> for TryPile<'_, '_> {
-    fn decode_blob(decoder: BlobDecoder<Z, Self>) -> Self {
-        decoder.zone().borrow().clone()
+impl<Q: Ptr> Decode<Q> for TryPile<'_, '_>
+where Q::PersistZone: AsZone<Self>
+{
+    fn decode_blob(decoder: BlobDecoder<Q, Self>) -> Self {
+        decoder.zone().as_zone().clone()
     }
 }
 
@@ -34,9 +36,11 @@ impl ValidateBlob for Pile<'_, '_> {
     }
 }
 
-impl<Z: Borrow<Self>> Decode<Z> for Pile<'_, '_> {
-    fn decode_blob(decoder: BlobDecoder<Z, Self>) -> Self {
-        decoder.zone().borrow().clone()
+impl<Q: Ptr> Decode<Q> for Pile<'_, '_>
+where Q::PersistZone: AsZone<Self>
+{
+    fn decode_blob(decoder: BlobDecoder<Q, Self>) -> Self {
+        decoder.zone().as_zone().clone()
     }
 }
 

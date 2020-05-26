@@ -59,38 +59,38 @@ where P: fmt::Debug,
 
 impl<T: ?Sized + Pointee, P: Ptr> Own<T, P> {
     pub fn get_in<'a, Z: Get<P>>(&'a self, zone: &Z) -> Ref<'a, T>
-        where T: Load<Z>
+        where T: Load<P>
     {
         unsafe { zone.get_unchecked::<T>(&self.inner.raw, self.inner.metadata) }
     }
 
     pub fn try_get_in<'a, Z: TryGet<P>>(&'a self, zone: &Z) -> Result<Ref<'a, T>, Z::Error>
-        where T: Load<Z>
+        where T: Load<P>
     {
         unsafe { zone.try_get_unchecked::<T>(&self.inner.raw, self.inner.metadata) }
     }
 
     pub fn get_mut_in<'a, Z: GetMut<P>>(&'a mut self, zone: &Z) -> &'a mut T
-        where T: Load<Z>
+        where T: Load<P>
     {
         unsafe { zone.get_mut_unchecked::<T>(&mut self.inner.raw, self.inner.metadata) }
     }
 
     pub fn try_get_mut_in<'a, Z: TryGetMut<P>>(&'a mut self, zone: &Z) -> Result<&'a mut T, Z::Error>
-        where T: Load<Z>
+        where T: Load<P>
     {
         unsafe { zone.try_get_mut_unchecked::<T>(&mut self.inner.raw, self.inner.metadata) }
     }
 
     pub fn take_in<'a, Z: Get<P>>(self, zone: &Z) -> T::Owned
-        where T: Load<Z>
+        where T: Load<P>
     {
         let fat = self.into_inner();
         unsafe { zone.take_unchecked::<T>(fat.raw, fat.metadata) }
     }
 
     pub fn try_take_in<'a, Z: TryGet<P>>(self, zone: &Z) -> Result<T::Owned, Z::Error>
-        where T: Load<Z>
+        where T: Load<P>
     {
         let fat = self.into_inner();
         unsafe { zone.try_take_unchecked::<T>(fat.raw, fat.metadata) }
@@ -130,11 +130,11 @@ where P: ValidateBlob,
     }
 }
 
-impl<Y, T: ?Sized + Pointee, P: Ptr> Decode<Y> for Own<T, P>
-where T::Metadata: Decode<Y>,
-      P: Decode<Y>,
+impl<Q: Ptr, T: ?Sized + Pointee, P: Ptr> Decode<Q> for Own<T, P>
+where T::Metadata: Decode<Q>,
+      P: Decode<Q>,
 {
-    fn decode_blob(mut blob: BlobDecoder<Y, Self>) -> Self {
+    fn decode_blob(mut blob: BlobDecoder<Q, Self>) -> Self {
         let r = unsafe {
             Self {
                 marker: PhantomData,

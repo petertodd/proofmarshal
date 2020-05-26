@@ -89,11 +89,11 @@ where P: Persist,
       M: Persist,
 {}
 
-impl<Z, T: ?Sized, P, M> Decode<Z> for Fat<T, P, M>
-where P: Decode<Z>,
-      M: Decode<Z>,
+impl<Q: Ptr, T: ?Sized, P, M> Decode<Q> for Fat<T, P, M>
+where P: Decode<Q>,
+      M: Decode<Q>,
 {
-    fn decode_blob(mut blob: BlobDecoder<Z, Self>) -> Self {
+    fn decode_blob(mut blob: BlobDecoder<Q, Self>) -> Self {
         unsafe {
             Fat {
                 _marker: PhantomData,

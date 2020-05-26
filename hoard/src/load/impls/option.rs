@@ -4,10 +4,8 @@ use std::error::Error;
 
 use super::*;
 
-impl<Z, T> Decode<Z> for Option<T>
-where T: Decode<Z>
-{
-    fn decode_blob<'a>(mut blob: BlobDecoder<Z, Self>) -> Self {
+impl<Q: Ptr, T: Decode<Q>> Decode<Q> for Option<T> {
+    fn decode_blob<'a>(mut blob: BlobDecoder<Q, Self>) -> Self {
         unsafe {
             match blob.field_unchecked::<u8>() {
                 1 => Some(blob.field_unchecked::<T>()),

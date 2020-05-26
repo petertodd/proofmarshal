@@ -35,7 +35,7 @@ impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z> {
 }
 
 impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z>
-where T: Load<Z>,
+where T: Load<P>,
 {
     pub fn get<'a>(&'a self) -> Ref<'a, T>
         where Z: Get<P>
@@ -115,12 +115,12 @@ where P: ValidateBlob,
     }
 }
 
-impl<Y, T: ?Sized + Pointee, P: Ptr, Z> Decode<Y> for Bag<T, P, Z>
-where P: Decode<Y>,
-      Z: Decode<Y>,
-      T::Metadata: Decode<Y>,
+impl<Q: Ptr, T: ?Sized + Pointee, P: Ptr, Z> Decode<Q> for Bag<T, P, Z>
+where P: Decode<Q>,
+      Z: Decode<Q>,
+      T::Metadata: Decode<Q>,
 {
-    fn decode_blob(mut blob: BlobDecoder<Y, Self>) -> Self {
+    fn decode_blob(mut blob: BlobDecoder<Q, Self>) -> Self {
         let r = unsafe {
             Self {
                 inner: blob.field_unchecked(),

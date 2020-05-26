@@ -79,6 +79,7 @@ impl AsPtr<HeapPtr> for HeapPtr {
 
 impl Ptr for HeapPtr {
     type Persist = !;
+    type PersistZone = !;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
         dealloc_impl::<T>(self.0, metadata)

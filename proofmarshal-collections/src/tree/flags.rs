@@ -7,6 +7,7 @@ use hoard::blob::*;
 use hoard::save::*;
 use hoard::load::*;
 use hoard::primitive::*;
+use hoard::ptr::Ptr;
 
 bitflags::bitflags! {
     pub struct Flags: u8 {
@@ -40,8 +41,8 @@ impl ValidateBlob for Flags {
     }
 }
 
-impl<Z> Decode<Z> for Flags {
-    fn decode_blob(blob: hoard::load::BlobDecoder<Z, Self>) -> Self {
+impl<Q: Ptr> Decode<Q> for Flags {
+    fn decode_blob(blob: hoard::load::BlobDecoder<Q, Self>) -> Self {
         blob.to_value().clone()
     }
 }
