@@ -216,6 +216,7 @@ enum InnerSaverState {
 
 impl<Q, R, T: Encode<Q, R>, S, P: Ptr, Z> Save<Q, R> for SumTreeDyn<T, S, P, Z>
 where R: Primitive,
+      T: Commit,
       S: MerkleSum<T> + Primitive,
       Z: Encode<Q, R>,
       P: AsPtr<Q>,
@@ -240,6 +241,7 @@ where R: Primitive,
 
 impl<Q, R, T: Encode<Q, R>, S, P: Ptr, Z> Encode<Q, R> for SumTree<T, S, P, Z>
 where R: Primitive,
+      T: Commit,
       S: MerkleSum<T> + Primitive,
       Z: Encode<Q, R>,
       P: AsPtr<Q>,
@@ -263,6 +265,7 @@ where R: Primitive,
 
 impl<Q, R, T: Encode<Q, R>, S, P: Ptr, Z: Encode<Q, R>, H> SavePoll<Q, R> for SumTreeSaver<Q, R, T, S, P, Z, H>
 where R: Primitive,
+      T: Commit,
       S: MerkleSum<T> + Primitive,
       H: Primitive,
       P: AsPtr<Q>,
@@ -332,6 +335,7 @@ where R: Primitive,
 
 impl<Q, R, T: Encode<Q, R>, S, P: Ptr> Save<Q, R> for InnerDyn<T, S, P>
 where R: Primitive,
+      T: Commit,
       S: MerkleSum<T> + Primitive,
       P: AsPtr<Q>,
 {
@@ -349,6 +353,7 @@ where R: Primitive,
 
 impl<Q, R, T: Encode<Q, R>, S, P: Ptr> SavePoll<Q, R> for InnerSaver<Q, R, T, S, P>
 where R: Primitive,
+      T: Commit,
       S: MerkleSum<T> + Primitive,
       P: AsPtr<Q>,
 {
@@ -400,7 +405,7 @@ mod tests {
         assert_eq!(buf,
             &[42,
               0, // flags
-              0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
+              42,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
               1,0,0,0,0,0,0,0, // tip ptr
               0, // height
             ][..]
@@ -416,15 +421,15 @@ mod tests {
 
               // inner
               0, // flags
-              0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
+              42,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
               1,0,0,0,0,0,0,0, // tip ptr, left leaf
               0, // flags
-              0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
+              43,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
               3,0,0,0,0,0,0,0, // tip ptr, right leaf
 
               // tip
               0, // flags
-              0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, // digest
+              144, 166, 31, 71, 11, 60, 188, 148, 181, 232, 180, 157, 94, 143, 94, 219, 159, 97, 255, 207, 94, 51, 109, 15, 214, 181, 46, 53, 44, 173, 99, 39, // digest
               5,0,0,0,0,0,0,0, // tip ptr, inner
               1, // height
             ][..]

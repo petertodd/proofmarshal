@@ -362,6 +362,23 @@ impl ToNonZeroHeight for NonZeroHeightDyn {
     }
 }
 
+impl Verbatim for Height {
+    const LEN: usize = mem::size_of::<Self>();
+
+    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
+        dst.write_bytes(&[self.0])
+    }
+}
+
+impl Verbatim for NonZeroHeight {
+    const LEN: usize = mem::size_of::<Self>();
+
+    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
+        let height: u8 = self.get().into();
+        dst.write_bytes(&[height])
+    }
+}
+
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 #[error("out of range: {0}")]
 pub struct ValidateBlobHeightError(u8);

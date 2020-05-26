@@ -53,7 +53,7 @@ impl<T: ?Sized> Verbatim for Digest<T> {
     const LEN: usize = 32;
 
     #[inline(always)]
-    fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error> {
+    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
         dst.write_bytes(&self.buf)
     }
 }
@@ -79,34 +79,39 @@ impl<T: ?Sized> Digest<T> {
         Digest::new(self.buf)
     }
 
-    pub fn hash_verbatim<U: ?Sized + Verbatim>(value: &U) -> Self {
-        if U::LEN <= 32 {
+    pub fn hash_verbatim(value: &T) -> Self
+        where T: Verbatim
+    {
+        if T::LEN <= 32 {
+            struct Cursor<'a> {
+                dst: &'a mut [u8],
+            }
+
+            impl<'a> WriteVerbatim for Cursor<'a> {
+                fn write_bytes(&mut self, src: &[u8]) {
+                    assert!(src.len() <= self.dst.len(), "overflow");
+                    let (dst, rest) = mem::take(&mut self.dst).split_at_mut(src.len());
+                    dst.copy_from_slice(src);
+                    self.dst = rest;
+                }
+            }
+
             let mut buf = [0; 32];
-            let rest = value.encode_verbatim(&mut buf[0 .. U::LEN]).unwrap();
-            assert_eq!(rest.len(), 0, "some bytes remaining");
+            let mut cursor = Cursor {
+                dst: &mut buf[0 .. T::LEN],
+            };
+
+            value.encode_verbatim_in(&mut cursor);
+
+            assert_eq!(cursor.dst.len(), 0, "not all bytes written");
 
             Digest::from(buf)
-        } else if U::LEN <= 1024 {
-            let mut buf = [0; 1024];
-            let buf = &mut buf[0 .. U::LEN];
-            let rest = value.encode_verbatim(&mut buf[..]).unwrap();
-            assert_eq!(rest.len(), 0);
-
-            sha256_hash(buf).cast()
         } else {
-            todo!()
+            let mut hasher = CommitHasher::new();
+            hasher.write(value);
+            hasher.finalize().cast()
         }
     }
-}
-
-#[inline(never)]
-fn sha256_hash(buf: &[u8]) -> Digest<()> {
-    use sha2::Digest as _;
-    let d = sha2::Sha256::digest(buf);
-
-    let mut digest = [0u8;32];
-    digest.copy_from_slice(&d[..]);
-    digest.into()
 }
 
 impl<T: ?Sized> From<Digest<T>> for [u8;32] {
@@ -143,13 +148,42 @@ impl<T: ?Sized> AsRef<[u8;32]> for Digest<T> {
 ///
 /// ```
 /// # use proofmarshal_core::commit::Digest;
-/// assert_eq!(format!("{}", Digest::<u8>::default()),
-///            "00000000000000000000000000000000");
+/// assert_eq!(format!("{}", Digest::hash_verbatim(&0x1234_abcd_u32)),
+///            "cdab341200000000000000000000000000000000000000000000000000000000");
 /// ```
 impl<T: ?Sized> fmt::Display for Digest<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        <Self as fmt::LowerHex>::fmt(self, f)
+    }
+}
+
+/// Upper case hex representation:
+///
+/// ```
+/// # use proofmarshal_core::commit::Digest;
+/// assert_eq!(format!("{:X}", Digest::hash_verbatim(&0x1234_abcd_u32)),
+///            "CDAB341200000000000000000000000000000000000000000000000000000000");
+/// ```
+impl<T: ?Sized> fmt::UpperHex for Digest<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for b in self.as_bytes() {
-            write!(f, "{:x}", b)?;
+            write!(f, "{:02X}", b)?;
+        }
+        Ok(())
+    }
+}
+
+/// Lower case hex representation:
+///
+/// ```
+/// # use proofmarshal_core::commit::Digest;
+/// assert_eq!(format!("{:x}", Digest::hash_verbatim(&0x1234_abcd_u32)),
+///            "cdab341200000000000000000000000000000000000000000000000000000000");
+/// ```
+impl<T: ?Sized> fmt::LowerHex for Digest<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for b in self.as_bytes() {
+            write!(f, "{:02x}", b)?;
         }
         Ok(())
     }
@@ -159,8 +193,8 @@ impl<T: ?Sized> fmt::Display for Digest<T> {
 ///
 /// ```
 /// # use proofmarshal_core::commit::Digest;
-/// assert_eq!(format!("{:?}", Digest::<u8>::default()),
-///            "Digest<u8>(00000000000000000000000000000000)");
+/// assert_eq!(format!("{:?}", Digest::hash_verbatim(&0x1234_abcd_u32)),
+///            "Digest<u32>(cdab341200000000000000000000000000000000000000000000000000000000)");
 /// ```
 impl<T: ?Sized> fmt::Debug for Digest<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

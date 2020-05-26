@@ -29,6 +29,7 @@ mod std_impls;
 mod marshal_impls;
 mod pointee_impls;
 mod drop_impls;
+mod commit_impls;
 
 #[cfg(test)]
 mod tests;
@@ -44,33 +45,33 @@ struct SumTreeData<T, S, P> {
 
 /// Perfect merkle sum tree.
 #[repr(C)]
-pub struct SumTree<T, S, P: Ptr, Z = ()> {
+pub struct SumTree<T, S, P: Ptr = !, Z = ()> {
     data: SumTreeData<T, S, P>,
     zone: Z,
     height: Height,
 }
 
 #[repr(C)]
-pub struct SumTreeDyn<T, S, P: Ptr, Z = ()> {
+pub struct SumTreeDyn<T, S, P: Ptr = !, Z = ()> {
     data: SumTreeData<T, S, P>,
     zone: Z,
     height: HeightDyn,
 }
 
 /// Perfect merkle tree.
-pub type Tree<T, P, Z = ()> = SumTree<T, (), P, Z>;
+pub type Tree<T, P = !, Z = ()> = SumTree<T, (), P, Z>;
 
-pub type TreeDyn<T, P, Z = ()> = SumTreeDyn<T, (), P, Z>;
+pub type TreeDyn<T, P = !, Z = ()> = SumTreeDyn<T, (), P, Z>;
 
 #[repr(C)]
-pub struct Inner<T, S, P: Ptr> {
+pub struct Inner<T, S, P: Ptr = !> {
     left:   ManuallyDrop<SumTreeData<T, S, P>>,
     right:  ManuallyDrop<SumTreeData<T, S, P>>,
     height: NonZeroHeight,
 }
 
 #[repr(C)]
-pub struct InnerDyn<T, S, P: Ptr> {
+pub struct InnerDyn<T, S, P: Ptr = !> {
     left:   ManuallyDrop<SumTreeData<T, S, P>>,
     right:  ManuallyDrop<SumTreeData<T, S, P>>,
     height: NonZeroHeightDyn,
@@ -319,7 +320,8 @@ impl<T, S, P: Ptr, Z> SumTreeDyn<T, S, P, Z> {
 
     #[inline]
     pub fn tip_digest(&self) -> Digest
-        where S: MerkleSum<T>
+        where S: MerkleSum<T>,
+              T: Commit,
     {
         if let Some(digest) = self.try_tip_digest() {
             digest
@@ -334,29 +336,28 @@ impl<T, S, P: Ptr, Z> SumTreeDyn<T, S, P, Z> {
     }
 
     fn fix_dirty_tip_digest(&self) -> Digest
+        where S: MerkleSum<T>,
+              T: Commit,
     {
-        Digest::default()
-        /*
-        let sum = match self.get_dirty_tip().expect("dirty tip pointer") {
-            TipRef::Leaf(leaf) => S::from_item(leaf),
-            TipRef::Inner(inner) => inner.sum(),
+        let tip_digest = match self.get_dirty_tip().expect("dirty tip pointer") {
+            TipRef::Leaf(leaf) => leaf.commit().cast(),
+            TipRef::Inner(inner) => inner.commit().cast(),
         };
 
-        match self.data.try_lock(Flags::SUM_LOCKED) {
+        match self.data.try_lock(Flags::DIGEST_LOCKED) {
             Ok(old_flags) => {
                 unsafe {
-                    *self.data.sum.get() = sum;
+                    *self.data.tip_digest.get() = tip_digest;
                 }
 
-                self.data.unlock(Flags::SUM_LOCKED, Flags::SUM_DIRTY);
+                self.data.unlock(Flags::DIGEST_LOCKED, Flags::DIGEST_DIRTY);
 
-                sum
+                tip_digest
             },
             Err(old_flags) => {
                 todo!("race: {:?}", old_flags)
             },
         }
-        */
     }
 
     fn get_dirty_tip<'a>(&'a self) -> Result<TipRef<'a, T, S, P>, P::Persist> {

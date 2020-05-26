@@ -2,7 +2,9 @@ use thiserror::Error;
 
 use hoard::primitive::Primitive;
 
-pub trait MerkleSum<T: ?Sized> : 'static + Copy {
+use proofmarshal_core::commit::Commit;
+
+pub trait MerkleSum<T: ?Sized> : 'static + Copy + Commit {
     const MAX: Self;
     const ZERO: Self;
 

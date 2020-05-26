@@ -60,8 +60,11 @@ pub mod bag;
 pub mod offset;
 pub mod pile;
 
+pub use leint::Le;
+
 pub mod prelude {
     pub use crate::{
+        Le,
         pointee::Pointee,
         ptr::{
             Alloc,

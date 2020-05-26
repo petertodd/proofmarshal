@@ -1,7 +1,46 @@
 //! Cryptographic commitments.
 
+use hoard::pointee::Pointee;
+
 pub mod digest;
 pub use self::digest::Digest;
+
+mod impls;
+
+pub trait Verbatim {
+    const LEN: usize;
+    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim);
+
+    fn encode_verbatim(&self) -> Vec<u8> {
+        let mut r = vec![];
+        r.write(self);
+        r
+    }
+}
+
+impl<T: ?Sized + Verbatim> Verbatim for &'_ T {
+    const LEN: usize = T::LEN;
+
+    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
+        (**self).encode_verbatim_in(dst)
+    }
+}
+
+impl<T: ?Sized + Verbatim> Verbatim for &'_ mut T {
+    const LEN: usize = T::LEN;
+
+    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
+        (**self).encode_verbatim_in(dst)
+    }
+}
+
+impl<T: ?Sized + Verbatim> Verbatim for Box<T> {
+    const LEN: usize = T::LEN;
+
+    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
+        (**self).encode_verbatim_in(dst)
+    }
+}
 
 /// The ability to cryptographically commit to a value of this type.
 ///
@@ -10,71 +49,111 @@ pub trait Commit : Verbatim {
     type Committed;
 
     fn commit(&self) -> Digest<Self::Committed> {
-        Digest::hash_verbatim(self)
+        Digest::hash_verbatim(self).cast()
     }
 }
 
-pub trait Verbatim {
-    /// The length of the verbatim encoding.
-    const LEN: usize;
-
-    fn encode_verbatim<W: WriteVerbatim>(&self, dst: W) -> Result<W, W::Error>;
+impl<T: ?Sized + Commit> Commit for &'_ T {
+    type Committed = T::Committed;
 }
 
-pub trait WriteVerbatim : Sized {
-    type Error;
+impl<T: ?Sized + Commit> Commit for &'_ mut T {
+    type Committed = T::Committed;
+}
 
-    fn write_bytes(self, src: &[u8]) -> Result<Self, Self::Error>;
+impl<T: ?Sized + Commit> Commit for Box<T> {
+    type Committed = T::Committed;
+}
 
-    fn write_padding(mut self, len: usize) -> Result<Self, Self::Error> {
+pub trait WriteVerbatim {
+    fn write_bytes(&mut self, src: &[u8]);
+
+    fn write_zeros(&mut self, len: usize) {
         for _ in 0 .. len {
-            self = self.write_bytes(&[0])?;
+            self.write_bytes(&[0]);
         }
-        Ok(self)
     }
 
-    fn write<T: ?Sized + Verbatim>(self, value: &T) -> Result<Self, Self::Error> {
-        value.encode_verbatim(self)
-    }
+    fn write<T: ?Sized + Verbatim>(&mut self, src: &T) {
+        struct Limit<W> {
+            inner: W,
+            remaining: usize,
+        }
 
-    fn finish(self) -> Result<Self, Self::Error> {
-        Ok(self)
+        impl<W: WriteVerbatim> WriteVerbatim for Limit<W> {
+            #[inline]
+            fn write_bytes(&mut self, src: &[u8]) {
+                self.remaining = self.remaining.checked_sub(src.len())
+                                               .expect("overflow");
+                self.inner.write_bytes(src);
+            }
+        }
+
+        let mut limited = Limit {
+            inner: self,
+            remaining: T::LEN,
+        };
+
+        src.encode_verbatim_in(&mut limited);
+        assert_eq!(limited.remaining, 0, "not all bytes written");
+    }
+}
+
+impl<T: ?Sized + WriteVerbatim> WriteVerbatim for &'_ mut T {
+    fn write_bytes(&mut self, src: &[u8]) {
+        (**self).write_bytes(src)
     }
 }
 
 impl WriteVerbatim for Vec<u8> {
-    type Error = !;
-
     #[inline]
-    fn write_bytes(mut self, src: &[u8]) -> Result<Self, Self::Error> {
+    fn write_bytes(&mut self, src: &[u8]) {
         self.extend_from_slice(src);
-        Ok(self)
+    }
+
+    fn write<T: ?Sized + Verbatim>(&mut self, src: &T) {
+        let start = self.len();
+        src.encode_verbatim_in(self);
+        assert_eq!(self.len() - start, T::LEN,
+                   "not all bytes written");
     }
 }
 
-impl WriteVerbatim for &'_ mut [u8] {
-    type Error = !;
 
-    #[inline(always)]
-    fn write_bytes(self, src: &[u8]) -> Result<Self, Self::Error> {
-        assert!(src.len() <= self.len(), "overflow");
-        let (dst, rest) = self.split_at_mut(src.len());
-        dst.copy_from_slice(src);
-        Ok(rest)
+use sha2::Digest as _;
+
+#[derive(Debug)]
+pub struct CommitHasher {
+    inner: sha2::Sha256,
+}
+
+impl CommitHasher {
+    pub fn new() -> Self {
+        Self {
+            inner: sha2::Sha256::new(),
+        }
+    }
+
+    pub fn finalize(self) -> Digest {
+        let d = self.inner.result();
+        let mut digest = [0u8; 32];
+        digest.copy_from_slice(&d[..]);
+        digest.into()
     }
 }
 
-impl WriteVerbatim for sha2::Sha256 {
-    type Error = !;
-
-    #[inline(always)]
-    fn write_bytes(mut self, src: &[u8]) -> Result<Self, Self::Error> {
-        use sha2::Digest as _;
-        self.input(src);
-        Ok(self)
+impl WriteVerbatim for CommitHasher {
+    #[inline]
+    fn write_bytes(&mut self, src: &[u8]) {
+        self.inner.input(src)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn test() {
+    }
 }
