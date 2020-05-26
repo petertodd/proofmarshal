@@ -28,3 +28,17 @@ fn get() {
     assert_eq!(tip.get(2).as_deref(),
                None);
 }
+
+#[test]
+fn try_from_iter() {
+    let pile = Pile::default();
+
+    let tip = Tree::try_from_iter_in(vec![1u8,2,3,4], pile).unwrap();
+    assert_eq!(tip.len(), 4);
+
+    let tip = Tree::try_from_iter_in(0u16 .. 256, pile).unwrap();
+
+    for i in 0 .. 256 {
+        assert_eq!(tip.get(i as usize).as_deref(), Some(&i));
+    }
+}

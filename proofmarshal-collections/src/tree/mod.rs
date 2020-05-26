@@ -89,7 +89,7 @@ pub enum Tip<Leaf, Inner> {
 }
 
 #[derive(Debug, Error)]
-pub enum JoinError<SumError: std::error::Error> {
+pub enum JoinError<SumError: 'static + std::error::Error> {
     #[error("height mismatch")]
     HeightMismatch,
 
@@ -98,6 +98,18 @@ pub enum JoinError<SumError: std::error::Error> {
 
     #[error("sum overflow")]
     SumOverflow(SumError),
+}
+
+#[derive(Debug, Error)]
+pub enum TryFromIterError<SumError: 'static + std::error::Error> {
+    #[error("join error")]
+    JoinError(#[from] JoinError<SumError>),
+
+    #[error("length not a power of two: {0}")]
+    NonPowerOfTwoLength(usize),
+
+    #[error("empty")]
+    Empty,
 }
 
 impl<T, S: MerkleSum<T>, P: Ptr, Z> SumTree<T, S, P, Z> {
@@ -131,6 +143,31 @@ impl<T, S: MerkleSum<T>, P: Ptr, Z> SumTree<T, S, P, Z> {
             zone: alloc.zone(),
             height,
         })
+    }
+
+    pub fn try_from_iter_in(
+        iter: impl IntoIterator<Item=T>,
+        mut alloc: impl Alloc<Ptr=P, Zone=Z>
+    ) -> Result<Self, TryFromIterError<S::Error>>
+    {
+        let mut len = 0;
+        let mut tips = Vec::<Self>::new();
+        for item in iter {
+            len += 1;
+            let mut tip = Self::new_leaf_in(item, &mut alloc);
+
+            while tips.last().map_or(false, |last_tip| last_tip.len() == tip.len()) {
+                let last_tip = tips.pop().unwrap();
+                tip = last_tip.try_join_in(tip, &mut alloc)?;
+            }
+            tips.push(tip);
+        }
+
+        match tips.pop() {
+            None => Err(TryFromIterError::Empty),
+            Some(tip) if tips.len() == 0 => Ok(tip),
+            Some(_) => Err(TryFromIterError::NonPowerOfTwoLength(len)),
+        }
     }
 }
 

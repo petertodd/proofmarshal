@@ -6,7 +6,7 @@ pub trait MerkleSum<T: ?Sized> : 'static + Copy {
     const MAX: Self;
     const ZERO: Self;
 
-    type Error : std::error::Error;
+    type Error : 'static + std::error::Error;
 
     fn from_item(item: &T) -> Self;
 
