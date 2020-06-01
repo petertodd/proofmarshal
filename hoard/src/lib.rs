@@ -25,6 +25,8 @@
 #![feature(never_type)]
 #![feature(slice_ptr_len)]
 #![feature(unwrap_infallible)]
+#![feature(dropck_eyepatch)]
+#![feature(track_caller)]
 
 #![feature(rustc_attrs)]
 
@@ -59,6 +61,8 @@ pub mod bag;
 
 pub mod offset;
 pub mod pile;
+
+pub mod journal;
 
 pub use leint::Le;
 

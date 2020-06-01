@@ -28,7 +28,7 @@ impl<T: ?Sized + Pointee, P: Ptr, M> AsRef<Fat<T, P, M>> for Own<T, P, M> {
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr, M> Drop for Own<T, P, M> {
+unsafe impl<#[may_dangle] T: ?Sized + Pointee, P: Ptr, M> Drop for Own<T, P, M> {
     fn drop(&mut self) {
         unsafe {
             let metadata: &dyn Any = &self.metadata;
@@ -94,6 +94,12 @@ impl<T: ?Sized + Pointee, P: Ptr> Own<T, P> {
     {
         let fat = self.into_inner();
         unsafe { zone.try_take_unchecked::<T>(fat.raw, fat.metadata) }
+    }
+
+    pub fn try_get_dirty<'a>(&'a self) -> Result<&'a T, P::Persist> {
+        unsafe {
+            self.inner.raw.try_get_dirty_unchecked::<T>(self.inner.metadata)
+        }
     }
 }
 

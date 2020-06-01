@@ -407,7 +407,7 @@ impl<'p, 'v> ShallowDumper<'p, 'v> {
     pub fn from_buf(buf: &[u8]) -> Self {
         Self {
             marker: PhantomData,
-            initial_offset: buf.len(),
+            initial_offset: 0,
             written: Vec::from(buf),
         }
     }

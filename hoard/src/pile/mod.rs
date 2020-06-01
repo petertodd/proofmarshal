@@ -279,6 +279,30 @@ impl<'p, 'v> Get<OffsetMut<'p, 'v>> for Pile<'p, 'v> {
     }
 }
 
+impl<'p, 'v> GetMut<OffsetMut<'p, 'v>> for Pile<'p, 'v> {
+    unsafe fn get_mut_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut OffsetMut<'p, 'v>, metadata: T::Metadata) -> &'a mut T
+        where T: Load<OffsetMut<'p, 'v>>
+    {
+        match ptr.kind() {
+            Kind::Ptr(ptr) => {
+                &mut *T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata)
+            },
+            Kind::Offset(offset) => {
+                let blob = self.get_valid_blob::<T>(offset.cast(), metadata)
+                               .unwrap();
+
+                let loader = BlobDecoder::new(blob, self);
+                let owned: T::Owned = T::load_blob(loader);
+
+                let fat = OffsetMut::alloc(owned).into_inner();
+                *ptr = fat.raw;
+
+                self.get_mut_unchecked::<T>(ptr, metadata)
+            },
+        }
+    }
+}
+
 impl<'p, 'v> Alloc for Pile<'p, 'v> {
     type Zone = Self;
     type Ptr = OffsetMut<'p, 'v>;
@@ -320,28 +344,28 @@ mod tests {
     fn test_pile() {
         let pile = Pile::default();
         let bag = Bag::new_in(42u8, pile);
-        dbg!(bag.get());
+        bag.get();
     }
 
     #[test]
     fn test_recursive_get() {
         let pile = Pile::default();
         let bag1 = Bag::new_in(1u8, pile);
-        dbg!(bag1.get());
+        bag1.get();
         let bag2 = Bag::new_in(bag1, pile);
-        dbg!(bag2.get());
+        bag2.get();
     }
 
     #[test]
     fn test_extend() {
         let pile1 = Pile::default();
         let bag1 = Bag::new_in(1u8, pile1);
-        dbg!(bag1.get());
+        bag1.get();
 
         let buf2 = vec![1,2,3];
         let pile2 = unsafe { pile1.extend_unchecked(&buf2) };
         let bag2 = Bag::new_in(bag1, pile2);
-        dbg!(bag2.get());
+        bag2.get();
 
         assert_eq!(bag2.take().take(), 1);
     }
