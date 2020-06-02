@@ -13,7 +13,7 @@ use super::*;
 
 use crate::blob::*;
 use crate::load::*;
-use crate::save::*;
+//use crate::save::*;
 use crate::primitive::Primitive;
 
 #[repr(C)]
@@ -172,7 +172,7 @@ enum State<T, R> {
     Poll(T),
     Done(R),
 }
-
+/*
 impl<Q, R, T: ?Sized + Pointee, P: Ptr> Encode<Q, R> for Own<T, P>
 where R: Primitive,
       T: Save<Q, R>,
@@ -227,3 +227,4 @@ where R: Primitive,
         }
     }
 }
+*/

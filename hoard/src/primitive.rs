@@ -3,13 +3,14 @@
 use std::num;
 use std::convert::TryFrom;
 
-use crate::save::*;
+//use crate::save::*;
 use crate::load::{Decode, BlobDecoder};
 use crate::blob::{Blob, ValidateBlob};
 
 use leint::Le;
 
-pub trait Primitive : Decode<!> + Encode<!, !> {
+pub trait Primitive { //: Decode<!> + Encode<!, !> {
+    /*
     fn encode_blob_bytes(&self) -> Vec<u8> {
         vec![].write_primitive(self).into_ok()
     }
@@ -21,6 +22,7 @@ pub trait Primitive : Decode<!> + Encode<!, !> {
         let valid_blob = Self::validate_blob(blob.into())?;
         Ok(Self::decode_blob(BlobDecoder::new(valid_blob, &())))
     }
+    */
 }
 
 impl<T: Primitive, const N: usize> Primitive for [T; N] {}
@@ -43,6 +45,7 @@ impl_primitive! {
     num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
 }
 
+/*
 pub fn test_option_decode(src: &[u8;2])
     -> Result<Option<bool>,
               crate::blob::impls::option::ValidateBlobOptionError<crate::blob::impls::scalars::ValidateBoolError>>
@@ -89,3 +92,4 @@ mod tests {
                    Ok(0x12345678));
     }
 }
+*/

@@ -25,6 +25,7 @@ pub struct Bag<T: ?Sized + Pointee, P: Ptr, Z = (), M: 'static = <T as Pointee>:
     zone: Z,
 }
 
+/*
 impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z> {
     pub fn new_in(value: impl Take<T>, mut alloc: impl Alloc<Ptr=P, Zone=Z>) -> Self {
         Self {
@@ -236,4 +237,5 @@ mod tests {
     fn test() {
     }
 }
+*/
 */

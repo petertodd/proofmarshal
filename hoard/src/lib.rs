@@ -55,9 +55,11 @@ pub mod load;
 pub mod save;
 pub mod primitive;
 
+pub mod bag;
+
+/*
 pub mod heap;
 
-pub mod bag;
 
 pub mod offset;
 pub mod pile;
@@ -86,3 +88,4 @@ pub mod prelude {
         refs::Ref,
     };
 }
+*/

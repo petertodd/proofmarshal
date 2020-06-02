@@ -6,16 +6,8 @@ use std::fmt;
 
 use crate::primitive::Primitive;
 
-/*
-use std::mem::{self, MaybeUninit};
-
 use thiserror::Error;
-
 use leint::Le;
-
-mod maybedropped;
-pub use self::maybedropped::MaybeDropped;
-*/
 
 /// A target of a pointer.
 ///
@@ -97,7 +89,6 @@ unsafe impl<T> Pointee for T {
     }
 }
 
-/*
 #[derive(Debug, Error)]
 #[error("FIXME")]
 pub struct LayoutSliceError;
@@ -106,6 +97,21 @@ unsafe impl<T> Pointee for [T] {
     type Metadata = Le<u64>;
     type LayoutError = LayoutSliceError;
 
+    fn metadata(_this: &Self) -> Self::Metadata {
+        todo!()
+    }
+
+    #[inline(always)]
+    fn make_fat_ptr(thin: *const (), _: Self::Metadata) -> *const Self {
+        todo!()
+    }
+
+    #[inline(always)]
+    fn make_fat_ptr_mut(thin: *mut (), _: Self::Metadata) -> *mut Self {
+        todo!()
+    }
+
+    /*
     fn try_layout(len: Self::Metadata) -> Result<Layout, Self::LayoutError> {
         let item_size = cmp::max(mem::size_of::<T>(), mem::align_of::<T>());
         item_size.checked_mul(len.get() as usize)
@@ -126,8 +132,10 @@ unsafe impl<T> Pointee for [T] {
     fn make_fat_ptr_mut(thin: *mut (), len: Self::Metadata) -> *mut Self {
         ptr::slice_from_raw_parts_mut(thin as *mut T, len.get() as usize)
     }
+    */
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;

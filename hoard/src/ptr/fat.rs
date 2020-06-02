@@ -9,7 +9,7 @@ use super::*;
 
 use crate::blob::*;
 use crate::load::*;
-use crate::save::*;
+//use crate::save::*;
 
 #[repr(C)]
 pub struct Fat<T: ?Sized, P, M = <T as Pointee>::Metadata> {
