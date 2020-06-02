@@ -12,7 +12,7 @@ use owned::{Take, IntoOwned};
 
 use crate::pointee::Pointee;
 use crate::refs::*;
-use crate::ptr::*;
+use crate::zone::*;
 use crate::blob::*;
 use crate::load::*;
 use crate::save::*;

@@ -50,7 +50,7 @@ pub mod pointee;
 
 pub mod blob;
 
-pub mod ptr;
+pub mod zone;
 pub mod load;
 pub mod save;
 pub mod primitive;

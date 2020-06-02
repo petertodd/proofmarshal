@@ -1,8 +1,7 @@
 //! Saving values.
 use crate::pointee::Pointee;
 
-use crate::ptr::own::Own;
-use crate::ptr::Ptr;
+use crate::zone::{Ptr, Own};
 use crate::bag::Bag;
 
 pub trait Saved<R> : Pointee {

@@ -13,7 +13,7 @@ use owned::IntoOwned;
 use crate::pointee::Pointee;
 use crate::refs::Ref;
 use crate::blob::*;
-use crate::ptr::Ptr;
+use crate::zone::Ptr;
 
 pub mod impls;
 
