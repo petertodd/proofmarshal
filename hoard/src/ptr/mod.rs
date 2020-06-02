@@ -1,3 +1,5 @@
+//! Generic pointers.
+
 use std::cmp;
 use std::fmt;
 use std::mem::ManuallyDrop;

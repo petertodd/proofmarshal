@@ -1,3 +1,5 @@
+//! Loading of data behind zone pointers.
+
 use std::error::Error;
 use std::alloc::Layout;
 use std::marker::PhantomData;
@@ -19,6 +21,7 @@ pub trait Decode<Q: Ptr> : ValidateBlob {
     fn decode_blob(blob: BlobDecoder<Q, Self>) -> Self;
 }
 
+/// A *type* that can be loaded from a zone pointer.
 pub trait Load<Q: Ptr> : IntoOwned + ValidateBlobPtr {
     fn load_blob(blob: BlobDecoder<Q, Self>) -> Self::Owned;
 

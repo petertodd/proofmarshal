@@ -66,6 +66,7 @@ pub mod journal;
 
 pub use leint::Le;
 
+/// The Hoard prelude.
 pub mod prelude {
     pub use crate::{
         Le,

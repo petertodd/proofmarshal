@@ -1,3 +1,5 @@
+//! Efficient, fixed-size, "blob of bytes" serialization.
+
 use std::any::type_name;
 use std::borrow::Borrow;
 use std::convert::{TryFrom, TryInto};
@@ -10,6 +12,7 @@ use crate::pointee::Pointee;
 
 pub mod impls;
 
+/// A reference to an unverified byte blob, for a specific type.
 pub struct Blob<'a, T: ?Sized + Pointee> {
     marker: PhantomData<&'a [u8]>,
     ptr: *const u8,

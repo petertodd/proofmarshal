@@ -1,3 +1,5 @@
+//! Marshalling of primitive types without internal pointers.
+
 use std::num;
 use std::convert::TryFrom;
 

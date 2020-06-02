@@ -1,3 +1,5 @@
+//! Blob storage in append-only files.
+
 use std::cmp;
 use std::convert::{TryFrom, TryInto};
 use std::fs::{File, OpenOptions};
