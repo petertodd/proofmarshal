@@ -235,7 +235,7 @@ impl<'a, 'p, 'v, H> save::AllocBlob for ItemAllocator<'a, 'v, 'p, H> {
     type Error = io::Error;
     type Done = WordOffset;
 
-    fn alloc_blob(mut self, size: usize) -> Result<Self::WriteBlob, Self::Error> {
+    fn alloc_blob(self, size: usize) -> Result<Self::WriteBlob, Self::Error> {
         Ok(self.0.write_item(size))
     }
 }

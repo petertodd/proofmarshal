@@ -159,7 +159,7 @@ where S: ValidateBlob,
 
     type Error = ValidateInnerBlobError<S::Error, P::Error>;
 
-    fn validate_blob<'a>(mut blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
         /*
         blob.field::<SumTreeData<T, S, P>>().map_err(ValidateInnerBlobError::Left)?;
         blob.field::<SumTreeData<T, S, P>>().map_err(ValidateInnerBlobError::Right)?;
