@@ -13,35 +13,34 @@ use owned::IntoOwned;
 use crate::pointee::Pointee;
 use crate::refs::Ref;
 use crate::blob::*;
-use crate::zone::Ptr;
-
-pub mod impls;
-
-pub trait Decode<Q: Ptr> : ValidateBlob {
-    fn decode_blob(blob: BlobDecoder<Q, Self>) -> Self;
-}
+use crate::zone::{Zone, Ptr};
 
 /// A *type* that can be loaded from a zone pointer.
-pub trait Load<Q: Ptr> : IntoOwned + ValidateBlobPtr {
-    fn load_blob(blob: BlobDecoder<Q, Self>) -> Self::Owned;
+pub trait Load<Z> :
+    IntoOwned +
+    ValidateBlob<padding::CheckPadding> + ValidateBlob<padding::IgnorePadding>
+{
+    fn decode_blob(blob: ValidBlob<Self>, zone: &Z) -> Self::Owned
+        where Z: BlobZone;
 
-    fn deref_blob<'a>(blob: BlobDecoder<'a, '_, Q, Self>) -> Ref<'a, Self> {
-        Ref::Owned(Self::load_blob(blob))
+    fn deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Ref<'a, Self>
+        where Z: BlobZone
+    {
+        Ref::Owned(Self::decode_blob(blob, zone))
     }
 }
 
-impl<Q: Ptr, T: Decode<Q>> Load<Q> for T {
-    fn load_blob<'a>(blob: BlobDecoder<'a, '_, Q, Self>) -> Self {
-        Self::decode_blob(blob)
-    }
+/// `Load`, but for sized types.
+pub trait Decode<Z> : Sized + Load<Z> + IntoOwned<Owned=Self> + BlobSize {
 }
 
-pub struct BlobDecoder<'a, 'z, Q: Ptr, T: ?Sized + BlobLen> {
+/*
+pub struct BlobLoader<'a, 'z, Z: Zone, T: ?Sized + BlobSize> {
     cursor: BlobCursor<'a, T, ValidBlob<'a, T>>,
-    zone: &'z Q::PersistZone,
+    zone: &'z Z::Persist,
 }
 
-impl<'a, 'z, Q: Ptr, T: ?Sized + BlobLen> ops::Deref for BlobDecoder<'a, 'z, Q, T> {
+impl<'a, 'z, Z: Zone, T: ?Sized + BlobSize> ops::Deref for BlobLoader<'a, 'z, Z, T> {
     type Target = BlobCursor<'a, T, ValidBlob<'a, T>>;
 
     fn deref(&self) -> &Self::Target {
@@ -49,26 +48,26 @@ impl<'a, 'z, Q: Ptr, T: ?Sized + BlobLen> ops::Deref for BlobDecoder<'a, 'z, Q, 
     }
 }
 
-impl<'a, 'z, Q: Ptr, T: ?Sized + BlobLen> ops::DerefMut for BlobDecoder<'a, 'z, Q, T> {
+impl<'a, 'z, Z: Zone, T: ?Sized + BlobSize> ops::DerefMut for BlobLoader<'a, 'z, Z, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cursor
     }
 }
 
-impl<'a, 'z, Q: Ptr, T: ?Sized + BlobLen> BlobDecoder<'a, 'z, Q, T> {
-    pub fn new(blob: ValidBlob<'a, T>, zone: &'z Q::PersistZone) -> Self {
+impl<'a, 'z, Z: Zone, T: ?Sized + BlobSize> BlobLoader<'a, 'z, Z, T> {
+    pub fn new(blob: ValidBlob<'a, T>, zone: &'z Z::Persist) -> Self {
         Self {
             cursor: blob.into(),
             zone
         }
     }
 
-    pub unsafe fn field_unchecked<F: Decode<Q>>(&mut self) -> F {
+    pub unsafe fn field_unchecked<F: Decode<Z>>(&mut self) -> F {
         let blob = self.field_blob::<F>().assume_valid();
-        F::decode_blob(BlobDecoder::new(blob, self.zone))
+        F::decode_blob(BlobLoader::new(blob, self.zone))
     }
 
-    pub fn zone(&self) -> &'z Q::PersistZone {
+    pub fn zone(&self) -> &'z Z::Persist {
         self.zone
     }
 
@@ -82,6 +81,7 @@ impl<'a, 'z, Q: Ptr, T: ?Sized + BlobLen> BlobDecoder<'a, 'z, Q, T> {
         self.cursor.finish();
     }
 }
+*/
 
 #[cfg(test)]
 mod tests {

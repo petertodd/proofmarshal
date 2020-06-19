@@ -1,7 +1,7 @@
 use super::*;
 
-impl<Q: Ptr> Decode<Q> for ! {
-    fn decode_blob(blob: BlobDecoder<Q, Self>) -> Self {
+impl<Z> Decode<Z> for ! {
+    fn decode_blob(_: ValidBlob<Self>, _: &Z) -> Self {
         panic!()
     }
 }

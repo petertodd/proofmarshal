@@ -7,7 +7,8 @@ use thiserror::Error;
 
 use super::*;
 
-use crate::blob::*;
+use crate::pointee::Pointee;
+use crate::blob::{self, Blob, ValidBlob, Persist};
 use crate::load::*;
 //use crate::save::*;
 
@@ -41,11 +42,13 @@ where P: fmt::Debug,
 
 impl<T: ?Sized + Pointee, P: Ptr, M: Clone> Clone for Fat<T, P, M> {
     fn clone(&self) -> Self {
+        /*
         Self {
             _marker: PhantomData,
             raw: self.raw.duplicate(),
             metadata: self.metadata.clone(),
         }
+        */ todo!()
     }
 }
 
@@ -69,15 +72,16 @@ pub enum ValidateFatBlobError<P: fmt::Debug, M: fmt::Debug> {
     Metadata(M),
 }
 
-impl<T: ?Sized, P, M> ValidateBlob for Fat<T, P, M>
-where P: ValidateBlob,
-      M: ValidateBlob,
+/*
+impl<T: ?Sized, P, M> blob::ValidateBlob for Fat<T, P, M>
+where P: blob::ValidateBlob,
+      M: blob::ValidateBlob,
 {
     type Error = ValidateFatBlobError<P::Error, M::Error>;
 
-    const BLOB_LEN: usize = P::BLOB_LEN + M::BLOB_LEN;
+    const BLOB_LAYOUT: blob::BlobLayout = P::BLOB_LAYOUT.extend(M::BLOB_LAYOUT);
 
-    fn validate_blob<'a>(mut blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+    fn validate_blob<'a>(mut blob: blob::BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
         blob.field::<P>().map_err(ValidateFatBlobError::Ptr)?;
         blob.field::<M>().map_err(ValidateFatBlobError::Metadata)?;
         unsafe { Ok(blob.finish()) }
@@ -89,11 +93,12 @@ where P: Persist,
       M: Persist,
 {}
 
-impl<Q: Ptr, T: ?Sized, P, M> Decode<Q> for Fat<T, P, M>
-where P: Decode<Q>,
-      M: Decode<Q>,
+impl<Z: Zone, T: ?Sized, P, M> Decode<Z> for Fat<T, P, M>
+where P: Decode<Z>,
+      M: Decode<Z>,
 {
-    fn decode_blob(mut blob: BlobDecoder<Q, Self>) -> Self {
+    fn decode_blob(mut blob: ValidBlob<Self>, zone: &Z) -> Self {
+        /*
         unsafe {
             Fat {
                 _marker: PhantomData,
@@ -101,8 +106,10 @@ where P: Decode<Q>,
                 metadata: blob.field_unchecked(),
             }
         }
+        */ todo!()
     }
 }
+*/
 
 /*
 impl<R, T: ?Sized, P, M> Encoded<R> for Fat<T, P, M>

@@ -4,31 +4,22 @@ use std::error::Error;
 
 use thiserror::Error;
 
-use sliceinit::SliceInitializer;
+use sliceinit::UninitArray;
 
 use super::*;
 
-impl<Q: Ptr, T, const N: usize> Decode<Q> for [T; N]
-where T: Decode<Q>
+impl<Z, T, const N: usize> Decode<Z> for [T; N]
+where T: Decode<Z>
 {
-    fn decode_blob<'a>(mut blob: BlobDecoder<Q, Self>) -> Self {
-        let mut r: [MaybeUninit<T>; N] = unsafe { MaybeUninit::uninit().assume_init() };
-        let mut initializer = SliceInitializer::new(&mut r[..]);
-
+    fn decode_blob<'a>(blob: ValidBlob<Self>, zone: &Z) -> Self {
+        let mut fields = blob.decode_fields(zone);
+        let mut this = UninitArray::new();
         for i in 0 .. N {
-            let item = unsafe { blob.field_unchecked() };
-            initializer.push(item);
+            let item = unsafe { fields.decode_unchecked() };
+            this.push(item);
         }
-        blob.finish();
-
-        initializer.done();
-
-        // Need a transmute_copy() as Rust doesn't seem to know the two arrays are the same size.
-        let r2 = unsafe { mem::transmute_copy(&r) };
-        assert_eq!(mem::size_of_val(&r), mem::size_of_val(&r2));
-        assert_eq!(mem::align_of_val(&r), mem::align_of_val(&r2));
-
-        r2
+        fields.finish();
+        this.done()
     }
 }
 

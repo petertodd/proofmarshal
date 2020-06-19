@@ -27,6 +27,7 @@
 #![feature(unwrap_infallible)]
 #![feature(dropck_eyepatch)]
 #![feature(track_caller)]
+#![feature(trivial_bounds)]
 
 #![feature(rustc_attrs)]
 
@@ -46,16 +47,19 @@ compile_error!("little endian required");
 use thiserror::Error;
 
 pub mod refs;
+pub mod writebytes;
 pub mod pointee;
 
 pub mod blob;
 
+pub mod impls;
+
 pub mod zone;
 pub mod load;
 pub mod save;
-pub mod primitive;
 
-pub mod bag;
+pub mod scalar;
+//pub mod primitive;
 
 /*
 pub mod heap;

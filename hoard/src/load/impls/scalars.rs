@@ -11,9 +11,9 @@ use super::*;
 
 macro_rules! impl_decode_for_persist {
     ($($t:ty,)+) => {$(
-        impl<Q: Ptr> Decode<Q> for $t {
-            fn decode_blob(decoder: BlobDecoder<Q, Self>) -> Self {
-                decoder.to_value().clone()
+        impl<Z> Decode<Z> for $t {
+            fn decode_blob(blob: ValidBlob<Self>, _: &Z) -> Self {
+                blob.as_value().clone()
             }
         }
     )+}
@@ -29,9 +29,9 @@ impl_decode_for_persist! {
 
 macro_rules! impl_decode_for_int {
     ($($t:ty,)+) => {$(
-        impl<Q: Ptr> Decode<Q> for $t {
-            fn decode_blob(mut loader: BlobDecoder<Q, Self>) -> Self {
-                let buf = loader.field_bytes(mem::size_of::<Self>());
+        impl<Z> Decode<Z> for $t {
+            fn decode_blob(blob: ValidBlob<Self>, _: &Z) -> Self {
+                let buf = blob.as_bytes();
                 Self::from_le_bytes(buf.try_into().unwrap())
             }
         }

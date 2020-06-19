@@ -11,10 +11,12 @@ use owned::Take;
 
 use super::*;
 
+use crate::refs::Ref;
+use crate::pointee::Pointee;
 use crate::blob::*;
 use crate::load::*;
-//use crate::save::*;
-use crate::primitive::Primitive;
+use crate::save::*;
+//use crate::primitive::Primitive;
 
 #[repr(C)]
 pub struct Own<T: ?Sized + Pointee, P: Ptr, M: 'static = <T as Pointee>::Metadata> {
@@ -32,7 +34,7 @@ unsafe impl<#[may_dangle] T: ?Sized + Pointee, P: Ptr, M> Drop for Own<T, P, M> 
     fn drop(&mut self) {
         unsafe {
             let metadata: &dyn Any = &self.metadata;
-            let metadata = metadata.downcast_ref().unwrap();
+            let metadata: &T::Metadata = metadata.downcast_ref().unwrap();
             self.raw.dealloc::<T>(*metadata)
         }
     }
@@ -57,6 +59,7 @@ where P: fmt::Debug,
     }
 }
 
+/*
 impl<T: ?Sized + Pointee, P: Ptr> Own<T, P> {
     pub fn get_in<'a, Z: Get<P>>(&'a self, zone: &Z) -> Ref<'a, T>
         where T: Load<P>
@@ -102,6 +105,7 @@ impl<T: ?Sized + Pointee, P: Ptr> Own<T, P> {
         }
     }
 }
+*/
 
 impl<T: ?Sized + Pointee, P: Ptr, M> Own<T, P, M> {
     pub unsafe fn new_unchecked(inner: Fat<T, P, M>) -> Self {
@@ -114,6 +118,10 @@ impl<T: ?Sized + Pointee, P: Ptr, M> Own<T, P, M> {
     }
 }
 
+impl<T: ?Sized + Pointee, P: Ptr> BlobSize for Own<T, P> {
+    const BLOB_LAYOUT: BlobLayout = <P::Persist as BlobSize>::BLOB_LAYOUT.extend(T::Metadata::BLOB_LAYOUT);
+}
+
 #[derive(Debug, Error)]
 #[error("FIXME")]
 pub enum ValidateOwnBlobError<P: fmt::Debug, M: fmt::Debug> {
@@ -121,97 +129,190 @@ pub enum ValidateOwnBlobError<P: fmt::Debug, M: fmt::Debug> {
     Metadata(M),
 }
 
-impl<T: ?Sized + Pointee, P: Ptr, M> ValidateBlob for Own<T, P, M>
-where P: ValidateBlob,
-      M: ValidateBlob,
+impl<V: Copy, T: ?Sized + Pointee, P: Ptr> ValidateBlob<V> for Own<T, P>
+where P: BlobSize + ValidateBlob<V>,
 {
-    type Error = ValidateOwnBlobError<P::Error, M::Error>;
+    type Error = ValidateOwnBlobError<P::Error, <T::Metadata as ValidateBlob<V>>::Error>;
 
-    const BLOB_LEN: usize = P::BLOB_LEN + M::BLOB_LEN;
-
-    fn validate_blob<'a>(mut blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        blob.field::<P>().map_err(ValidateOwnBlobError::Ptr)?;
-        blob.field::<M>().map_err(ValidateOwnBlobError::Metadata)?;
-        unsafe { Ok(blob.finish()) }
+    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        let mut fields = blob.validate_fields(padval);
+        fields.field::<P>().map_err(ValidateOwnBlobError::Ptr)?;
+        fields.field::<T::Metadata>().map_err(ValidateOwnBlobError::Metadata)?;
+        unsafe { Ok(fields.finish()) }
     }
 }
 
-impl<Q: Ptr, T: ?Sized + Pointee, P: Ptr> Decode<Q> for Own<T, P>
-where T::Metadata: Decode<Q>,
-      P: Decode<Q>,
+impl<Z, T: ?Sized + Pointee, P: Ptr> Load<Z> for Own<T, P>
+where T::Metadata: Decode<Z>,
+      P: Decode<Z>,
 {
-    fn decode_blob(mut blob: BlobDecoder<Q, Self>) -> Self {
+    fn decode_blob(blob: ValidBlob<Self>, zone: &Z) -> Self
+        where Z: BlobZone
+    {
+        let mut fields = blob.decode_fields(zone);
         let r = unsafe {
             Self {
                 marker: PhantomData,
                 inner: Fat {
                     _marker: PhantomData,
-                    raw: blob.field_unchecked(),
-                    metadata: blob.field_unchecked(),
+                    raw: fields.decode_unchecked(),
+                    metadata: fields.decode_unchecked(),
                 },
             }
         };
-        blob.finish();
+        fields.finish();
         r
     }
 }
+
+impl<Z, T: ?Sized + Pointee, P: Ptr> Decode<Z> for Own<T, P>
+where P: Decode<Z>,
+{}
 
 unsafe impl<T: ?Sized + Pointee, P: Ptr, M> Persist for Own<T, P, M>
 where P: Persist,
       M: Persist,
 {}
 
-#[derive(Debug)]
-pub struct OwnEncoder<T, M, R> {
-    state: State<T, R>,
-    metadata: M,
+pub struct OwnSavePoll<Y: Zone, Q: Ptr, T: ?Sized + Save<Y, Q>> {
+    state: State<Y, Q, T>,
+    metadata: T::Metadata,
 }
 
-#[derive(Debug)]
-enum State<T, R> {
-    Poll(T),
-    Done(R),
+enum State<Y: Zone, Q: Ptr, T: ?Sized + Save<Y, Q>> {
+    Clean(Q::Persist),
+    Dirty(T::SavePoll),
+    Done(Y::PersistPtr),
 }
-/*
-impl<Q, R, T: ?Sized + Pointee, P: Ptr> Encode<Q, R> for Own<T, P>
-where R: Primitive,
-      T: Save<Q, R>,
-      T::Metadata: Primitive,
-      P: AsPtr<Q>,
+
+impl<Y: Zone, T: ?Sized + Saved<Y>, P: Ptr> Saved<Y> for Own<T, P> {
+    type Saved = Own<T::Saved, Y::Ptr>;
+}
+
+impl<Y: Zone, Q: Ptr, T: ?Sized + Save<Y, Q>, P: Ptr> Save<Y, Q> for Own<T, P>
+where P: AsPtr<Q>
 {
-    type EncodePoll = OwnEncoder<T::SavePoll, T::Metadata, R>;
+    type SavePoll = OwnSavePoll<Y, Q, T>;
 
-    fn init_encode(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::EncodePoll {
-        OwnEncoder {
-            metadata: self.metadata,
-            state: match unsafe { dst.check_dirty::<T>(&self.raw.as_ptr(), self.metadata) } {
-                Ok(r_ptr) => State::Done(r_ptr),
-                Err(value) => State::Poll(value.init_save(dst)),
+    fn init_save(&self) -> Self::SavePoll {
+        match unsafe { self.raw.as_ptr().try_get_dirty_unchecked::<T>(self.metadata) } {
+            Ok(dirty) => {
+                OwnSavePoll {
+                    metadata: self.metadata,
+                    state: State::Dirty(dirty.init_save()),
+                }
+            },
+            Err(persist_ptr) => {
+                OwnSavePoll {
+                    metadata: self.metadata,
+                    state: State::Clean(persist_ptr),
+                }
             },
         }
     }
 }
 
-impl<Q, T, M, R> SavePoll<Q, R> for OwnEncoder<T, M, R>
-where T: SavePoll<Q, R> + SaveBlob
+impl<Y: Zone, Q: Ptr, T: ?Sized + Save<Y, Q>> SavePoll<Y, Q> for OwnSavePoll<Y, Q, T> {
+    type Target = Own<T::Saved, Y::Ptr>;
+
+    fn save_children<D>(&mut self, dst: &mut D) -> Result<(), D::Error>
+        where D: Saver<DstZone = Y, SrcPtr = Q>
+    {
+        loop {
+            self.state = match &mut self.state {
+                State::Clean(persist_ptr) => {
+                    let ptr: &Q = persist_ptr.as_ptr();
+                    match unsafe { dst.try_save_ptr::<T>(ptr, self.metadata)? } {
+                        Ok(dst_ptr) => State::Done(dst_ptr),
+                        Err(value) => State::Dirty(value.init_save()),
+                    }
+                },
+                State::Dirty(value_poll) => {
+                    value_poll.save_children(dst)?;
+
+                    // Note how if this fails save_children() will be called twice.
+                    State::Done(dst.save(value_poll)?)
+                },
+                State::Done(_) => break Ok(())
+            };
+        }
+    }
+
+    fn save_blob<W: WriteBlob<Y, Q>>(&self, dst: W) -> Result<W::Done, W::Error>
+        where Y: BlobZone
+    {
+        todo!()
+    }
+}
+
+/*
+impl<Y: BlobZone, Q, T: ?Sized + Pointee, P: Ptr> EncodeBlob<Y, Q> for Own<T, P>
+where
+      T: SaveBlob<Y, Q>,
+      T::Metadata: Decode<Y>,
+      P: AsPtr<Q>,
 {
-    fn save_poll<D: SavePtr<Source=Q, Target=R>>(&mut self, mut dst: D) -> Result<D, D::Error> {
+    type Encoded = Own<T::Saved, Y::Ptr>;
+    type EncodeBlobPoll = OwnEncodeBlobPoll<Y::BlobPtr, T::SaveBlobPoll, T::Metadata>;
+
+    fn init_encode_blob<D>(&self, dst: &D) -> Result<Self::EncodeBlobPoll, D::Error>
+        where D: BlobSaver<DstZone = Y, SrcPtr = Q>
+    {
+        Ok(OwnEncodeBlobPoll {
+            metadata: self.metadata,
+            state: match unsafe { dst.try_get_dirty::<T>(&self.raw.as_ptr(), self.metadata)? } {
+                Ok(value) => State::Poll(value.init_save_blob(dst)?),
+                Err(ptr) => State::Done(ptr),
+            },
+        })
+    }
+}
+
+impl<Y: BlobZone, T, Q> EncodeBlobPoll<Y, Q> for OwnEncodeBlobPoll<Y::BlobPtr, T, <T::Target as Pointee>::Metadata>
+where T: SaveBlobPoll<Y, Q>,
+      <T::Target as Pointee>::Metadata: Decode<Y>,
+{
+    type Target = Own<T::Target, Y::Ptr>;
+
+    fn encode_blob_poll<D>(&mut self, dst: &mut D) -> Result<(), D::Error>
+        where D: BlobSaver<DstZone = Y, SrcPtr = Q>
+    {
         loop {
             self.state = match &mut self.state {
                 State::Poll(value) => {
+                    /*
                     dst = value.save_poll(dst)?;
 
                     let (d, r_ptr) = dst.try_save_ptr(value)?;
                     dst = d;
                     State::Done(r_ptr)
+                    */ todo!()
                 },
-                State::Done(_) => break Ok(dst),
+                State::Done(_) => break Ok(()),
             }
         }
     }
-}
 
-impl<T, M, R> EncodeBlob for OwnEncoder<T, M, R>
+    fn encode_blob<W: Write>(&self, dst: &mut W) -> Result<(), W::Error> {
+        todo!()
+    }
+    /*
+    fn encode_poll<D>(&mut self, mut dst: &mut D) -> Result<(), D::Error>
+        where D: blob::Saver<Y, P>
+    {
+        /*
+        */ todo!()
+    }
+
+    fn encode<W: blob::Write>(&self, dst: &mut W) -> Result<(), W::Error> {
+        todo!()
+    }
+    */
+}
+*/
+
+/*
+impl<T, M, R> EncodeBlob for OwnEncodePoll<T, M, R>
 where R: Primitive,
       M: Primitive,
 {

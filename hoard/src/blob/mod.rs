@@ -9,12 +9,29 @@ use std::fmt;
 use std::slice;
 
 use crate::pointee::Pointee;
+use crate::load::Decode;
 
-pub mod impls;
+//pub mod impls;
+//pub mod save;
+//pub use self::save::*;
+
+pub mod layout;
+pub use self::layout::BlobLayout;
+
+pub mod padding;
+
+pub trait BlobZone : crate::zone::Zone {
+    type Persist;
+}
+
+impl BlobZone for () {
+    type Persist = ();
+}
 
 /// A reference to an unverified byte blob, for a specific type.
 pub struct Blob<'a, T: ?Sized + Pointee> {
-    marker: PhantomData<&'a [u8]>,
+    // invariant so ValidateBlob(Dyn) implementations can't play games over what blob they return
+    marker: PhantomData<fn(&'a [u8]) -> &'a [u8]>,
     ptr: *const u8,
     metadata: T::Metadata,
 }
@@ -34,40 +51,24 @@ impl<'a, T: ?Sized + Pointee> Borrow<Blob<'a, T>> for ValidBlob<'a, T> {
     }
 }
 
-pub trait ValidateBlob : Pointee {
-    const BLOB_LEN: usize;
-    type Error : 'static + std::error::Error;
-
-    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error>;
+pub trait BlobSize : Sized {
+    const BLOB_LAYOUT: BlobLayout;
 }
 
-pub unsafe trait BlobLen : Pointee {
-    fn try_blob_len(metadata: Self::Metadata) -> Result<usize, Self::LayoutError>;
+pub unsafe trait BlobSizeDyn : Pointee {
+    fn get_blob_layout(metadata: Self::Metadata) -> Result<BlobLayout, Self::LayoutError>;
 }
 
-unsafe impl<T: ?Sized + ValidateBlob> BlobLen for T {
-    fn try_blob_len(_: T::Metadata) -> Result<usize, Self::LayoutError> {
-        Ok(T::BLOB_LEN)
+unsafe impl<T: BlobSize> BlobSizeDyn for T {
+    fn get_blob_layout(_: Self::Metadata) -> Result<BlobLayout, Self::LayoutError> {
+        Ok(Self::BLOB_LAYOUT)
     }
 }
 
-pub trait ValidateBlobPtr : BlobLen {
+pub trait ValidateBlob<PaddingValidator: Copy> : Pointee {
     type Error : 'static + std::error::Error;
 
-    fn validate_blob_ptr<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error>;
-}
-
-impl<T: ?Sized + ValidateBlob> ValidateBlobPtr for T {
-    type Error = T::Error;
-
-    fn validate_blob_ptr<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        ValidateBlob::validate_blob(blob)
-    }
-}
-
-
-pub struct BlobValidator<'a, T: ?Sized + BlobLen> {
-    cursor: BlobCursor<'a, T>,
+    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: PaddingValidator) -> Result<ValidBlob<'a, Self>, Self::Error>;
 }
 
 pub unsafe trait Persist {
@@ -85,12 +86,20 @@ impl<'a, T: ?Sized + Pointee> Blob<'a, T> {
     pub unsafe fn assume_valid(self) -> ValidBlob<'a, T> {
         ValidBlob(self)
     }
+
+    pub fn validate_fields<V>(self, padval: V) -> ValidateFields<'a, T, V> {
+        ValidateFields {
+            blob: self,
+            idx: 0,
+            padval,
+        }
+    }
 }
 
-impl<'a, T: ?Sized + BlobLen> Blob<'a, T> {
+impl<'a, T: ?Sized + BlobSizeDyn> Blob<'a, T> {
     pub fn as_bytes(&self) -> &'a [u8] {
-        let blob_len = T::try_blob_len(self.metadata).unwrap();
-        unsafe { slice::from_raw_parts(self.ptr, blob_len) }
+        let layout = T::get_blob_layout(self.metadata).unwrap();
+        unsafe { slice::from_raw_parts(self.ptr, layout.size()) }
     }
 }
 
@@ -102,7 +111,7 @@ impl<'a, T: ?Sized + Pointee> Deref for ValidBlob<'a, T> {
     }
 }
 
-impl<'a, T: ?Sized + BlobLen> fmt::Debug for Blob<'a, T> {
+impl<'a, T: ?Sized + BlobSizeDyn> fmt::Debug for Blob<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
             .field("metadata", &self.metadata)
@@ -111,7 +120,7 @@ impl<'a, T: ?Sized + BlobLen> fmt::Debug for Blob<'a, T> {
     }
 }
 
-impl<'a, T: ?Sized + BlobLen> fmt::Debug for ValidBlob<'a, T> {
+impl<'a, T: ?Sized + BlobSizeDyn> fmt::Debug for ValidBlob<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
             .field("metadata", &self.metadata)
@@ -124,11 +133,11 @@ impl<'a, T: ?Sized + BlobLen> fmt::Debug for ValidBlob<'a, T> {
 #[non_exhaustive]
 pub struct TryFromSliceError;
 
-impl<'a, T: ValidateBlob> TryFrom<&'a [u8]> for Blob<'a, T> {
+impl<'a, T: BlobSize> TryFrom<&'a [u8]> for Blob<'a, T> {
     type Error = TryFromSliceError;
 
     fn try_from(slice: &'a [u8]) -> Result<Self, Self::Error> {
-        if slice.len() == T::BLOB_LEN {
+        if slice.len() == T::BLOB_LAYOUT.size() {
             unsafe { Ok(Self::new_unchecked(slice, T::make_sized_metadata())) }
         } else {
             Err(TryFromSliceError)
@@ -144,19 +153,42 @@ impl<'a, T: ?Sized + Pointee> ValidBlob<'a, T> {
             &*T::make_fat_ptr(self.0.ptr as *const _, self.0.metadata)
         }
     }
+
+    pub fn decode_fields<'z, Z>(self, zone: &'z Z) -> DecodeFields<'a, 'z, T, Z> {
+        DecodeFields {
+            blob: self,
+            idx: 0,
+            zone,
+        }
+    }
 }
 
-pub struct BlobCursor<'a, T: ?Sized + BlobLen, B = Blob<'a, T>> {
-    marker: PhantomData<Blob<'a, T>>,
-    blob: B,
+/// `Blob` field validator.
+pub struct ValidateFields<'a, T: ?Sized + Pointee, V> {
+    blob: Blob<'a, T>,
     idx: usize,
+    padval: V,
 }
 
-impl<'a, T: ?Sized + BlobLen, B> BlobCursor<'a, T, B>
-where B: Borrow<Blob<'a, T>>
+impl<'a, T: ?Sized + BlobSizeDyn, V> fmt::Debug for ValidateFields<'a, T, V>
+where V: fmt::Debug
 {
-    pub fn field_blob<F: ValidateBlob>(&mut self) -> Blob<'a, F> {
-        self.field_bytes(F::BLOB_LEN)
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct(type_name::<Self>())
+            .field("blob", &self.blob)
+            .field("idx", &self.idx)
+            .field("padval", &self.padval)
+            .finish()
+    }
+}
+
+impl<'a, T: ?Sized + BlobSizeDyn, V: Copy> ValidateFields<'a, T, V> {
+    pub fn field<F: BlobSize + ValidateBlob<V>>(&mut self) -> Result<ValidBlob<'a, F>, F::Error> {
+        F::validate_blob(self.field_blob::<F>(), self.padval)
+    }
+
+    pub fn field_blob<F: BlobSize>(&mut self) -> Blob<'a, F> {
+        self.field_bytes(F::BLOB_LAYOUT.size())
             .try_into().unwrap()
     }
 
@@ -168,90 +200,54 @@ where B: Borrow<Blob<'a, T>>
         r
     }
 
-    pub fn finish(self) -> B {
-        assert_eq!(self.idx, self.blob.borrow().as_bytes().len());
-        self.into_inner()
-    }
-
-    pub fn into_inner(self) -> B {
-        self.blob
-    }
-
-    pub fn metadata(&self) -> T::Metadata {
-        self.blob.borrow().metadata
+    pub unsafe fn finish(self) -> ValidBlob<'a, T> {
+        assert_eq!(self.idx, self.blob.as_bytes().len());
+        self.blob.assume_valid()
     }
 }
 
-impl<'a, T: ?Sized + BlobLen, B> fmt::Debug for BlobCursor<'a, T, B>
-where B: fmt::Debug
+/// `ValidBlob` field cursor.
+pub struct DecodeFields<'a, 'z, T: ?Sized + Pointee, Z> {
+    blob: ValidBlob<'a, T>,
+    idx: usize,
+    zone: &'z Z,
+}
+
+impl<'a, 'z, Z, T: ?Sized + BlobSizeDyn> fmt::Debug for DecodeFields<'a, 'z, T, Z>
+where Z: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
             .field("blob", &self.blob)
             .field("idx", &self.idx)
+            .field("zone", &self.zone)
             .finish()
     }
 }
 
-impl<'a, T: ?Sized + BlobLen> From<ValidBlob<'a, T>> for Blob<'a, T> {
-    fn from(blob: ValidBlob<'a, T>) -> Self {
-        blob.0
-    }
-}
-
-impl<'a, T: ?Sized + BlobLen, B> From<B> for BlobCursor<'a, T, B> {
-    fn from(blob: B) -> Self {
-        Self {
-            marker: PhantomData,
-            blob,
-            idx: 0,
-        }
-    }
-}
-
-impl<'a, T: ?Sized + BlobLen> From<Blob<'a, T>> for BlobValidator<'a, T> {
-    fn from(blob: Blob<'a, T>) -> Self {
-        Self {
-            cursor: blob.into(),
-        }
-    }
-}
-
-impl<'a, T: ?Sized + BlobLen> From<BlobValidator<'a, T>> for Blob<'a, T> {
-    fn from(validator: BlobValidator<'a, T>) -> Self {
-        validator.cursor.blob
-    }
-}
-
-impl<'a, T: ?Sized + BlobLen> From<BlobCursor<'a, T>> for BlobValidator<'a, T> {
-    fn from(cursor: BlobCursor<'a, T>) -> Self {
-        Self { cursor }
-    }
-}
-
-impl<'a, T: ?Sized + BlobLen> Deref for BlobValidator<'a, T> {
-    type Target = BlobCursor<'a, T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.cursor
-    }
-}
-
-impl<'a, T: ?Sized + BlobLen> DerefMut for BlobValidator<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.cursor
-    }
-}
-
-impl<'a, T: ?Sized + BlobLen> BlobValidator<'a, T> {
-    pub fn field<U: ValidateBlob>(&mut self) -> Result<ValidBlob<'a, U>, U::Error> {
-        let buf = self.field_bytes(U::BLOB_LEN);
-        let blob = Blob::<U>::try_from(buf).unwrap();
-        U::validate_blob(blob.into())
+impl<'a, 'z, Z, T: ?Sized + BlobSizeDyn> DecodeFields<'a, 'z, T, Z> {
+    pub unsafe fn decode_unchecked<F: Decode<Z>>(&mut self) -> F
+        where Z: BlobZone
+    {
+        let blob = self.field_blob::<F>();
+        let blob = blob.assume_valid();
+        F::decode_blob(blob, self.zone)
     }
 
-    pub unsafe fn finish(self) -> ValidBlob<'a, T> {
-        self.cursor.finish()
-            .assume_valid()
+    pub fn field_blob<F: BlobSize>(&mut self) -> Blob<'a, F> {
+        self.field_bytes(F::BLOB_LAYOUT.size())
+            .try_into().unwrap()
+    }
+
+    pub fn field_bytes(&mut self, size: usize) -> &'a [u8] {
+        let r = self.blob.as_bytes().get(self.idx .. self.idx + size)
+                                    .expect("out of range");
+        self.idx += size;
+        r
+    }
+
+    pub fn finish(self) -> ValidBlob<'a, T> {
+        assert_eq!(self.idx, self.blob.as_bytes().len());
+        self.blob
     }
 }

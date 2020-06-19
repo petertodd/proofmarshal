@@ -4,7 +4,7 @@ use std::hash::Hash;
 use std::ptr::{self, NonNull};
 use std::fmt;
 
-use crate::primitive::Primitive;
+use crate::scalar::Scalar;
 
 use thiserror::Error;
 use leint::Le;
@@ -16,7 +16,7 @@ use leint::Le;
 /// Other code can assume `Pointee` is implemented correctly.
 pub unsafe trait Pointee {
     /// The metadata associated with pointers to this type.
-    type Metadata : 'static + Primitive + Copy + Eq + Ord + Hash + Send + Sync + fmt::Debug;
+    type Metadata : 'static + Scalar + Eq + Ord + Hash + Send + Sync + fmt::Debug;
 
     type LayoutError : 'static + std::error::Error + Send + Sync;
 

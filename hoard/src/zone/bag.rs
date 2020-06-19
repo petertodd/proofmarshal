@@ -15,12 +15,10 @@ use crate::refs::*;
 use crate::zone::*;
 use crate::blob::*;
 use crate::load::*;
-use crate::save::*;
-use crate::primitive::*;
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct Bag<T: ?Sized + Pointee, P: Ptr, Z = (), M: 'static = <T as Pointee>::Metadata> {
+pub struct Bag<T: ?Sized + Pointee, Z, P: Ptr = <Z as Zone>::Ptr, M: 'static = <T as Pointee>::Metadata> {
     inner: Own<T, P, M>,
     zone: Z,
 }
@@ -92,6 +90,7 @@ impl<T: ?Sized + Pointee, P: Ptr, Z, M> From<Bag<T, P, Z, M>> for Own<T, P, M> {
         bag.inner
     }
 }
+*/
 
 #[derive(Debug, Error)]
 #[error("FIXME")]
@@ -100,45 +99,55 @@ pub enum ValidateBagBlobError<OwnError: Error, ZoneError: Error> {
     Zone(ZoneError),
 }
 
-impl<T: ?Sized + Pointee, P: Ptr, Z, M: 'static> ValidateBlob for Bag<T, P, Z, M>
-where P: ValidateBlob,
-      M: ValidateBlob,
-      Z: ValidateBlob,
+impl<T: ?Sized + Pointee, Z, P: Ptr> BlobSize for Bag<T, Z, P>
+where P: BlobSize,
+      T::Metadata: BlobSize,
+      Z: BlobSize,
 {
-    type Error = ValidateBagBlobError<<Own<T, P, M> as ValidateBlob>::Error, Z::Error>;
+    const BLOB_LAYOUT: BlobLayout = <Own<T, P> as BlobSize>::BLOB_LAYOUT.extend(Z::BLOB_LAYOUT);
+}
 
-    const BLOB_LEN: usize = <Own<T, P, M> as ValidateBlob>::BLOB_LEN + Z::BLOB_LEN;
+impl<V: Copy, T: ?Sized + Pointee, Z, P: Ptr> ValidateBlob<V> for Bag<T, Z, P>
+where P: ValidateBlob<V>,
+      T::Metadata: ValidateBlob<V>,
+      Z: ValidateBlob<V>,
+{
+    type Error = ValidateBagBlobError<<Own<T, P> as ValidateBlob<V>>::Error, Z::Error>;
 
-    fn validate_blob<'a>(mut blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        blob.field::<Own<T, P, M>>().map_err(ValidateBagBlobError::Own)?;
-        blob.field::<Z>().map_err(ValidateBagBlobError::Zone)?;
-        unsafe { Ok(blob.finish()) }
+    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        let mut fields = blob.validate_fields(padval);
+        fields.field::<Own<T, P>>().map_err(ValidateBagBlobError::Own)?;
+        fields.field::<Z>().map_err(ValidateBagBlobError::Zone)?;
+        unsafe { Ok(fields.finish()) }
     }
 }
 
-impl<Q: Ptr, T: ?Sized + Pointee, P: Ptr, Z> Decode<Q> for Bag<T, P, Z>
-where P: Decode<Q>,
-      Z: Decode<Q>,
-      T::Metadata: Decode<Q>,
+impl<Y: Zone, T: ?Sized + Pointee, P: Ptr, Z> Decode<Y> for Bag<T, Z, P>
+where Z: Decode<Y>,
+      P: Decode<Y>,
+      T::Metadata: Decode<Y>,
 {
-    fn decode_blob(mut blob: BlobDecoder<Q, Self>) -> Self {
+    fn decode_blob(blob: ValidBlob<Self>, zone: &Y) -> Self {
+        let mut fields = blob.decode_fields(zone);
         let r = unsafe {
             Self {
-                inner: blob.field_unchecked(),
-                zone: blob.field_unchecked(),
+                inner: fields.decode_unchecked(),
+                zone: fields.decode_unchecked(),
             }
         };
-        blob.finish();
+        fields.finish();
         r
     }
 }
 
-unsafe impl<T: ?Sized + Pointee, P: Ptr, Z, M> Persist for Bag<T, P, Z, M>
-where P: Persist,
-      Z: Persist,
+unsafe impl<T: ?Sized + Pointee, Z, P: Ptr, M> Persist for Bag<T, Z, P, M>
+where Z: Persist,
+      P: Persist,
       M: Persist,
 {}
 
+/*
+/*
 impl<Q, R, T: ?Sized + Pointee, P: Ptr, Z> Encode<Q, R> for Bag<T, P, Z>
 where R: Primitive,
       T: Save<Q, R>,
@@ -237,5 +246,6 @@ mod tests {
     fn test() {
     }
 }
+*/
 */
 */
