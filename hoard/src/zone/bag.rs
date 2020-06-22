@@ -92,6 +92,39 @@ impl<T: ?Sized + Pointee, P: Ptr, Z, M> From<Bag<T, P, Z, M>> for Own<T, P, M> {
 }
 */
 
+impl<T: ?Sized + Pointee, Z, P: Ptr> BlobSize for Bag<T, Z, P> {
+    const BLOB_LAYOUT: BlobLayout = <Own<T, P> as BlobSize>::BLOB_LAYOUT;
+}
+
+impl<V: Copy, T: ?Sized + Pointee, Z, P: Ptr> ValidateBlob<V> for Bag<T, Z, P> {
+    type Error = <Own<T, P> as ValidateBlob<V>>::Error;
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        todo!()
+    }
+}
+
+/*
+impl<T: ?Sized + Load, Z: Zone, P: Ptr> Decode for Bag<T, Z, P>
+where Z: Clone
+{
+    type Zone = Z;
+    type Ptr = P;
+
+    fn decode_blob(blob: ValidBlob<Self>, zone: &Self::Zone) -> Self {
+        let mut fields = blob.decode_fields(zone);
+        let inner = unsafe { fields.decode_unchecked() };
+        fields.finish();
+
+        Self {
+            inner,
+            zone: zone.clone(),
+        }
+    }
+}
+*/
+
+/*
 #[derive(Debug, Error)]
 #[error("FIXME")]
 pub enum ValidateBagBlobError<OwnError: Error, ZoneError: Error> {
@@ -99,13 +132,6 @@ pub enum ValidateBagBlobError<OwnError: Error, ZoneError: Error> {
     Zone(ZoneError),
 }
 
-impl<T: ?Sized + Pointee, Z, P: Ptr> BlobSize for Bag<T, Z, P>
-where P: BlobSize,
-      T::Metadata: BlobSize,
-      Z: BlobSize,
-{
-    const BLOB_LAYOUT: BlobLayout = <Own<T, P> as BlobSize>::BLOB_LAYOUT.extend(Z::BLOB_LAYOUT);
-}
 
 impl<V: Copy, T: ?Sized + Pointee, Z, P: Ptr> ValidateBlob<V> for Bag<T, Z, P>
 where P: ValidateBlob<V>,
@@ -145,6 +171,7 @@ where Z: Persist,
       P: Persist,
       M: Persist,
 {}
+*/
 
 /*
 /*

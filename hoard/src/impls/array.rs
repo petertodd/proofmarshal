@@ -11,6 +11,21 @@ use super::*;
 
 unsafe impl<T: Persist, const N: usize> Persist for [T; N] {}
 
+#[derive(Error, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[error("array validation failed at index {idx}: {err}")]
+pub struct ValidateArrayBlobError<E: Error, const N: usize> {
+    idx: usize,
+    err: E,
+}
+
+impl<E: Error, const N: usize> From<ValidateArrayBlobError<E, N>> for !
+where E: Into<!>
+{
+    fn from(err: ValidateArrayBlobError<E,N>) -> ! {
+        err.err.into()
+    }
+}
+
 impl<T: BlobSize, const N: usize> BlobSize for [T; N] {
     const BLOB_LAYOUT: BlobLayout = BlobLayout {
         size: T::BLOB_LAYOUT.size() * N,
@@ -20,56 +35,52 @@ impl<T: BlobSize, const N: usize> BlobSize for [T; N] {
     };
 }
 
-#[derive(Error, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[error("array validation failed at index {idx}: {err}")]
-pub struct ValidateArrayError<E: Error, const N: usize> {
-    idx: usize,
-    err: E,
-}
-
-impl<E: Error, const N: usize> From<ValidateArrayError<E, N>> for !
-where E: Into<!>
-{
-    fn from(err: ValidateArrayError<E,N>) -> ! {
-        err.err.into()
-    }
-}
-
-impl<V: Copy, T: BlobSize + ValidateBlob<V>, const N: usize> ValidateBlob<V> for [T; N] {
-    type Error = ValidateArrayError<T::Error, N>;
+impl<V: Copy, T: ValidateBlob<V>, const N: usize> ValidateBlob<V> for [T; N] {
+    type Error = ValidateArrayBlobError<T::Error, N>;
 
     fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
         let mut fields = blob.validate_fields(padval);
         for idx in 0 .. N {
-            fields.field::<T>().map_err(|err| ValidateArrayError { idx, err })?;
+            fields.validate_blob::<T>().map_err(|err| ValidateArrayBlobError { idx, err })?;
         }
         unsafe { Ok(fields.finish()) }
     }
 }
 
-impl<Z, T: Decode<Z>, const N: usize> Load<Z> for [T; N] {
-    fn decode_blob(blob: ValidBlob<Self>, zone: &Z) -> Self
-        where Z: BlobZone
-    {
+impl<T: Decode, const N: usize> Decode for [T; N] {
+    type Zone = T::Zone;
+    type Ptr = T::Ptr;
+
+    fn decode_blob(blob: ValidBlob<Self>, zone: &Self::Zone) -> Self {
         todo!()
     }
 }
 
-impl<Z, T: Decode<Z>, const N: usize> Decode<Z> for [T; N] {}
 
-impl<Y, T: Saved<Y>, const N: usize> Saved<Y> for [T; N]
-where T::Saved: Decode<Y>
-{
-    type Saved = [T::Saved; N];
+/*
+impl<Y: Zone, T: Encode<Y>, const N: usize> Encode<Y> for [T; N] {
+    type Encoded = [T::Encoded; N];
+    type EncodePoll = ArrayEncodePoll<Y, T, N>;
+
+    fn init_encode(&self) -> Self::EncodePoll {
+        let mut state = UninitArray::new();
+        for item in self.iter() {
+            state.push(item.init_encode());
+        }
+        ArrayEncodePoll {
+            state: state.done(),
+            idx: 0,
+        }
+    }
 }
 
-pub struct ArraySavePoll<T, const N: usize> {
-    state: [T; N],
+pub struct ArrayEncodePoll<Y: Zone, T: Encode<Y>, const N: usize> {
+    state: [T::EncodePoll; N],
     idx: usize,
 }
 
-impl<T, const N: usize> fmt::Debug for ArraySavePoll<T, N>
-where T: fmt::Debug,
+impl<Y: Zone, T: Encode<Y>, const N: usize> fmt::Debug for ArrayEncodePoll<Y, T, N>
+where T::EncodePoll: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
@@ -79,6 +90,23 @@ where T: fmt::Debug,
     }
 }
 
+impl<Y: Zone, T: Encode<Y>, const N: usize> EncodePoll for ArrayEncodePoll<Y, T, N> {
+    type DstZone = Y;
+    type Target = [T::Encoded; N];
+    type SrcPtr = <T::Ptr as Ptr>::Persist;
+
+    fn encode_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver<DstZone = Self::DstZone>,
+    {
+        while self.idx < N {
+            self.state[self.idx].encode_poll(saver)?;
+            self.idx += 1;
+        }
+        Ok(())
+    }
+}
+
+/*
 impl<Y, Q, T: SavePoll<Y, Q>, const N: usize> SavePoll<Y, Q> for ArraySavePoll<T, N>
 where T::Target: BlobSize + Decode<Y>
 {
@@ -88,8 +116,6 @@ where T::Target: BlobSize + Decode<Y>
         where D: Saver<DstZone = Y, SrcPtr = Q>
     {
         while self.idx < N {
-            self.state[self.idx].save_children(dst)?;
-            self.idx += 1;
         }
         Ok(())
     }
@@ -110,13 +136,7 @@ where T::Saved: BlobSize + Decode<Y>,
     type SavePoll = ArraySavePoll<T::SavePoll, N>;
 
     fn init_save(&self) -> Self::SavePoll {
-        let mut state = UninitArray::new();
-        for item in self.iter() {
-            state.push(item.init_save());
-        }
-        ArraySavePoll {
-            state: state.done(),
-            idx: 0,
-        }
     }
 }
+*/
+*/

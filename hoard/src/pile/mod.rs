@@ -23,16 +23,11 @@ use owned::Take;
 
 use crate::pointee::Pointee;
 use crate::offset::*;
-use crate::ptr::*;
+use crate::zone::*;
 use crate::refs::Ref;
 use crate::load::*;
 use crate::save::*;
 use crate::blob::*;
-
-pub mod error;
-use self::error::*;
-
-mod marshal_impls;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TryPile<'p, 'v> {
@@ -40,10 +35,15 @@ pub struct TryPile<'p, 'v> {
     buf: &'v [u8],
 }
 
-impl<'p, 'v> AsZone<Self> for TryPile<'p, 'v> {
+impl AsZone<Self> for TryPile<'_, '_> {
     fn as_zone(&self) -> &Self {
         self
     }
+}
+
+impl<'p, 'v> Zone for TryPile<'p, 'v> {
+    type Ptr = Offset<'p, 'v>;
+    type PersistPtr = Offset<'p, 'v>;
 }
 
 impl<'p> Default for TryPile<'p, 'static> {
@@ -56,7 +56,9 @@ impl<'p, 'v> TryPile<'p, 'v> {
     pub unsafe fn new_unchecked(buf: &'v [u8]) -> Self {
         Self { marker: PhantomData, buf, }
     }
+}
 
+/*
     pub fn get_blob<T: ?Sized>(&self, offset: Offset<'p, 'v>, metadata: T::Metadata)
         -> Result<Blob<'v, T>, GetBlobError<T::LayoutError>>
         where T: BlobLen
@@ -1537,5 +1539,6 @@ pub mod test {
         */
     }
 }
+*/
 */
 */

@@ -1,31 +1,41 @@
 //! Marshalling of basic scalar types.
 
-use std::num;
 use std::convert::TryFrom;
+use std::fmt;
+use std::num;
+use std::marker::PhantomData;
 
 use crate::pointee::Pointee;
 use crate::blob::{*, padding::{CheckPadding, IgnorePadding}};
 use crate::refs::Ref;
-use crate::load::{Load, Decode};
+use crate::load::*;
 use crate::save::*;
-use crate::writebytes::WriteBytes;
+use crate::zone::*;
 
 use leint::Le;
 
-pub trait Scalar : Copy + BlobSize {
+pub trait Scalar : Copy {
+    const SCALAR_BLOB_LAYOUT: BlobLayout;
+
     type Error : std::error::Error + 'static + Send + Sync;
 
     fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error>;
 
     fn decode_blob(blob: ValidBlob<Self>) -> Self;
-    fn deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Ref<'a, Self> {
-        Ref::Owned(Self::decode_blob(blob))
+
+    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Result<&'a Self, ValidBlob<'a, Self>> {
+        Err(blob)
     }
 
-    fn encode_blob<W: WriteBytes>(&self, dst: W) -> Result<W, W::Error>;
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error>;
 }
 
-impl<V: Copy, T: Scalar> ValidateBlob<V> for T {
+impl<T: Scalar> BlobSize for T {
+    const BLOB_LAYOUT: BlobLayout = T::SCALAR_BLOB_LAYOUT;
+}
+
+
+impl<V, T: Scalar> ValidateBlob<V> for T {
     type Error = T::Error;
 
     fn validate_blob<'a>(blob: Blob<'a, Self>, _: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
@@ -33,38 +43,44 @@ impl<V: Copy, T: Scalar> ValidateBlob<V> for T {
     }
 }
 
-impl<Z, T: Scalar> Load<Z> for T {
-    fn decode_blob(blob: ValidBlob<Self>, _: &Z) -> Self::Owned {
+impl<T: Scalar> Decode for T {
+    type Zone = ();
+    type Ptr = !;
+
+    fn decode_blob(blob: ValidBlob<Self>, _: &()) -> Self {
         T::decode_blob(blob)
     }
 
-    fn deref_blob<'a>(blob: ValidBlob<'a, Self>, _: &Z) -> Ref<'a, Self> {
-        T::deref_blob(blob)
+    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, _: &()) -> Result<&'a Self, ValidBlob<'a, Self>> {
+        T::try_deref_blob(blob)
     }
 }
 
-impl<Z, T: Scalar> Decode<Z> for T {
-}
+impl<Y: Zone, T: Scalar> Encode<Y> for T {
+    type Encoded = Self;
+    type EncodePoll = ScalarEncodePoll<Y, T>;
 
-impl<Z, T: Scalar> Saved<Z> for T {
-    type Saved = Self;
+    fn init_encode(&self) -> Self::EncodePoll {
+        ScalarEncodePoll {
+            marker: PhantomData,
+            value: self.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]
-pub struct ScalarSavePoll<T>(T);
-
-impl<Y, Q, T: Scalar> SavePoll<Y, Q> for ScalarSavePoll<T> {
-    type Target = T;
-
-    fn save_blob<W: WriteBlob<Y, Q>>(&self, dst: W) -> Result<W::Done, W::Error> {
-        todo!()
-    }
+pub struct ScalarEncodePoll<Y, T> {
+    marker: PhantomData<fn(Y)>,
+    value: T,
 }
 
-impl<Y, Q, T: Scalar> Save<Y, Q> for T {
-    type SavePoll = ScalarSavePoll<Self>;
+impl<Y: Zone, T: Scalar> EncodePoll for ScalarEncodePoll<Y, T> {
+    type SrcZone = ();
+    type SrcPtr = !;
+    type DstZone = Y;
+    type Target = T;
 
-    fn init_save(&self) -> Self::SavePoll {
-        ScalarSavePoll(*self)
+    fn encode_poll<S: Saver>(&mut self, _: &mut S) -> Result<(), S::Error> {
+        Ok(())
     }
 }

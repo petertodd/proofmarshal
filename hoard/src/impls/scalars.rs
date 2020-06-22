@@ -9,18 +9,12 @@ use leint::Le;
 
 use super::*;
 
-#[derive(Debug)]
-pub struct ScalarSavePoll<T>(T);
-
 macro_rules! unsafe_impl_all_valid_persist {
     ($($t:ty,)+) => {$(
-        impl BlobSize for $t {
-            const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
-        }
-
         unsafe impl Persist for $t {}
 
         impl Scalar for $t {
+            const SCALAR_BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
             type Error = !;
 
             fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
@@ -31,11 +25,11 @@ macro_rules! unsafe_impl_all_valid_persist {
                 blob.as_value().clone()
             }
 
-            fn deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Ref<'a, Self> {
-                blob.as_value().into()
+            fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Result<&'a Self, ValidBlob<'a, Self>> {
+                Ok(blob.as_value())
             }
 
-            fn encode_blob<W: WriteBytes>(&self, dst: W) -> Result<W, W::Error> {
+            fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error> {
                 let src = unsafe {
                     slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<Self>())
                 };
@@ -54,21 +48,18 @@ unsafe_impl_all_valid_persist! {
 #[non_exhaustive]
 #[derive(Error, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[error("invalid bool blob")]
-pub struct ValidateBoolError;
-
-impl BlobSize for bool {
-    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
-}
+pub struct ValidateBoolBlobError;
 
 unsafe impl Persist for bool {}
 
 impl Scalar for bool {
-    type Error = ValidateBoolError;
+    const SCALAR_BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
+    type Error = ValidateBoolBlobError;
 
     fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
         match blob.as_bytes() {
             [0] | [1] => unsafe { Ok(blob.assume_valid()) },
-            _ => Err(ValidateBoolError),
+            _ => Err(ValidateBoolBlobError),
         }
     }
 
@@ -76,15 +67,16 @@ impl Scalar for bool {
         blob.as_value().clone()
     }
 
-    fn deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Ref<'a, Self> {
-        blob.as_value().into()
+    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Result<&'a Self, ValidBlob<'a, Self>> {
+        Ok(blob.as_value())
     }
 
-    fn encode_blob<W: WriteBytes>(&self, dst: W) -> Result<W, W::Error> {
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error> {
         dst.write_bytes(&[if *self { 1 } else { 0 }])
     }
 }
 
+/*
 #[non_exhaustive]
 #[derive(Error, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[error("invalid nonzero blob")]
@@ -120,7 +112,7 @@ macro_rules! unsafe_impl_nonzero_persist {
                 blob.as_value().into()
             }
 
-            fn encode_blob<W: WriteBytes>(&self, dst: W) -> Result<W, W::Error> {
+            fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error> {
                 let src = unsafe {
                     slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<Self>())
                 };
@@ -159,7 +151,7 @@ macro_rules! impl_nonzero {
                 todo!()
             }
 
-            fn encode_blob<W: WriteBytes>(&self, dst: W) -> Result<W, W::Error> {
+            fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error> {
                 dst.write_bytes(&self.get().to_le_bytes())
             }
         }
@@ -189,7 +181,7 @@ macro_rules! impl_ints {
                 <$t>::from_le_bytes(blob.as_bytes().try_into().unwrap())
             }
 
-            fn encode_blob<W: WriteBytes>(&self, dst: W) -> Result<W, W::Error> {
+            fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error> {
                 dst.write_bytes(&self.to_le_bytes())
             }
         }
@@ -211,3 +203,4 @@ mod test {
         assert_eq!(false.encode_blob(vec![]).into_ok(), &[0]);
     }
 }
+*/

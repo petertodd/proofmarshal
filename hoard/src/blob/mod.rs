@@ -9,7 +9,8 @@ use std::fmt;
 use std::slice;
 
 use crate::pointee::Pointee;
-use crate::load::Decode;
+use crate::load::*;
+use crate::zone::*;
 
 //pub mod impls;
 //pub mod save;
@@ -20,12 +21,44 @@ pub use self::layout::BlobLayout;
 
 pub mod padding;
 
-pub trait BlobZone : crate::zone::Zone {
-    type Persist;
+/// Defines the size and layout of a blob of this type.
+pub trait BlobSize : Sized {
+    const BLOB_LAYOUT: BlobLayout;
 }
 
-impl BlobZone for () {
-    type Persist = ();
+/// `BlobSize`, but for `?Sized` types allowing the layout to depend on type metadata.
+pub unsafe trait BlobSizeDyn : Pointee {
+    fn try_blob_layout(metadata: Self::Metadata) -> Result<BlobLayout, Self::LayoutError>;
+}
+
+unsafe impl<T: BlobSize> BlobSizeDyn for T {
+    fn try_blob_layout(_: ()) -> Result<BlobLayout, Self::LayoutError> {
+        Ok(T::BLOB_LAYOUT)
+    }
+}
+
+/// Blob validation for `Sized` types.
+pub trait ValidateBlob<PaddingValidator> : BlobSize {
+    /// Error returned when a load fails (for whatever reason).
+    type Error : std::error::Error + 'static + Send + Sync;
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: PaddingValidator) -> Result<ValidBlob<'a, Self>, Self::Error>;
+}
+
+/// Blob validation for `?Sized` types.
+pub trait ValidateBlobDyn<PaddingValidator> : BlobSizeDyn {
+    /// Error returned when a load fails (for whatever reason).
+    type Error : std::error::Error + 'static + Send + Sync;
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: PaddingValidator) -> Result<ValidBlob<'a, Self>, Self::Error>;
+}
+
+impl<V, T: ValidateBlob<V>> ValidateBlobDyn<V> for T {
+    type Error = T::Error;
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        T::validate_blob(blob, padval)
+    }
 }
 
 /// A reference to an unverified byte blob, for a specific type.
@@ -49,26 +82,6 @@ impl<'a, T: ?Sized + Pointee> Borrow<Blob<'a, T>> for ValidBlob<'a, T> {
     fn borrow(&self) -> &Blob<'a, T> {
         self.as_ref()
     }
-}
-
-pub trait BlobSize : Sized {
-    const BLOB_LAYOUT: BlobLayout;
-}
-
-pub unsafe trait BlobSizeDyn : Pointee {
-    fn get_blob_layout(metadata: Self::Metadata) -> Result<BlobLayout, Self::LayoutError>;
-}
-
-unsafe impl<T: BlobSize> BlobSizeDyn for T {
-    fn get_blob_layout(_: Self::Metadata) -> Result<BlobLayout, Self::LayoutError> {
-        Ok(Self::BLOB_LAYOUT)
-    }
-}
-
-pub trait ValidateBlob<PaddingValidator: Copy> : Pointee {
-    type Error : 'static + std::error::Error;
-
-    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: PaddingValidator) -> Result<ValidBlob<'a, Self>, Self::Error>;
 }
 
 pub unsafe trait Persist {
@@ -98,7 +111,7 @@ impl<'a, T: ?Sized + Pointee> Blob<'a, T> {
 
 impl<'a, T: ?Sized + BlobSizeDyn> Blob<'a, T> {
     pub fn as_bytes(&self) -> &'a [u8] {
-        let layout = T::get_blob_layout(self.metadata).unwrap();
+        let layout = T::try_blob_layout(self.metadata).unwrap();
         unsafe { slice::from_raw_parts(self.ptr, layout.size()) }
     }
 }
@@ -183,7 +196,7 @@ where V: fmt::Debug
 }
 
 impl<'a, T: ?Sized + BlobSizeDyn, V: Copy> ValidateFields<'a, T, V> {
-    pub fn field<F: BlobSize + ValidateBlob<V>>(&mut self) -> Result<ValidBlob<'a, F>, F::Error> {
+    pub fn validate_blob<F: ValidateBlob<V>>(&mut self) -> Result<ValidBlob<'a, F>, F::Error> {
         F::validate_blob(self.field_blob::<F>(), self.padval)
     }
 
@@ -225,13 +238,13 @@ where Z: fmt::Debug
     }
 }
 
-impl<'a, 'z, Z, T: ?Sized + BlobSizeDyn> DecodeFields<'a, 'z, T, Z> {
-    pub unsafe fn decode_unchecked<F: Decode<Z>>(&mut self) -> F
-        where Z: BlobZone
+impl<'a, 'z, Z: Zone, T: ?Sized + BlobSizeDyn> DecodeFields<'a, 'z, T, Z> {
+    pub unsafe fn decode_unchecked<F: Decode>(&mut self) -> F
+        where Z: AsZone<F::Zone>,
     {
         let blob = self.field_blob::<F>();
         let blob = blob.assume_valid();
-        F::decode_blob(blob, self.zone)
+        F::decode_blob(blob, self.zone.as_zone())
     }
 
     pub fn field_blob<F: BlobSize>(&mut self) -> Blob<'a, F> {

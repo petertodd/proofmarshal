@@ -1,27 +1,91 @@
+//! Saving/encoding of data to zones.
+
 use std::any::Any;
 use std::error;
 use std::mem;
 
 use crate::pointee::Pointee;
-use crate::zone::{Zone, Ptr};
-use crate::load::{Load, Decode};
-use crate::blob::{BlobZone, BlobSize};
+use crate::blob::*;
+use crate::zone::*;
+use crate::load::*;
+use crate::scalar::Scalar;
 
 use super::*;
 
-pub trait Saved<Y> : Pointee {
-    type Saved : ?Sized + Pointee<Metadata = Self::Metadata> + Load<Y>;
+/// A `Sized` value that can be saved persistently in a zone.
+pub trait Encode<Y: Zone> : Decode {
+    /// The resulting type when this value is encoded for the target zone.
+    type Encoded : BlobSize;
+
+    type EncodePoll : EncodePoll<SrcZone = Self::Zone, SrcPtr = Self::Ptr, DstZone = Y, Target = Self::Encoded>;
+
+    fn init_encode(&self) -> Self::EncodePoll;
 }
 
-pub trait Save<Y, Q> : Saved<Y> {
-    type SavePoll : SavePoll<Y, Q, Target = Self::Saved>;
+pub trait EncodePoll {
+    type SrcZone : Zone;
+    type SrcPtr : Ptr;
+    type DstZone : Zone;
+    type Target : BlobSize;
+
+    fn encode_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver<DstZone = Self::DstZone>;
+}
+
+pub trait Save<Y: Zone> : Load {
+    /// The resultant type when this value is saved in the target zone.
+    type Saved : ?Sized + Pointee<Metadata = Self::Metadata>;
+}
+
+impl<Y: Zone, T: Encode<Y>> Save<Y> for T {
+    type Saved = T::Encoded;
+}
+
+/// Saves data in one zone to another zone.
+pub trait Saver {
+    type SrcZone : Zone;
+
+    /// The zone this `Saver` saves data into.
+    type DstZone : Zone;
+
+    /// The error returned when an operation fails.
+    type Error;
+
+    /*
+    /// Tries to save clean data.
+    ///
+    /// In the typical case of saving dirty data to the same zone, the `SrcPtr` will be the same as
+    /// the `DstZone`'s persistent pointer, and thus this function will be a simple no-op.
+    fn save_clean_ptr<T>(&self, ptr: &impl AsPtr<Self::SrcPtr>, metadata: T::Metadata)
+        -> Result<Result<<Self::DstZone as Zone>::PersistPtr, &T>,
+                  Self::Error>
+        where T: ?Sized + Pointee;
+    */
+
+    /*
+    /// Saves a value whose children have been saved.
+    fn save<T>(&mut self, poll: &mut T) -> Result<<Self::DstZone as Zone>::PersistPtr, Self::Error>
+        where T: SavePoll<Self::DstZone, Self::SrcPtr>,
+              Self::DstZone: Zone;
+    */
+}
+
+/*
+pub trait Save<Y: Zone> : Load {
+    type SrcPtr : PersistPtr;
+    type Saved : ?Sized + Load + Pointee<Metadata = Self::Metadata>;
+    type SavePoll : SavePoll<Y, SrcPtr = Self::SrcPtr, Target = Self::Saved>;
 
     fn init_save(&self) -> Self::SavePoll;
 }
 
-pub trait SavePoll<Y, Q> {
-    type Target : ?Sized + Pointee;
+pub trait SavePoll<Y: Zone> {
+    type SrcPtr : PersistPtr;
+    type Target : ?Sized + Load;
 
+    /// Returns the metadata for the target value.
+    ///
+    /// The provided implementation works for any type whose metadata is `()`.
     fn target_metadata(&self) -> <Self::Target as Pointee>::Metadata {
         let unit: &dyn Any = &();
         if let Some(metadata) = unit.downcast_ref::<<Self::Target as Pointee>::Metadata>() {
@@ -31,38 +95,57 @@ pub trait SavePoll<Y, Q> {
         }
     }
 
+    /// Saves children.
+    ///
+    /// The provided implementation does nothing.
     fn save_children<D>(&mut self, dst: &mut D) -> Result<(), D::Error>
-        where D: Saver<DstZone = Y, SrcPtr = Q>
+        where D: Saver<Self::SrcPtr, DstZone = Y>
     {
         let _ = dst;
         Ok(())
     }
 
-    fn save_blob<W: WriteBlob<Y, Q>>(&self, dst: W) -> Result<W::Done, W::Error>
-        where Y: BlobZone;
+    /// Saves a blob.
+    fn save_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error>;
 }
 
-pub trait WriteBlob<Y, Q> : Sized {
-    type Done;
+
+*/
+
+pub trait WriteBlob : Sized {
+    type Ok;
     type Error;
 
-    fn write_bytes(self, src: &[u8]) -> Result<Self, Self::Error>;
+    fn write_bytes(self, buf: &[u8]) -> Result<Self, Self::Error>;
 
-    fn write_padding(mut self, len: usize) -> Result<Self, Self::Error> {
-        for _ in 0 .. len {
-            self = self.write_bytes(&[0])?;
-        }
-        Ok(self)
-    }
-
-    fn write<T: SavePoll<Y, Q>>(self, value: &T) -> Result<Self, Self::Error>
-        where T::Target: BlobSize
-    {
+    fn write_padding(self, len: usize) -> Result<Self, Self::Error> {
         todo!()
     }
 
-    fn done(self) -> Result<Self::Done, Self::Error>;
+    //fn write<Y: Zone, T: SavePoll<Y>>(self, value: &T) -> Result<Self, Self::Error>;
+    fn finish(self) -> Result<Self::Ok, Self::Error>;
 }
+
+impl WriteBlob for Vec<u8> {
+    type Error = !;
+    type Ok = Self;
+
+    fn write_bytes(self, buf: &[u8]) -> Result<Self, Self::Error> {
+        todo!()
+    }
+
+    /*
+    fn write<Y: Zone, T: SavePoll<Y>>(self, value: &T) -> Result<Self, Self::Error> {
+        todo!()
+    }
+    */
+
+    fn finish(self) -> Result<Self, !> {
+        Ok(self)
+    }
+}
+
+/*
 
 /*
 pub trait Encoded<Y: Zone> : Sized {
@@ -124,24 +207,6 @@ pub trait EncodeBlob<Y: Zone> {
 */
 
 
-pub trait Saver {
-    type DstZone;
-    type SrcPtr;
-
-    type Error;
-
-    /// Tries to save a pointer.
-    unsafe fn try_save_ptr<T>(&self, ptr: &Self::SrcPtr, metadata: T::Metadata)
-        -> Result<Result<<<Self::DstZone as Zone>::Ptr as Ptr>::Persist, &T>,
-                  Self::Error>
-        where T: ?Sized + Pointee,
-              Self::DstZone: Zone;
-
-    /// Saves a value whose children have been saved.
-    fn save<T>(&mut self, poll: &mut T) -> Result<<Self::DstZone as Zone>::PersistPtr, Self::Error>
-        where T: SavePoll<Self::DstZone, Self::SrcPtr>,
-              Self::DstZone: Zone;
-}
 
 
 #[cfg(test)]
@@ -331,4 +396,5 @@ macro_rules! impl_encode_blob_for_primitive {
         }
     }
 }
+*/
 */

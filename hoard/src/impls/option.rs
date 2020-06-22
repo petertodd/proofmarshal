@@ -2,14 +2,6 @@ use super::*;
 
 use thiserror::Error;
 
-#[derive(Debug, Error, PartialEq, Eq)]
-#[error("FIXME")]
-pub enum ValidateBlobOptionError<ValueError: std::error::Error, PaddingError: std::error::Error> {
-    Discriminant,
-    Padding(PaddingError),
-    Value(ValueError),
-}
-
 impl<T: BlobSize> BlobSize for Option<T> {
     const BLOB_LAYOUT: BlobLayout = {
         if T::BLOB_LAYOUT.has_niche() {
@@ -20,8 +12,16 @@ impl<T: BlobSize> BlobSize for Option<T> {
     };
 }
 
-impl<V: padding::ValidatePadding, T: BlobSize + ValidateBlob<V>> ValidateBlob<V> for Option<T> {
-    type Error = ValidateBlobOptionError<T::Error, V::Error>;
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("FIXME")]
+pub enum ValidateOptionBlobError<ValueError: std::error::Error> {
+    Discriminant,
+    Padding,
+    Value(ValueError),
+}
+
+impl<V: Copy, T: ValidateBlob<V>> ValidateBlob<V> for Option<T> {
+    type Error = ValidateOptionBlobError<T::Error>;
 
     fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
         if let Some(niche) = T::BLOB_LAYOUT.niche() {
@@ -29,43 +29,84 @@ impl<V: padding::ValidatePadding, T: BlobSize + ValidateBlob<V>> ValidateBlob<V>
             let (niche_bytes, rhs_padding) = rest.split_at(niche.end);
 
             if niche_bytes.iter().all(|b| *b == 0) {
-                padval.validate_padding(lhs_padding).map_err(ValidateBlobOptionError::Padding)?;
-                padval.validate_padding(rhs_padding).map_err(ValidateBlobOptionError::Padding)?;
+                /*
+                padval.validate_padding(lhs_padding).map_err(ValidateOptionBlobError::Padding)?;
+                padval.validate_padding(rhs_padding).map_err(ValidateOptionBlobError::Padding)?;
 
                 unsafe { Ok(blob.assume_valid()) }
+                */ todo!()
             } else {
                 let mut fields = blob.validate_fields(padval);
 
-                fields.field::<T>().map_err(ValidateBlobOptionError::Value)?;
+                fields.validate_blob::<T>().map_err(ValidateOptionBlobError::Value)?;
                 unsafe { Ok(fields.finish()) }
             }
         } else {
             let mut fields = blob.validate_fields(padval);
 
-            match fields.field::<u8>().into_ok().as_value() {
+            match fields.validate_blob::<u8>().into_ok().as_value() {
                 1 => {
-                    fields.field::<T>().map_err(ValidateBlobOptionError::Value)?;
+                    fields.validate_blob::<T>().map_err(ValidateOptionBlobError::Value)?;
                     unsafe { Ok(fields.finish()) }
                 },
                 0 => {
-                    let padding = fields.field_bytes(T::BLOB_LAYOUT.size());
-                    padval.validate_padding(padding).map_err(ValidateBlobOptionError::Padding)?;
+                    /*
+                    let padding = fields.field_bytes(T::blob_layout().size());
+                    padval.validate_padding(padding).map_err(ValidateOptionBlobError::Padding)?;
                     unsafe { Ok(fields.finish()) }
+                    */ todo!()
                 },
-                x => Err(ValidateBlobOptionError::Discriminant),
+                x => Err(ValidateOptionBlobError::Discriminant),
             }
         }
     }
 }
 
-impl<Z, T: Decode<Z>> Load<Z> for Option<T> {
-    fn decode_blob(blob: ValidBlob<Self>, zone: &Z) -> Self
-        where Z: BlobZone
-    {
+impl<T: Decode> Decode for Option<T> {
+    type Zone = T::Zone;
+    type Ptr = T::Ptr;
+
+    fn decode_blob(blob: ValidBlob<Self>, zone: &Self::Zone) -> Self {
         todo!()
     }
 }
 
+/*
+#[derive(Debug)]
+pub struct OptionSavePoll<T>(Option<T>);
+
+impl<Y: Zone, T: SaveIn<Y>> SaveIn<Y> for Option<T>
+where T::Saved: Sized,
+{
+    type Saved = Option<T::Saved>;
+    type SavePoll = OptionSavePoll<T::SavePoll>;
+
+    fn init_save(&self) -> Self::SavePoll {
+        OptionSavePoll(self.as_ref().map(T::init_save))
+    }
+}
+
+impl<Y: Zone, T: SavePoll<Y>> SavePoll<Y> for OptionSavePoll<T>
+where T::Target: Sized,
+{
+    type Target = Option<T::Target>;
+
+    fn save_children<D>(&mut self, dst: &mut D) -> Result<(), D::Error>
+        where D: Saver<<Self::Target as Load>::Ptr, DstZone = Y>,
+    {
+        match self.0 {
+            Some(ref mut inner) => inner.save_children(dst),
+            None => Ok(()),
+        }
+    }
+
+    fn save_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        todo!()
+    }
+}
+*/
+
+/*
 impl<Z, T: Decode<Z>> Decode<Z> for Option<T> {}
 
 impl<Y, T: Saved<Y>> Saved<Y> for Option<T>
@@ -97,10 +138,10 @@ where T::Target: BlobSize + Decode<Y>
     fn save_blob<W: WriteBlob<Y, Q>>(&self, mut dst: W) -> Result<W::Done, W::Error>
         where Y: BlobZone
     {
-        if let Some(niche) = T::Target::BLOB_LAYOUT.niche() {
+        if let Some(niche) = T::Target::blob_layout().niche() {
             match &self.0 {
                 None => {
-                    for _ in 0 .. T::Target::BLOB_LAYOUT.size() {
+                    for _ in 0 .. T::Target::blob_layout().size() {
                         dst = dst.write_bytes(&[0])?;
                     }
                     dst.done()
@@ -112,7 +153,7 @@ where T::Target: BlobSize + Decode<Y>
             match &self.0 {
                 None => {
                     dst.write_bytes(&[0])?
-                       .write_padding(T::Target::BLOB_LAYOUT.size())?
+                       .write_padding(T::Target::blob_layout().size())?
                        .done()
                 },
                 Some(value) => {
@@ -151,10 +192,10 @@ impl<Y, P, T: EncodeBlobPoll<Y, P>> EncodeBlobPoll<Y, P> for Option<T> {
     }
 
     fn encode_blob<W: Write>(&self, dst: &mut W) -> Result<(), W::Error> {
-        if let Some(niche) = T::Target::BLOB_LAYOUT.niche() {
+        if let Some(niche) = T::Target::blob_layout().niche() {
             match self {
                 None => {
-                    for _ in 0 .. T::Target::BLOB_LAYOUT.size() {
+                    for _ in 0 .. T::Target::blob_layout().size() {
                         dst.write(&[0])?;
                     };
                     Ok(())
@@ -165,7 +206,7 @@ impl<Y, P, T: EncodeBlobPoll<Y, P>> EncodeBlobPoll<Y, P> for Option<T> {
             match self {
                 None => {
                     dst.write(&[0])?;
-                    dst.write_padding(T::Target::BLOB_LAYOUT.size())?;
+                    dst.write_padding(T::Target::blob_layout().size())?;
                     Ok(())
                 },
                 Some(inner) => {
@@ -210,7 +251,8 @@ mod tests {
 
         let blob = Blob::<Option<()>>::try_from(&[2][..]).unwrap();
         let err = ValidateBlob::validate_blob(blob, CheckPadding).unwrap_err();
-        assert_eq!(err, ValidateBlobOptionError::Discriminant);
+        assert_eq!(err, ValidateOptionBlobError::Discriminant);
     }
 }
+*/
 */

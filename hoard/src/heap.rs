@@ -1,18 +1,18 @@
 //! Volatile, in-memory, zone allocation.
 
 use std::alloc::{self, Layout};
-use std::ptr::NonNull;
+use std::borrow::Borrow;
 use std::cmp;
 use std::mem::ManuallyDrop;
+use std::ptr::NonNull;
 
 use owned::{Take, IntoOwned};
 
 use crate::pointee::Pointee;
-use crate::ptr::*;
-//use crate::bag::Bag;
 use crate::refs::Ref;
 use crate::load::*;
 use crate::blob::*;
+use crate::zone::*;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct HeapPtr(pub(crate) NonNull<u16>);
@@ -26,6 +26,54 @@ impl Default for HeapPtr {
     }
 }
 
+impl From<!> for HeapPtr {
+    fn from(never: !) -> Self {
+        match never {}
+    }
+}
+
+impl AsPtr<Self> for HeapPtr {
+    fn as_ptr(&self) -> &Self {
+        self
+    }
+}
+
+impl Ptr for HeapPtr {
+    type Persist = !;
+
+    unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
+        todo!()
+    }
+
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
+        todo!()
+    }
+}
+
+impl From<!> for Heap {
+    fn from(never: !) -> Self {
+        match never {}
+    }
+}
+
+impl AsZone<Self> for Heap {
+    fn as_zone(&self) -> &Self {
+        self
+    }
+}
+
+impl AsZone<()> for Heap {
+    fn as_zone(&self) -> &() {
+        &()
+    }
+}
+
+impl Zone for Heap {
+    type Ptr = HeapPtr;
+    type PersistPtr = !;
+}
+
+/*
 #[inline]
 fn min_align_layout(layout: Layout) -> Layout {
     unsafe {
@@ -228,4 +276,5 @@ mod tests {
     }
     */
 }
+*/
 */

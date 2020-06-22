@@ -119,6 +119,108 @@ impl<T: ?Sized + Pointee, P: Ptr, M> Own<T, P, M> {
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> BlobSize for Own<T, P> {
+    const BLOB_LAYOUT: BlobLayout = P::Persist::BLOB_LAYOUT.extend(T::Metadata::BLOB_LAYOUT);
+}
+
+#[derive(Debug, Error)]
+#[error("FIXME")]
+pub enum ValidateOwnBlobError<PtrError: fmt::Debug, MetadataError: fmt::Debug> {
+    Ptr(PtrError),
+    Metadata(MetadataError),
+}
+
+impl<V: Copy, T: ?Sized + Pointee, P: Ptr> ValidateBlob<V> for Own<T, P> {
+    type Error = ValidateOwnBlobError<<P::Persist as Scalar>::Error, <T::Metadata as Scalar>::Error>;
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        let mut fields = blob.validate_fields(padval);
+        fields.validate_blob::<P::Persist>().map_err(ValidateOwnBlobError::Ptr)?;
+        fields.validate_blob::<T::Metadata>().map_err(ValidateOwnBlobError::Metadata)?;
+        unsafe { Ok(fields.finish()) }
+    }
+}
+
+impl<T: ?Sized + Load, P: Ptr> Decode for Own<T, P> {
+    type Zone = T::Zone;
+    type Ptr = P;
+
+    fn decode_blob(blob: ValidBlob<Self>, _: &Self::Zone) -> Self {
+        let mut fields = blob.decode_fields(&());
+        let r = unsafe {
+            Self {
+                marker: PhantomData,
+                inner: Fat {
+                    _marker: PhantomData,
+                    raw: fields.decode_unchecked::<P::Persist>().into(),
+                    metadata: fields.decode_unchecked(),
+                },
+            }
+        };
+        fields.finish();
+        r
+    }
+}
+
+//impl<Y: Zone, T: ?Sized + Save<Y>, P: Ptr> Encode<Y> for Own<T, P> {
+//    type Encoded = Own<T::Saved, Y::Ptr>;
+//}
+
+/*
+
+unsafe impl<T: ?Sized + Pointee, P: Ptr> Load for Own<T, P> {
+    type Zone = ();
+    type Error = LoadOwnError<<P::Persist as Scalar>::Error, <T::Metadata as Scalar>::Error>;
+
+    fn try_blob_layout(_: ()) -> Result<BlobLayout, !> {
+        Ok(P::Persist::BLOB_LAYOUT.extend(T::Metadata::BLOB_LAYOUT))
+    }
+
+    fn validate_blob(blob: Blob<Self>, check_padding: bool) -> Result<ValidBlob<Self>, Self::Error> {
+        todo!()
+    }
+
+    fn load_blob(blob: ValidBlob<Self>, _: &()) -> Self {
+        todo!()
+    }
+}
+
+impl<Y: Zone, T: ?Sized + Save<Y>, P: Ptr> Save<Y> for Own<T, P>
+where T::SrcPtr: AsPtr<P::Persist>
+{
+    type SrcPtr = P::Persist;
+    type Saved = Own<T::Saved, Y::Ptr>;
+    type SavePoll = OwnSavePoll<Y, T, P>;
+
+    fn init_save(&self) -> Self::SavePoll {
+        todo!()
+    }
+}
+
+pub struct OwnSavePoll<Y: Zone, T: ?Sized + Save<Y>, P: Ptr> {
+    state: State<Y, T, P>,
+    metadata: T::Metadata,
+}
+
+enum State<Y: Zone, T: ?Sized + Save<Y>, P: Ptr> {
+    Clean(P::Persist),
+    Dirty(T::SavePoll),
+    Done(Y::PersistPtr),
+}
+
+impl<Y: Zone, T: ?Sized + Save<Y>, P: Ptr> SavePoll<Y> for OwnSavePoll<Y, T, P>
+where T::SrcPtr: AsPtr<P::Persist>
+{
+    type SrcPtr = P::Persist;
+    type Target = Own<T::Saved, Y::Ptr>;
+
+    fn save_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        todo!()
+    }
+}
+
+
+/*
+impl<T: ?Sized + Pointee, P: Ptr> BlobSize for Own<T, P> {
     const BLOB_LAYOUT: BlobLayout = <P::Persist as BlobSize>::BLOB_LAYOUT.extend(T::Metadata::BLOB_LAYOUT);
 }
 
@@ -136,9 +238,6 @@ where P: BlobSize + ValidateBlob<V>,
 
     fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
         let mut fields = blob.validate_fields(padval);
-        fields.field::<P>().map_err(ValidateOwnBlobError::Ptr)?;
-        fields.field::<T::Metadata>().map_err(ValidateOwnBlobError::Metadata)?;
-        unsafe { Ok(fields.finish()) }
     }
 }
 
@@ -328,4 +427,6 @@ where R: Primitive,
         }
     }
 }
+*/
+*/
 */

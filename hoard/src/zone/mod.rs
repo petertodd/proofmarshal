@@ -1,5 +1,6 @@
 //! Generic pointers.
 
+use std::borrow::Borrow;
 use std::cmp;
 use std::fmt;
 use std::mem::ManuallyDrop;
@@ -7,7 +8,7 @@ use std::mem::ManuallyDrop;
 use owned::{Take, IntoOwned};
 
 use crate::pointee::Pointee;
-use crate::load::{Decode, Load};
+//use crate::load::{Decode, Load};
 use crate::scalar::Scalar;
 use crate::refs::Ref;
 
@@ -22,10 +23,8 @@ pub use self::fat::Fat;
 pub mod own;
 pub use self::own::Own;
 
-/*
 pub mod bag;
 pub use self::bag::Bag;
-*/
 
 pub trait AsPtr<Q> {
     fn as_ptr(&self) -> &Q;
@@ -37,21 +36,19 @@ impl<Q> AsPtr<Q> for ! {
     }
 }
 
-/*
 pub trait AsZone<Z> {
     fn as_zone(&self) -> &Z;
 }
 
-impl<Z> AsZone<Z> for ! {
-    fn as_zone(&self) -> &Z {
-        match *self {}
+impl AsZone<()> for () {
+    fn as_zone(&self) -> &Self {
+        self
     }
 }
-*/
 
-pub trait Zone : Sized {
-    type Ptr : Ptr<Persist = Self::PersistPtr> + Decode<Self>;
-    type PersistPtr : Scalar + AsPtr<Self::Ptr> + Into<Self::Ptr> + fmt::Debug;
+pub trait Zone : Sized + AsZone<Self> + AsZone<()> {
+    type Ptr : Ptr<Persist = Self::PersistPtr>;
+    type PersistPtr : PersistPtr + AsPtr<Self::Ptr> + Into<Self::Ptr>;
 }
 
 impl Zone for () {
@@ -60,7 +57,7 @@ impl Zone for () {
 }
 
 pub trait Ptr : Sized + fmt::Debug {
-    type Persist : Scalar + AsPtr<Self> + Into<Self> + fmt::Debug;
+    type Persist : PersistPtr + AsPtr<Self> + Into<Self>;
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata);
 
     /*
@@ -96,15 +93,20 @@ pub trait Ptr : Sized + fmt::Debug {
     */
 }
 
-impl Ptr for ! {
-    type Persist = !;
+pub trait PersistPtr : Sized + Copy + Scalar + fmt::Debug + AsPtr<Self> {
+}
+
+impl PersistPtr for ! {
+}
+
+impl<P: PersistPtr> Ptr for P {
+    type Persist = Self;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
-        match *self {}
     }
 
     unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, _: T::Metadata) -> Result<&T, Self::Persist> {
-        match *self {}
+        Err(*self)
     }
 }
 

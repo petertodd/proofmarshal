@@ -57,8 +57,13 @@ pub mod impls;
 pub mod zone;
 pub mod load;
 pub mod save;
-
 pub mod scalar;
+
+pub mod heap;
+
+//pub mod offset;
+//pub mod pile;
+
 //pub mod primitive;
 
 /*

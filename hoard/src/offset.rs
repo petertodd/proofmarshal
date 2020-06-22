@@ -14,14 +14,12 @@ use leint::Le;
 use owned::{IntoOwned, Take};
 
 use crate::pointee::Pointee;
+use crate::refs::Ref;
 use crate::blob::*;
 use crate::load::*;
 use crate::save::*;
-use crate::primitive::*;
-use crate::ptr::*;
-
-use crate::heap::HeapPtr;
-use crate::pile::Pile;
+use crate::scalar::*;
+use crate::zone::*;
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
@@ -30,14 +28,56 @@ pub struct Offset<'pile, 'version> {
                 fn(&'pile ()) -> &'pile (),
                 &'version (),
             )>,
-    pub(super) raw: Le<NonZeroU64>,
+    raw: Le<NonZeroU64>,
 }
+
+unsafe impl Persist for Offset<'_, '_> {}
 
 impl fmt::Debug for Offset<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.get().fmt(f)
+        //self.get().fmt(f)
+        todo!()
     }
 }
+
+#[derive(Debug, Error)]
+#[error("invalid offset")]
+#[non_exhaustive]
+pub struct LoadOffsetError;
+
+/*
+impl Scalar for Offset<'_, '_> {
+    type Error = LoadOffsetError;
+
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>, _: bool) -> Result<ValidBlob<'a, Self>, Self::Error> {
+        todo!()
+    }
+
+    fn decode_blob(blob: ValidBlob<Self>) -> Self {
+        todo!()
+    }
+
+    fn deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Ref<'a, Self> {
+        todo!()
+    }
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error> {
+        todo!()
+    }
+}
+*/
+
+impl AsPtr<Self> for Offset<'_, '_> {
+    fn as_ptr(&self) -> &Self {
+        self
+    }
+}
+
+impl PersistPtr for Offset<'_, '_> {
+}
+
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
@@ -48,10 +88,12 @@ pub struct OffsetMut<'p, 'v, A = System> {
 
 impl fmt::Debug for OffsetMut<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.kind().fmt(f)
+        //self.kind().fmt(f)
+        todo!()
     }
 }
 
+/*
 unsafe impl<'p, 'v> Persist for Offset<'p, 'v> {}
 unsafe impl<'p, 'v, A> Persist for OffsetMut<'p, 'v, A> {}
 
@@ -451,3 +493,4 @@ mod tests {
             ]);
     }
 }
+*/
