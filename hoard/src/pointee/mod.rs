@@ -8,6 +8,7 @@ use thiserror::Error;
 use leint::Le;
 
 use crate::scalar::Scalar;
+use crate::blob::Persist;
 
 /// A target of a pointer.
 ///
@@ -16,7 +17,8 @@ use crate::scalar::Scalar;
 /// Other code can assume `Pointee` is implemented correctly.
 pub unsafe trait Pointee {
     /// The metadata associated with pointers to this type.
-    type Metadata : 'static + Scalar + Copy + Eq + Ord + Hash + Send + Sync + fmt::Debug;
+    type Metadata : 'static + Copy + Eq + Ord + Hash + Send + Sync + fmt::Debug +
+        Scalar + Persist;
 
     type LayoutError : 'static + std::error::Error + Send + Sync;
 

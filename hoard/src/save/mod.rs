@@ -1,116 +1,206 @@
 //! Saving/encoding of data to zones.
 
-use std::any::Any;
+use std::any::{Any, type_name};
 use std::error;
+use std::fmt;
+use std::marker::PhantomData;
 use std::mem;
 
 use crate::pointee::Pointee;
+use crate::refs::Ref;
 use crate::blob::*;
-use crate::zone::*;
+use crate::ptr::*;
 use crate::load::*;
 use crate::scalar::Scalar;
 
 use super::*;
 
-/// A `Sized` value that can be saved persistently in a zone.
-pub trait Encode<Y: Zone> : Decode {
-    /// The resulting type when this value is encoded for the target zone.
-    type Encoded : BlobSize;
-
-    type EncodePoll : EncodePoll<SrcZone = Self::Zone, SrcPtr = Self::Ptr, DstZone = Y, Target = Self::Encoded>;
-
-    fn init_encode(&self) -> Self::EncodePoll;
-}
-
-pub trait EncodePoll {
-    type SrcZone : Zone;
-    type SrcPtr : Ptr;
-    type DstZone : Zone;
-    type Target : BlobSize;
-
-    fn encode_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<DstZone = Self::DstZone>;
-}
-
-pub trait Save<Y: Zone> : Load {
-    /// The resultant type when this value is saved in the target zone.
+/// Provides the projection of a type saved with a specific type of pointer.
+pub trait Saved<DstPtr> : Pointee {
+    /// The projected type, with all internal pointers replaced by `DstPtr`.
     type Saved : ?Sized + Pointee<Metadata = Self::Metadata>;
 }
 
-impl<Y: Zone, T: Encode<Y>> Save<Y> for T {
-    type Saved = T::Encoded;
-}
+/// The ability to be saved to a persistent zone using the specified pointer type.
+pub trait Save<DstPtr: Ptr> : Saved<DstPtr> + Load {
+    type SavePoll : SavePoll<DstPtr = DstPtr, SrcPtr = Self::Ptr, Target = Self::Saved>;
 
-/// Saves data in one zone to another zone.
-pub trait Saver {
-    type SrcZone : Zone;
-
-    /// The zone this `Saver` saves data into.
-    type DstZone : Zone;
-
-    /// The error returned when an operation fails.
-    type Error;
-
-    /*
-    /// Tries to save clean data.
-    ///
-    /// In the typical case of saving dirty data to the same zone, the `SrcPtr` will be the same as
-    /// the `DstZone`'s persistent pointer, and thus this function will be a simple no-op.
-    fn save_clean_ptr<T>(&self, ptr: &impl AsPtr<Self::SrcPtr>, metadata: T::Metadata)
-        -> Result<Result<<Self::DstZone as Zone>::PersistPtr, &T>,
-                  Self::Error>
-        where T: ?Sized + Pointee;
-    */
-
-    /*
-    /// Saves a value whose children have been saved.
-    fn save<T>(&mut self, poll: &mut T) -> Result<<Self::DstZone as Zone>::PersistPtr, Self::Error>
-        where T: SavePoll<Self::DstZone, Self::SrcPtr>,
-              Self::DstZone: Zone;
-    */
-}
-
-/*
-pub trait Save<Y: Zone> : Load {
-    type SrcPtr : PersistPtr;
-    type Saved : ?Sized + Load + Pointee<Metadata = Self::Metadata>;
-    type SavePoll : SavePoll<Y, SrcPtr = Self::SrcPtr, Target = Self::Saved>;
-
+    /// Creates the `SavePoll` state machine to save this value and its children.
     fn init_save(&self) -> Self::SavePoll;
 }
 
-pub trait SavePoll<Y: Zone> {
-    type SrcPtr : PersistPtr;
-    type Target : ?Sized + Load;
+pub trait EncodeBlob {
+    /// The target value.
+    type Target : ?Sized + Pointee;
 
-    /// Returns the metadata for the target value.
+    /// Gets the metadata for the target value.
     ///
-    /// The provided implementation works for any type whose metadata is `()`.
+    /// The default implementation works for any type with `()` as its metadata.
+    #[inline(always)]
     fn target_metadata(&self) -> <Self::Target as Pointee>::Metadata {
         let unit: &dyn Any = &();
         if let Some(metadata) = unit.downcast_ref::<<Self::Target as Pointee>::Metadata>() {
             *metadata
         } else {
-            unimplemented!()
+            unimplemented!("{} needs to implement SavePoll::target_metadata()", type_name::<Self>())
         }
     }
 
-    /// Saves children.
-    ///
-    /// The provided implementation does nothing.
-    fn save_children<D>(&mut self, dst: &mut D) -> Result<(), D::Error>
-        where D: Saver<Self::SrcPtr, DstZone = Y>
-    {
-        let _ = dst;
-        Ok(())
-    }
-
-    /// Saves a blob.
-    fn save_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error>;
+    /// Encodes the value once polling is complete.
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error>;
 }
 
+/// The interface to the state machine that saves a value and its children.
+pub trait SavePoll : EncodeBlob {
+    /// The type of pointer that children of this value will be behind.
+    type SrcPtr : Ptr;
 
-*/
+    /// The type of pointer this state machine is saving children to.
+    type DstPtr : Ptr;
+
+    /// Polls the state machine, using the provided `Saver`.
+    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>;
+}
+
+/// `Save`, but for the specified `SrcPtr`. Implemented automatically.
+pub trait SavePtr<SrcPtr: Ptr, DstPtr: Ptr> : Saved<DstPtr> + LoadPtr<SrcPtr> {
+    type SavePtrPoll : SavePoll<SrcPtr = SrcPtr, DstPtr = DstPtr, Target = Self::Saved>;
+    fn init_save_ptr(&self) -> Self::SavePtrPoll;
+}
+
+impl<Q: Ptr, R: Ptr, T: Save<R>> SavePtr<Q, R> for T
+where T::Ptr: AsPtr<Q>,
+      Q::BlobZone: AsZone<<T::Ptr as Ptr>::BlobZone>,
+{
+    type SavePtrPoll = SavePtrPoll<Q, R, T>;
+
+    fn init_save_ptr(&self) -> Self::SavePtrPoll {
+        SavePtrPoll {
+            marker: PhantomData,
+            inner: self.init_save(),
+        }
+    }
+}
+
+/// Wrapper used by the automatic `SavePtr` implementation.
+#[repr(transparent)]
+pub struct SavePtrPoll<Q: Ptr, R: Ptr, T: Save<R>> {
+    marker: PhantomData<Q>,
+    inner: T::SavePoll,
+}
+
+impl<Q: Ptr, R: Ptr, T: Save<R>> fmt::Debug for SavePtrPoll<Q, R, T>
+where T::SavePoll: fmt::Debug
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(type_name::<Self>())
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+impl<Q: Ptr, R: Ptr, T: Save<R>> EncodeBlob for SavePtrPoll<Q, R, T> {
+    type Target = T::Saved;
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        self.inner.encode_blob(dst)
+    }
+}
+
+impl<Q: Ptr, R: Ptr, T: Save<R>> SavePoll for SavePtrPoll<Q, R, T>
+where T::Ptr: AsPtr<Q>,
+      Q::BlobZone: AsZone<<T::Ptr as Ptr>::BlobZone>,
+{
+    type SrcPtr = Q;
+
+    type DstPtr = R;
+
+    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = R>,
+    {
+        // SAFETY: #[repr(transparent)]
+        let saver = unsafe { &mut *(saver as *mut S as *mut SaverAdapter<T::Ptr, S>) };
+        self.inner.save_poll(saver)
+    }
+}
+
+#[repr(transparent)]
+struct SaverAdapter<Q: Ptr, S: Saver> {
+    marker: PhantomData<Q>,
+    inner: S,
+}
+
+impl<Q: Ptr, S: Saver> Saver for SaverAdapter<Q, S>
+where Q: AsPtr<S::SrcPtr>,
+      <S::SrcPtr as Ptr>::BlobZone: AsZone<Q::BlobZone>,
+{
+    type SrcPtr = Q;
+    type DstPtr = S::DstPtr;
+
+    type Error = S::Error;
+
+    fn try_save_raw<R, T: ?Sized + ValidateBlob>(&self,
+        ptr: &Q::Persist,
+        metadata: T::Metadata,
+        f: impl FnOnce(ValidBlob<T>, &Q::BlobZone) -> R,
+    ) -> Result<Result<<Self::DstPtr as Ptr>::Persist, R>,
+                Self::Error>
+    {
+        self.inner.try_save_raw(
+            ptr.as_persist_ptr(),
+            metadata,
+            |valid_blob, q_blob_zone| {
+                f(valid_blob, q_blob_zone.as_zone())
+            }
+        )
+    }
+
+    fn finish_save<T>(&mut self, value_poll: &T) -> Result<<Self::DstPtr as Ptr>::Persist, Self::Error>
+        where T: EncodeBlob
+    {
+        self.inner.finish_save(value_poll)
+    }
+}
+
+/// Saves data in one zone to another zone.
+pub trait Saver {
+    type SrcPtr : Ptr;
+
+    type DstPtr : Ptr;
+
+    /// The error returned when an operation fails.
+    type Error;
+
+    /// Tries to coerce a source pointer to a destination pointer.
+    ///
+    /// In the typical case of saving dirty data to the same zone, the `SrcPtr` will be the same as
+    /// the `DstZone`'s persistent pointer, and thus this function will be a simple no-op.
+    fn try_save_raw<R, T: ?Sized + ValidateBlob>(
+        &self,
+        ptr: &<Self::SrcPtr as Ptr>::Persist,
+        metadata: T::Metadata,
+        f: impl FnOnce(ValidBlob<T>, &<Self::SrcPtr as Ptr>::BlobZone) -> R,
+    ) -> Result<Result<<Self::DstPtr as Ptr>::Persist, R>,
+                Self::Error>;
+
+    fn try_save<T: ?Sized + SavePtr<Self::SrcPtr, Self::DstPtr>>(
+        &self,
+        ptr: &<Self::SrcPtr as Ptr>::Persist,
+        metadata: T::Metadata
+    ) -> Result<Result<<Self::DstPtr as Ptr>::Persist, T::SavePtrPoll>,
+                Self::Error>
+    {
+        self.try_save_raw(ptr, metadata, |valid_blob, zone| {
+            T::deref_blob(valid_blob, zone)
+              .init_save_ptr()
+        })
+    }
+
+    /// Saves a value whose children have been saved.
+    fn finish_save<T>(&mut self, value_poll: &T) -> Result<<Self::DstPtr as Ptr>::Persist, Self::Error>
+        where T: EncodeBlob;
+}
 
 pub trait WriteBlob : Sized {
     type Ok;
@@ -118,8 +208,11 @@ pub trait WriteBlob : Sized {
 
     fn write_bytes(self, buf: &[u8]) -> Result<Self, Self::Error>;
 
-    fn write_padding(self, len: usize) -> Result<Self, Self::Error> {
-        todo!()
+    fn write_padding(mut self, len: usize) -> Result<Self, Self::Error> {
+        for _ in 0 .. len {
+            self = self.write_bytes(&[0])?;
+        }
+        Ok(self)
     }
 
     //fn write<Y: Zone, T: SavePoll<Y>>(self, value: &T) -> Result<Self, Self::Error>;
@@ -130,271 +223,17 @@ impl WriteBlob for Vec<u8> {
     type Error = !;
     type Ok = Self;
 
-    fn write_bytes(self, buf: &[u8]) -> Result<Self, Self::Error> {
-        todo!()
+    fn write_bytes(mut self, buf: &[u8]) -> Result<Self, Self::Error> {
+        self.extend_from_slice(buf);
+        Ok(self)
     }
 
-    /*
-    fn write<Y: Zone, T: SavePoll<Y>>(self, value: &T) -> Result<Self, Self::Error> {
-        todo!()
+    fn write_padding(mut self, len: usize) -> Result<Self, Self::Error> {
+        self.resize(self.len() + len, 0);
+        Ok(self)
     }
-    */
 
     fn finish(self) -> Result<Self, !> {
         Ok(self)
     }
 }
-
-/*
-
-/*
-pub trait Encoded<Y: Zone> : Sized {
-    type Encoded : Decode<Y>;
-}
-*/
-
-/*
-impl<Y: Zone, T: Encoded<Y>> Saved<Y> for T {
-    type Saved = T::Encoded;
-}
-
-pub trait SavePoll<Y: Zone, Q: Ptr> {
-    type Target : ?Sized + Load<Y>;
-
-
-
-}
-*/
-
-/*
-/// A **type** that can be saved to a blob behind a pointer.
-pub trait Save<Y: Zone, Q: Ptr> : Saved<Y> {
-    type SavePoll : SavePoll<Y, Q, Target = Self::Saved>;
-
-    fn init_save<D>(&self) -> Self::SavePoll;
-}
-
-pub trait SavePoll<Y: Zone, Q: Ptr> {
-
-    fn save_children<D>(&mut self, dst: &mut D) -> Result<(), D::Error>
-        where D: Saver<DstZone = Y, SrcPtr = Q>;
-
-
-}
-
-pub trait EncodePoll<Y: Zone, Q: Ptr> {
-    type Target : Decode<Y>;
-
-    fn save_children<D>(&mut self, dst: &mut D) -> Result<(), D::Error>
-        where D: Saver<DstZone = Y, SrcPtr = Q>;
-
-    fn encode_blob<W: WriteBlob>(&self, dst: &mut W) -> Result<(), W::Error>;
-}
-*/
-
-/*
-pub trait Encode<Y: Zone, Q: Ptr> : Encoded<Y> {
-    type EncodePoll : SaveChildren<Y,Q> + EncodeBlob<Y, Target = Self::Encoded>;
-
-    fn init_encode(&self) -> Self::EncodePoll;
-}
-
-pub trait EncodeBlob<Y: Zone> {
-    type Target : Decode<Y>;
-
-    fn encode_blob<W: WriteBlob<Zone = Y>>(&self, dst: W) -> Result<W::Done, W::Error>;
-}
-*/
-
-
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use crate::zone::Own;
-    use crate::blob::*;
-    use crate::load::*;
-    use crate::zone::*;
-
-    struct Foo<P: Ptr> {
-        owned: Own<u8, P, ()>,
-        prim: u8,
-    }
-
-    impl<P: Ptr> BlobSize for Foo<P> {
-        const BLOB_LAYOUT: BlobLayout = <Own<u8, P, ()> as BlobSize>::BLOB_LAYOUT.extend(<u8 as BlobSize>::BLOB_LAYOUT);
-    }
-
-    impl<V: Copy, P: Ptr> ValidateBlob<V> for Foo<P>
-        where P: BlobSize + ValidateBlob<V>
-    {
-        type Error = !;
-
-        fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
-            let mut fields = blob.validate_fields(padval);
-            fields.field::<Own<u8, P, ()>>().unwrap();
-            fields.field::<u8>().unwrap();
-            unsafe { Ok(fields.finish()) }
-        }
-    }
-
-    impl<Z, P: Ptr + Decode<Z>> Load<Z> for Foo<P> {
-        fn decode_blob(blob: ValidBlob<Self>, zone: &Z) -> Self::Owned
-            where Z: BlobZone
-        {
-            todo!()
-        }
-    }
-
-    impl<Y: Zone, P: Ptr> Saved<Y> for Foo<P> {
-        type Saved = Foo<Y::Ptr>;
-    }
-
-    struct FooSavePoll<Y: Zone, Q: Ptr, P: Ptr + AsPtr<Q>> {
-        owned: <Own<u8, P, ()> as Save<Y, Q>>::SavePoll,
-        prim: <u8 as Save<Y, Q>>::SavePoll,
-    }
-
-    impl<Y: Zone, Q: Ptr, P: Ptr> SavePoll<Y, Q> for FooSavePoll<Y, Q, P>
-        where P: AsPtr<Q>,
-    {
-        type Target = Foo<Q>;
-
-        fn save_blob<W: WriteBlob<Y, Q>>(&self, dst: W) -> Result<W::Done, W::Error>
-            where Y: BlobZone
-        {
-            todo!()
-        }
-    }
-}
-
-
-/*
-pub trait Encode<Y, P = <Y as crate::zone::Zone>::Ptr> : Sized {
-    type Encoded : Decode<Y>;
-    type EncodePoll : EncodePoll<Y, P, Target = Self::Encoded>;
-
-    fn init_encode_blob<D>(&self, dst: &D) -> Result<Self::EncodeBlobPoll, D::Error>
-        where D: BlobSaver<DstZone = Y, SrcPtr = P>;
-}
-
-/*
-impl<Y, P, T> Save<Y, P> for T
-where T: Encode<Y, P>,
-      T::Encoded: Pointee<Metadata = <T as Pointee>::Metadata>
-{
-    type Saved = T::Encoded;
-    type SavePoll = T::EncodePoll;
-
-    fn init_save<D>(&self, dst: &D) -> Result<Self::SavePoll, D::Error>
-        where D: Saver<Y, P>
-    {
-        self.init_encode(dst)
-    }
-}
-*/
-
-pub trait EncodeBlobPoll<Y, P = <Y as crate::zone::Zone>::Ptr> {
-    type Target : Decode<Y>;
-
-    fn encode_blob_poll<D>(&mut self, dst: &mut D) -> Result<(), D::Error>
-        where D: BlobSaver<DstZone = Y, SrcPtr = P>;
-
-    fn encode_blob<W: Write>(&self, dst: &mut W) -> Result<(), W::Error>;
-}
-
-/*
-impl<Y, P, T> SavePoll<Y, P> for T
-where T: EncodePoll<Y, P>
-{
-    type Target = T::Target;
-
-    fn save_poll<D>(&mut self, dst: &mut D) -> Result<Y::BlobPtr, D::Error>
-        where D: Saver<Y, P>,
-              Y: BlobZone,
-    {
-        self.encode_poll(dst)?;
-
-        dst.alloc_blob(T::Target::BLOB_LAYOUT.size(), |dst| {
-            self.encode(dst)
-        })
-    }
-}
-*/
-
-pub trait AllocBlob {
-    type Error;
-    type Done;
-
-    type WriteBlob : WriteBlob<Done = Self::Done, Error = Self::WriteBlobError>;
-    type WriteBlobError : Into<Self::Error>;
-
-    fn alloc_blob(self, size: usize) -> Result<Self::WriteBlob, Self::Error>;
-}
-
-pub trait WriteBlob : Write {
-    type Done;
-
-    fn finish(self) -> Result<Self::Done, Self::Error>;
-}
-
-pub trait BlobSaver : Sized {
-    type DstZone;
-    type SrcPtr;
-
-    type Error;
-
-    type Write : Write;
-
-    unsafe fn try_get_dirty<T>(&self, ptr: &Self::SrcPtr, metadata: T::Metadata)
-        -> Result<Result<&T, <Self::DstZone as BlobZone>::BlobPtr>,
-                  Self::Error>
-        where T: ?Sized + Pointee,
-              Self::DstZone: BlobZone;
-
-    fn raise_layout_err(&self, err: impl std::error::Error) -> Self::Error {
-        todo!()
-    }
-
-    fn alloc_blob<F>(&mut self, size: usize, f: F) -> Result<<Self::DstZone as BlobZone>::BlobPtr, Self::Error>
-        where F: FnOnce(&mut Self::Write) -> Result<(), <Self::Write as Write>::Error>,
-              Self::DstZone: BlobZone;
-}
-
-/// Macro to implement `blob::Encode` for a primitive type.
-#[macro_export]
-macro_rules! impl_encode_blob_for_primitive {
-    (| $this:ident : $t:ty, $dst:ident | $save_expr:expr ) => {
-        impl<__Y, __P> $crate::blob::EncodeBlob<__Y, __P> for $t {
-            type Encoded = Self;
-            type EncodeBlobPoll = Self;
-
-            fn init_encode_blob<__D>(&self, __dst: &__D) -> Result<Self::EncodeBlobPoll, __D::Error>
-                where __D: $crate::blob::BlobSaver
-            {
-                Ok(self.clone())
-            }
-        }
-
-        impl<__Y, __P> $crate::blob::EncodeBlobPoll<__Y, __P> for $t {
-            type Target = Self;
-
-            fn encode_blob_poll<__D>(&mut self, __dst: &mut __D) -> Result<(), __D::Error>
-                where __D: $crate::blob::BlobSaver
-            {
-                Ok(())
-            }
-
-            fn encode_blob<__W>(&self, $dst: &mut __W) -> Result<(), __W::Error>
-                where __W: $crate::blob::Write
-            {
-                let $this = self;
-                $save_expr
-            }
-        }
-    }
-}
-*/
-*/

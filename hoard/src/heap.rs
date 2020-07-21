@@ -12,7 +12,7 @@ use crate::pointee::Pointee;
 use crate::refs::Ref;
 use crate::load::*;
 use crate::blob::*;
-use crate::zone::*;
+use crate::ptr::*;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct HeapPtr(pub(crate) NonNull<u16>);
@@ -20,60 +20,26 @@ pub struct HeapPtr(pub(crate) NonNull<u16>);
 #[derive(Default,Debug,Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Heap;
 
-impl Default for HeapPtr {
-    fn default() -> Self {
-        Self(NonNull::dangling())
+unsafe impl ValidateBlob for HeapPtr {
+    type BlobError = !;
+
+    fn try_blob_layout(_: ()) -> Result<BlobLayout, !> {
+        Ok(BlobLayout::new(8))
+    }
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>, _: bool) -> Result<ValidBlob<'a, Self>, Self::BlobError> {
+        unsafe { Ok(blob.assume_valid()) }
     }
 }
 
-impl From<!> for HeapPtr {
-    fn from(never: !) -> Self {
-        match never {}
+impl Load for HeapPtr {
+    type Ptr = Self;
+
+    fn decode_blob(blob: ValidBlob<Self>, zone: &!) -> Self {
+        match *zone {}
     }
 }
 
-impl AsPtr<Self> for HeapPtr {
-    fn as_ptr(&self) -> &Self {
-        self
-    }
-}
-
-impl Ptr for HeapPtr {
-    type Persist = !;
-
-    unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
-        todo!()
-    }
-
-    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
-        todo!()
-    }
-}
-
-impl From<!> for Heap {
-    fn from(never: !) -> Self {
-        match never {}
-    }
-}
-
-impl AsZone<Self> for Heap {
-    fn as_zone(&self) -> &Self {
-        self
-    }
-}
-
-impl AsZone<()> for Heap {
-    fn as_zone(&self) -> &() {
-        &()
-    }
-}
-
-impl Zone for Heap {
-    type Ptr = HeapPtr;
-    type PersistPtr = !;
-}
-
-/*
 #[inline]
 fn min_align_layout(layout: Layout) -> Layout {
     unsafe {
@@ -101,6 +67,75 @@ pub(crate) unsafe fn heap_dealloc(ptr: NonNull<u16>, layout: Layout) {
         std::alloc::dealloc(ptr.as_ptr().cast(), min_align_layout(layout))
     };
 }
+
+impl Ptr for HeapPtr {
+    type Zone = Heap;
+    type BlobZone = !;
+    type Persist = !;
+
+    unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
+        todo!()
+    }
+
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
+        todo!()
+    }
+}
+
+impl AsPtrImpl<HeapPtr> for HeapPtr {
+    fn as_ptr_impl(this: &Self) -> &Self {
+        this
+    }
+}
+
+impl Default for HeapPtr {
+    fn default() -> Self {
+        Self(NonNull::dangling())
+    }
+}
+
+/*
+impl From<!> for HeapPtr {
+    fn from(never: !) -> Self {
+        match never {}
+    }
+}
+
+impl AsPtr<Self> for HeapPtr {
+    fn as_ptr(&self) -> &Self {
+        self
+    }
+}
+
+impl Ptr for HeapPtr {
+    type Persist = !;
+
+}
+
+impl From<!> for Heap {
+    fn from(never: !) -> Self {
+        match never {}
+    }
+}
+
+impl AsZone<Self> for Heap {
+    fn as_zone(&self) -> &Self {
+        self
+    }
+}
+
+impl AsZone<()> for Heap {
+    fn as_zone(&self) -> &() {
+        &()
+    }
+}
+
+impl Zone for Heap {
+    type Ptr = HeapPtr;
+    type PersistPtr = !;
+}
+
+/*
 
 pub(crate) unsafe fn alloc_unchecked_impl<T: ?Sized>(src: &mut ManuallyDrop<T>) -> NonNull<u16> {
     let layout = Layout::for_value(src);
@@ -276,5 +311,6 @@ mod tests {
     }
     */
 }
+*/
 */
 */

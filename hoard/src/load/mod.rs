@@ -13,130 +13,53 @@ use owned::IntoOwned;
 use crate::pointee::Pointee;
 use crate::refs::Ref;
 use crate::blob::*;
-use crate::zone::*;
+use crate::ptr::{Ptr, AsZone};
 
-pub trait Load : IntoOwned + ValidateBlobDyn<padding::CheckPadding> + ValidateBlobDyn<padding::IgnorePadding> {
-    /// The type of `Zone` present within a value of this type.
-    type Zone : Zone;
-
-    /// The type of `Ptr` present within a value of this type.
+/// A type that can be loaded into memory.
+pub trait Load : IntoOwned + ValidateBlob {
+    /// The type of `Ptr` values of this type will contain.
     type Ptr : Ptr;
 
-    fn load_blob(blob: ValidBlob<Self>, zone: &Self::Zone) -> Self::Owned;
+    fn decode_blob(blob: ValidBlob<Self>, zone: &<Self::Ptr as Ptr>::BlobZone) -> Self::Owned;
 
-    fn deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Self::Zone) -> Ref<'a, Self> {
-        match Self::try_deref_blob(blob, zone) {
-            Ok(r) => Ref::Ref(r),
-            Err(blob) => Ref::Owned(Self::load_blob(blob, zone)),
-        }
-    }
-
-    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Self::Zone) -> Result<&'a Self, ValidBlob<'a, Self>> {
-        let _ = zone;
+    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &<Self::Ptr as Ptr>::BlobZone) -> Result<&'a Self, ValidBlob<'a, Self>> {
         Err(blob)
     }
 }
 
-pub trait Decode : Sized + ValidateBlob<padding::CheckPadding> + ValidateBlob<padding::IgnorePadding> {
-    type Zone : Zone;
-
-    /// The type of `Ptr` present within a value of this type.
-    type Ptr : Ptr;
-
-    fn decode_blob(blob: ValidBlob<Self>, zone: &Self::Zone) -> Self;
-
-    fn deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Self::Zone) -> Ref<'a, Self> {
-        match Self::try_deref_blob(blob, zone) {
-            Ok(r) => Ref::Ref(r),
-            Err(blob) => Ref::Owned(Self::decode_blob(blob, zone)),
-        }
-    }
-
-    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Self::Zone) -> Result<&'a Self, ValidBlob<'a, Self>> {
-        let _ = zone;
-        Err(blob)
-    }
+/// Automatically implemented for `Sized` types that implement `Load`.
+pub trait Decode : Sized + Load + IntoOwned<Owned=Self> {
 }
 
-impl<T: Decode> Load for T {
-    type Zone = T::Zone;
-
-    /// The type of `Ptr` present within a value of this type.
-    type Ptr = T::Ptr;
-
-    fn load_blob(blob: ValidBlob<Self>, zone: &Self::Zone) -> Self {
-        Self::decode_blob(blob, zone)
-    }
-
-    fn deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Self::Zone) -> Ref<'a, Self> {
-        Self::deref_blob(blob, zone)
-    }
-
-    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &Self::Zone) -> Result<&'a Self, ValidBlob<'a, Self>> {
-        Self::try_deref_blob(blob, zone)
-    }
+impl<T: Load + IntoOwned<Owned=Self>> Decode for T {
 }
 
-/*
-pub trait DecodeIn<Z: Zone> : Sized + ValidateBlob<padding::CheckPadding> + ValidateBlob<padding::IgnorePadding> {
-    fn decode_blob_in(blob: ValidBlob<Self>, zone: &Z) -> Self;
+/// `Load`, but automatically implemented for any compatible pointer type.
+pub trait LoadPtr<P: Ptr> : IntoOwned + ValidateBlob {
+    fn decode_blob(blob: ValidBlob<Self>, zone: &P::BlobZone) -> Self::Owned;
 
-    fn deref_blob_in<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Ref<'a, Self> {
-        match Self::try_deref_blob_in(blob, zone) {
-            Ok(r) => Ref::Ref(r),
-            Err(blob) => Ref::Owned(Self::decode_blob_in(blob, zone)),
-        }
-    }
-
-    fn try_deref_blob_in<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Result<&'a Self, ValidBlob<'a, Self>> {
-        let _ = zone;
-        Err(blob)
-    }
-}
-
-impl<Z: Zone, T: Decode> DecodeIn<Z> for T
-where Z: AsZone<T::Zone>
-{
-    fn decode_blob_in(blob: ValidBlob<Self>, zone: &Z) -> Self {
-        T::decode_blob(blob, zone.as_zone())
-    }
-
-    fn deref_blob_in<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Ref<'a, Self> {
-        T::deref_blob(blob, zone.as_zone())
-    }
-
-    fn try_deref_blob_in<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Result<&'a Self, ValidBlob<'a, Self>> {
-        T::try_deref_blob(blob, zone.as_zone())
-    }
-}
-
-pub trait LoadIn<Z> : Load {
-    fn load_blob_in(blob: ValidBlob<Self>, zone: &Z) -> Self::Owned;
-    fn decode_blob_in(blob: ValidBlob<Self>, zone: &Z) -> Self
-        where Self: Sized
+    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &P::BlobZone) -> Result<&'a Self, ValidBlob<'a, Self>>
     {
-        let owned = Self::load_blob_in(blob, zone);
-        todo!()
+        Err(blob)
     }
-    fn deref_blob_in<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Ref<'a, Self>;
+
+    fn deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &P::BlobZone) -> Ref<'a, Self>
+    {
+        Ref::Owned(Self::decode_blob(blob, zone))
+    }
 }
 
-impl<Z: Zone, T: ?Sized + Load> LoadIn<Z> for T
-where Z: AsZone<T::Zone>,
+/// `LoadPtr`, but for `Sized` types.
+pub trait DecodePtr<P: Ptr> : Sized + LoadPtr<P, Owned=Self> {
+}
+
+impl<P: Ptr, T: Sized + LoadPtr<P, Owned=Self> + ValidateBlob> DecodePtr<P> for T {
+}
+
+impl<P: Ptr, T: ?Sized + IntoOwned + Load> LoadPtr<P> for T
+where P::BlobZone: AsZone<<T::Ptr as Ptr>::BlobZone>
 {
-    fn load_blob_in(blob: ValidBlob<Self>, zone: &Z) -> Self::Owned {
-        T::load_blob(blob, zone.as_zone())
-    }
-
-    fn deref_blob_in<'a>(blob: ValidBlob<'a, Self>, zone: &Z) -> Ref<'a, Self> {
-        T::deref_blob(blob, zone.as_zone())
-    }
-}
-*/
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test() {
+    fn decode_blob(blob: ValidBlob<Self>, zone: &P::BlobZone) -> Self::Owned {
+        T::decode_blob(blob, zone.as_zone())
     }
 }

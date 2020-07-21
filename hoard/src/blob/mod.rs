@@ -8,9 +8,11 @@ use std::ops::{Deref, DerefMut};
 use std::fmt;
 use std::slice;
 
+use owned::IntoOwned;
+
 use crate::pointee::Pointee;
+use crate::ptr::*;
 use crate::load::*;
-use crate::zone::*;
 
 //pub mod impls;
 //pub mod save;
@@ -19,52 +21,27 @@ use crate::zone::*;
 pub mod layout;
 pub use self::layout::BlobLayout;
 
-pub mod padding;
-
-/// Defines the size and layout of a blob of this type.
-pub trait BlobSize : Sized {
-    const BLOB_LAYOUT: BlobLayout;
-}
-
-/// `BlobSize`, but for `?Sized` types allowing the layout to depend on type metadata.
-pub unsafe trait BlobSizeDyn : Pointee {
-    fn try_blob_layout(metadata: Self::Metadata) -> Result<BlobLayout, Self::LayoutError>;
-}
-
-unsafe impl<T: BlobSize> BlobSizeDyn for T {
-    fn try_blob_layout(_: ()) -> Result<BlobLayout, Self::LayoutError> {
-        Ok(T::BLOB_LAYOUT)
-    }
-}
-
-/// Blob validation for `Sized` types.
-pub trait ValidateBlob<PaddingValidator> : BlobSize {
-    /// Error returned when a load fails (for whatever reason).
-    type Error : std::error::Error + 'static + Send + Sync;
-
-    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: PaddingValidator) -> Result<ValidBlob<'a, Self>, Self::Error>;
-}
-
 /// Blob validation for `?Sized` types.
-pub trait ValidateBlobDyn<PaddingValidator> : BlobSizeDyn {
+pub unsafe trait ValidateBlob : Pointee {
     /// Error returned when a load fails (for whatever reason).
-    type Error : std::error::Error + 'static + Send + Sync;
+    type BlobError : std::error::Error + 'static + Send + Sync;
 
-    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: PaddingValidator) -> Result<ValidBlob<'a, Self>, Self::Error>;
-}
+    fn try_blob_layout(metadata: Self::Metadata) -> Result<BlobLayout, Self::LayoutError>;
 
-impl<V, T: ValidateBlob<V>> ValidateBlobDyn<V> for T {
-    type Error = T::Error;
-
-    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        T::validate_blob(blob, padval)
+    fn blob_layout() -> BlobLayout
+        where Self: Sized,
+    {
+        Self::try_blob_layout(Self::make_sized_metadata())
+            .expect("layout should always succeed for sized types")
     }
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>, ignore_padding: bool) -> Result<ValidBlob<'a, Self>, Self::BlobError>;
 }
 
 /// A reference to an unverified byte blob, for a specific type.
 pub struct Blob<'a, T: ?Sized + Pointee> {
     // invariant so ValidateBlob(Dyn) implementations can't play games over what blob they return
-    marker: PhantomData<fn(&'a [u8]) -> &'a [u8]>,
+    marker: PhantomData<fn(&'a [u8]) -> &'a T>,
     ptr: *const u8,
     metadata: T::Metadata,
 }
@@ -100,18 +77,22 @@ impl<'a, T: ?Sized + Pointee> Blob<'a, T> {
         ValidBlob(self)
     }
 
-    pub fn validate_fields<V>(self, padval: V) -> ValidateFields<'a, T, V> {
+    pub fn validate_fields(self, ignore_padding: bool) -> ValidateFields<'a, T> {
         ValidateFields {
             blob: self,
             idx: 0,
-            padval,
+            ignore_padding,
         }
     }
 }
 
-impl<'a, T: ?Sized + BlobSizeDyn> Blob<'a, T> {
+impl<'a, T: ?Sized + ValidateBlob> Blob<'a, T> {
+    #[inline(always)]
     pub fn as_bytes(&self) -> &'a [u8] {
-        let layout = T::try_blob_layout(self.metadata).unwrap();
+        let layout = T::try_blob_layout(self.metadata)
+                       .unwrap_or_else(|err| {
+                           todo!()
+                       });
         unsafe { slice::from_raw_parts(self.ptr, layout.size()) }
     }
 }
@@ -124,7 +105,7 @@ impl<'a, T: ?Sized + Pointee> Deref for ValidBlob<'a, T> {
     }
 }
 
-impl<'a, T: ?Sized + BlobSizeDyn> fmt::Debug for Blob<'a, T> {
+impl<'a, T: ?Sized + ValidateBlob> fmt::Debug for Blob<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
             .field("metadata", &self.metadata)
@@ -133,7 +114,7 @@ impl<'a, T: ?Sized + BlobSizeDyn> fmt::Debug for Blob<'a, T> {
     }
 }
 
-impl<'a, T: ?Sized + BlobSizeDyn> fmt::Debug for ValidBlob<'a, T> {
+impl<'a, T: ?Sized + ValidateBlob> fmt::Debug for ValidBlob<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
             .field("metadata", &self.metadata)
@@ -146,11 +127,11 @@ impl<'a, T: ?Sized + BlobSizeDyn> fmt::Debug for ValidBlob<'a, T> {
 #[non_exhaustive]
 pub struct TryFromSliceError;
 
-impl<'a, T: BlobSize> TryFrom<&'a [u8]> for Blob<'a, T> {
+impl<'a, T: ValidateBlob> TryFrom<&'a [u8]> for Blob<'a, T> {
     type Error = TryFromSliceError;
 
     fn try_from(slice: &'a [u8]) -> Result<Self, Self::Error> {
-        if slice.len() == T::BLOB_LAYOUT.size() {
+        if slice.len() == T::blob_layout().size() {
             unsafe { Ok(Self::new_unchecked(slice, T::make_sized_metadata())) }
         } else {
             Err(TryFromSliceError)
@@ -167,7 +148,9 @@ impl<'a, T: ?Sized + Pointee> ValidBlob<'a, T> {
         }
     }
 
-    pub fn decode_fields<'z, Z>(self, zone: &'z Z) -> DecodeFields<'a, 'z, T, Z> {
+    pub fn decode_fields<'z>(self, zone: &'z <T::Ptr as Ptr>::BlobZone) -> DecodeFields<'a, 'z, T, T::Ptr>
+        where T: Load
+    {
         DecodeFields {
             blob: self,
             idx: 0,
@@ -177,42 +160,50 @@ impl<'a, T: ?Sized + Pointee> ValidBlob<'a, T> {
 }
 
 /// `Blob` field validator.
-pub struct ValidateFields<'a, T: ?Sized + Pointee, V> {
+pub struct ValidateFields<'a, T: ?Sized + Pointee> {
     blob: Blob<'a, T>,
     idx: usize,
-    padval: V,
+    ignore_padding: bool,
 }
 
-impl<'a, T: ?Sized + BlobSizeDyn, V> fmt::Debug for ValidateFields<'a, T, V>
-where V: fmt::Debug
-{
+impl<'a, T: ?Sized + ValidateBlob> fmt::Debug for ValidateFields<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
             .field("blob", &self.blob)
             .field("idx", &self.idx)
-            .field("padval", &self.padval)
+            .field("ignore_padding", &self.ignore_padding)
             .finish()
     }
 }
 
-impl<'a, T: ?Sized + BlobSizeDyn, V: Copy> ValidateFields<'a, T, V> {
-    pub fn validate_blob<F: ValidateBlob<V>>(&mut self) -> Result<ValidBlob<'a, F>, F::Error> {
-        F::validate_blob(self.field_blob::<F>(), self.padval)
+impl<'a, T: ?Sized + ValidateBlob> ValidateFields<'a, T> {
+    #[inline(always)]
+    pub fn validate_blob<F: ValidateBlob>(&mut self) -> Result<ValidBlob<'a, F>, F::BlobError> {
+        F::validate_blob(self.field_blob::<F>(), self.ignore_padding)
     }
 
-    pub fn field_blob<F: BlobSize>(&mut self) -> Blob<'a, F> {
-        self.field_bytes(F::BLOB_LAYOUT.size())
-            .try_into().unwrap()
+    #[inline(always)]
+    pub fn field_blob<F: ValidateBlob>(&mut self) -> Blob<'a, F> {
+        Blob {
+            marker: PhantomData,
+            ptr: self.field_bytes(F::blob_layout().size()).as_ptr(),
+            metadata: F::make_sized_metadata(),
+        }
     }
 
+    #[inline(always)]
     pub fn field_bytes(&mut self, size: usize) -> &'a [u8] {
-        let r = self.blob.borrow()
-                    .as_bytes().get(self.idx .. self.idx + size)
-                               .expect("out of range");
-        self.idx += size;
+        let blob_bytes = self.blob.as_bytes();
+        let new_idx = self.idx + size;
+
+        assert!(new_idx <= blob_bytes.len(), "out of range");
+
+        let r = &blob_bytes[self.idx .. new_idx];
+        self.idx = new_idx;
         r
     }
 
+    #[inline(always)]
     pub unsafe fn finish(self) -> ValidBlob<'a, T> {
         assert_eq!(self.idx, self.blob.as_bytes().len());
         self.blob.assume_valid()
@@ -220,14 +211,14 @@ impl<'a, T: ?Sized + BlobSizeDyn, V: Copy> ValidateFields<'a, T, V> {
 }
 
 /// `ValidBlob` field cursor.
-pub struct DecodeFields<'a, 'z, T: ?Sized + Pointee, Z> {
+pub struct DecodeFields<'a, 'z, T: ?Sized + Pointee, P: Ptr> {
     blob: ValidBlob<'a, T>,
     idx: usize,
-    zone: &'z Z,
+    zone: &'z P::BlobZone,
 }
 
-impl<'a, 'z, Z, T: ?Sized + BlobSizeDyn> fmt::Debug for DecodeFields<'a, 'z, T, Z>
-where Z: fmt::Debug
+impl<'a, 'z, P: Ptr, T: ?Sized + ValidateBlob> fmt::Debug for DecodeFields<'a, 'z, T, P>
+where P::BlobZone: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
@@ -238,27 +229,36 @@ where Z: fmt::Debug
     }
 }
 
-impl<'a, 'z, Z: Zone, T: ?Sized + BlobSizeDyn> DecodeFields<'a, 'z, T, Z> {
-    pub unsafe fn decode_unchecked<F: Decode>(&mut self) -> F
-        where Z: AsZone<F::Zone>,
-    {
+impl<'a, 'z, P: Ptr, T: ?Sized + ValidateBlob> DecodeFields<'a, 'z, T, P> {
+    #[inline(always)]
+    pub unsafe fn decode_unchecked<F: 'a + DecodePtr<P>>(&mut self) -> F {
         let blob = self.field_blob::<F>();
         let blob = blob.assume_valid();
-        F::decode_blob(blob, self.zone.as_zone())
+        F::decode_blob(blob, self.zone)
     }
 
-    pub fn field_blob<F: BlobSize>(&mut self) -> Blob<'a, F> {
-        self.field_bytes(F::BLOB_LAYOUT.size())
-            .try_into().unwrap()
+    #[inline(always)]
+    pub fn field_blob<F: ValidateBlob>(&mut self) -> Blob<'a, F> {
+        Blob {
+            marker: PhantomData,
+            ptr: self.field_bytes(F::blob_layout().size()).as_ptr(),
+            metadata: F::make_sized_metadata(),
+        }
     }
 
+    #[inline(always)]
     pub fn field_bytes(&mut self, size: usize) -> &'a [u8] {
-        let r = self.blob.as_bytes().get(self.idx .. self.idx + size)
-                                    .expect("out of range");
-        self.idx += size;
+        let blob_bytes = self.blob.as_bytes();
+        let new_idx = self.idx + size;
+
+        assert!(new_idx <= blob_bytes.len(), "out of range");
+
+        let r = &blob_bytes[self.idx .. new_idx];
+        self.idx = new_idx;
         r
     }
 
+    #[inline(always)]
     pub fn finish(self) -> ValidBlob<'a, T> {
         assert_eq!(self.idx, self.blob.as_bytes().len());
         self.blob

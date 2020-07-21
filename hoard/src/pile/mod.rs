@@ -22,28 +22,16 @@ use singlelife::Unique;
 use owned::Take;
 
 use crate::pointee::Pointee;
+use crate::ptr::*;
 use crate::offset::*;
-use crate::zone::*;
 use crate::refs::Ref;
 use crate::load::*;
-use crate::save::*;
 use crate::blob::*;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TryPile<'p, 'v> {
     marker: PhantomData<fn(&'p ()) -> &'p ()>,
     buf: &'v [u8],
-}
-
-impl AsZone<Self> for TryPile<'_, '_> {
-    fn as_zone(&self) -> &Self {
-        self
-    }
-}
-
-impl<'p, 'v> Zone for TryPile<'p, 'v> {
-    type Ptr = Offset<'p, 'v>;
-    type PersistPtr = Offset<'p, 'v>;
 }
 
 impl<'p> Default for TryPile<'p, 'static> {
@@ -57,6 +45,142 @@ impl<'p, 'v> TryPile<'p, 'v> {
         Self { marker: PhantomData, buf, }
     }
 }
+
+pub struct TryPilePtr<'p, 'v> {
+    offset: Offset<'p, 'v>,
+    pile: TryPile<'p, 'v>,
+}
+
+unsafe impl<'p, 'v> ValidateBlob for TryPilePtr<'p, 'v> {
+    type BlobError = <Offset<'p, 'v> as ValidateBlob>::BlobError;
+
+    fn try_blob_layout(_: ()) -> Result<BlobLayout, !> {
+        Ok(<Offset<'p, 'v> as ValidateBlob>::blob_layout())
+    }
+
+    fn validate_blob(blob: Blob<Self>, ignore_padding: bool) -> Result<ValidBlob<Self>, Self::BlobError> {
+        let mut fields = blob.validate_fields(ignore_padding);
+        fields.validate_blob::<Offset<'p, 'v>>()?;
+        unsafe { Ok(fields.finish()) }
+    }
+}
+
+impl<'p, 'v> Load for TryPilePtr<'p, 'v> {
+    type Ptr = Self;
+
+    fn decode_blob(blob: ValidBlob<Self>, pile: &TryPile<'p, 'v>) -> Self {
+        let mut fields = blob.decode_fields(pile);
+        let offset = unsafe { fields.decode_unchecked() };
+        fields.finish();
+
+        Self {
+            pile: *pile,
+            offset,
+        }
+    }
+}
+
+impl AsZone<Self> for TryPile<'_, '_> {
+    fn as_zone(&self) -> &Self {
+        self
+    }
+}
+
+impl AsZone<()> for TryPile<'_, '_> {
+    fn as_zone(&self) -> &() {
+        &()
+    }
+}
+
+impl AsPtrImpl<Self> for TryPilePtr<'_, '_> {
+    fn as_ptr_impl(this: &Self) -> &Self {
+        this
+    }
+}
+
+impl<'p, 'v> Ptr for TryPilePtr<'p, 'v> {
+    type Zone = TryPile<'p, 'v>;
+    type BlobZone = TryPile<'p, 'v>;
+    type Persist = Offset<'p, 'v>;
+
+    unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
+        self.offset.dealloc::<T>(metadata)
+    }
+
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
+        self.offset.try_get_dirty_unchecked::<T>(metadata)
+    }
+}
+
+pub struct TryPilePtrMut<'p, 'v> {
+    offset: OffsetMut<'p, 'v>,
+    pile: TryPile<'p, 'v>,
+}
+
+unsafe impl<'p, 'v> ValidateBlob for TryPilePtrMut<'p, 'v> {
+    type BlobError = <Offset<'p, 'v> as ValidateBlob>::BlobError;
+
+    #[inline]
+    fn try_blob_layout(_: ()) -> Result<BlobLayout, !> {
+        Ok(<Offset<'p, 'v> as ValidateBlob>::blob_layout())
+    }
+
+    fn validate_blob(blob: Blob<Self>, ignore_padding: bool) -> Result<ValidBlob<Self>, Self::BlobError> {
+        let mut fields = blob.validate_fields(ignore_padding);
+        fields.validate_blob::<Offset<'p, 'v>>()?;
+        unsafe { Ok(fields.finish()) }
+    }
+}
+
+impl<'p, 'v> Load for TryPilePtrMut<'p, 'v> {
+    type Ptr = Self;
+
+    fn decode_blob(blob: ValidBlob<Self>, pile: &TryPile<'p, 'v>) -> Self {
+        let mut fields = blob.decode_fields(pile);
+        let offset = unsafe { fields.decode_unchecked() };
+        fields.finish();
+
+        Self {
+            pile: *pile,
+            offset,
+        }
+    }
+}
+
+impl AsPtrImpl<Self> for TryPilePtrMut<'_, '_> {
+    fn as_ptr_impl(this: &Self) -> &Self {
+        this
+    }
+}
+
+impl<'p, 'v> Ptr for TryPilePtrMut<'p, 'v> {
+    type Zone = TryPile<'p, 'v>;
+    type BlobZone = TryPile<'p, 'v>;
+    type Persist = Offset<'p, 'v>;
+
+    unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
+        self.offset.dealloc::<T>(metadata)
+    }
+
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
+        self.offset.try_get_dirty_unchecked::<T>(metadata)
+    }
+}
+
+/*
+impl<'p, 'v> Ptr for TryPilePtr<'p, 'v> {
+    type Zone = TryPile<'p, 'v>;
+    type BlobZone = TryPile<'p, 'v>;
+    type Persist = Offset<'p, 'v>;
+
+    unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
+    }
+
+    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, _: T::Metadata) -> Result<&T, Self::Persist> {
+        Err(self.offset)
+    }
+}
+*/
 
 /*
     pub fn get_blob<T: ?Sized>(&self, offset: Offset<'p, 'v>, metadata: T::Metadata)

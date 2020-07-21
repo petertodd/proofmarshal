@@ -14,10 +14,10 @@ macro_rules! unsafe_impl_all_valid_persist {
         unsafe impl Persist for $t {}
 
         impl Scalar for $t {
-            const SCALAR_BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
-            type Error = !;
+            const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
+            type ScalarBlobError = !;
 
-            fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+            fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::ScalarBlobError> {
                 unsafe { Ok(blob.assume_valid()) }
             }
 
@@ -29,11 +29,11 @@ macro_rules! unsafe_impl_all_valid_persist {
                 Ok(blob.as_value())
             }
 
-            fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error> {
+            fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
                 let src = unsafe {
                     slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<Self>())
                 };
-                dst.write_bytes(src)
+                dst.write_bytes(src)?.finish()
             }
         }
     )+}
@@ -53,10 +53,10 @@ pub struct ValidateBoolBlobError;
 unsafe impl Persist for bool {}
 
 impl Scalar for bool {
-    const SCALAR_BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
-    type Error = ValidateBoolBlobError;
+    const BLOB_LAYOUT: BlobLayout = BlobLayout::new(mem::size_of::<Self>());
+    type ScalarBlobError = ValidateBoolBlobError;
 
-    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
+    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::ScalarBlobError> {
         match blob.as_bytes() {
             [0] | [1] => unsafe { Ok(blob.assume_valid()) },
             _ => Err(ValidateBoolBlobError),
@@ -71,12 +71,12 @@ impl Scalar for bool {
         Ok(blob.as_value())
     }
 
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error> {
-        dst.write_bytes(&[if *self { 1 } else { 0 }])
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        dst.write_bytes(&[if *self { 1 } else { 0 }])?
+           .finish()
     }
 }
 
-/*
 #[non_exhaustive]
 #[derive(Error, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[error("invalid nonzero blob")]
@@ -84,20 +84,17 @@ pub struct ValidateNonZeroError;
 
 macro_rules! unsafe_impl_nonzero_persist {
     ($($t:ty,)+) => {$(
-        impl BlobSize for $t {
-            const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
-        }
-
         unsafe impl Persist for $t {}
 
         impl Scalar for $t {
-            type Error = ValidateNonZeroError;
+            const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
+            type ScalarBlobError = ValidateNonZeroError;
 
-            fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-                let mut bytes = [0; Self::BLOB_LAYOUT.size()];
+            fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::ScalarBlobError> {
+                let mut bytes = [0; mem::size_of::<Self>()];
                 bytes.copy_from_slice(blob.as_bytes());
 
-                if bytes == [0; Self::BLOB_LAYOUT.size()] {
+                if bytes == [0; mem::size_of::<Self>()] {
                     Err(ValidateNonZeroError)
                 } else {
                     unsafe { Ok(blob.assume_valid()) }
@@ -108,15 +105,16 @@ macro_rules! unsafe_impl_nonzero_persist {
                 blob.as_value().clone()
             }
 
-            fn deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Ref<'a, Self> {
-                blob.as_value().into()
+            fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Result<&'a Self, ValidBlob<'a, Self>> {
+                Ok(blob.as_value())
             }
 
-            fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error> {
+            fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
                 let src = unsafe {
                     slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<Self>())
                 };
-                dst.write_bytes(src)
+                dst.write_bytes(src)?
+                   .finish()
             }
         }
     )+}
@@ -127,6 +125,7 @@ unsafe_impl_nonzero_persist! {
     num::NonZeroI8, Le<num::NonZeroI16>, Le<num::NonZeroI32>, Le<num::NonZeroI64>, Le<num::NonZeroI128>,
 }
 
+/*
 macro_rules! impl_nonzero {
     ($($t:ty,)+) => {$(
         impl BlobSize for $t {

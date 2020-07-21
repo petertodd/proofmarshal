@@ -26,20 +26,21 @@ where E: Into<!>
     }
 }
 
-impl<T: BlobSize, const N: usize> BlobSize for [T; N] {
-    const BLOB_LAYOUT: BlobLayout = BlobLayout {
-        size: T::BLOB_LAYOUT.size() * N,
-        niche_start: T::BLOB_LAYOUT.niche_start,
-        niche_end: T::BLOB_LAYOUT.niche_end,
-        inhabited: T::BLOB_LAYOUT.inhabited,
-    };
-}
+unsafe impl<T: ValidateBlob, const N: usize> ValidateBlob for [T; N] {
+    type BlobError = ValidateArrayBlobError<T::BlobError, N>;
 
-impl<V: Copy, T: ValidateBlob<V>, const N: usize> ValidateBlob<V> for [T; N] {
-    type Error = ValidateArrayBlobError<T::Error, N>;
+    #[inline(always)]
+    fn try_blob_layout(_: ()) -> Result<BlobLayout, !> {
+        Ok(BlobLayout {
+            size: T::blob_layout().size() * N,
+            niche_start: T::blob_layout().niche_start,
+            niche_end: T::blob_layout().niche_end,
+            inhabited: T::blob_layout().inhabited,
+        })
+    }
 
-    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        let mut fields = blob.validate_fields(padval);
+    fn validate_blob<'a>(blob: Blob<'a, Self>, ignore_padding: bool) -> Result<ValidBlob<'a, Self>, Self::BlobError> {
+        let mut fields = blob.validate_fields(ignore_padding);
         for idx in 0 .. N {
             fields.validate_blob::<T>().map_err(|err| ValidateArrayBlobError { idx, err })?;
         }
@@ -47,40 +48,28 @@ impl<V: Copy, T: ValidateBlob<V>, const N: usize> ValidateBlob<V> for [T; N] {
     }
 }
 
-impl<T: Decode, const N: usize> Decode for [T; N] {
-    type Zone = T::Zone;
+impl<T: Decode, const N: usize> Load for [T; N] {
     type Ptr = T::Ptr;
 
-    fn decode_blob(blob: ValidBlob<Self>, zone: &Self::Zone) -> Self {
-        todo!()
+    fn decode_blob(blob: ValidBlob<Self>, zone: &<Self::Ptr as Ptr>::BlobZone) -> Self {
+        let mut items = blob.decode_fields(zone);
+        let mut this = UninitArray::new();
+        for _ in 0 .. N {
+            let item = unsafe { items.decode_unchecked::<T>() };
+            this.push(item);
+        }
+        items.finish();
+        this.done()
     }
 }
 
-
-/*
-impl<Y: Zone, T: Encode<Y>, const N: usize> Encode<Y> for [T; N] {
-    type Encoded = [T::Encoded; N];
-    type EncodePoll = ArrayEncodePoll<Y, T, N>;
-
-    fn init_encode(&self) -> Self::EncodePoll {
-        let mut state = UninitArray::new();
-        for item in self.iter() {
-            state.push(item.init_encode());
-        }
-        ArrayEncodePoll {
-            state: state.done(),
-            idx: 0,
-        }
-    }
-}
-
-pub struct ArrayEncodePoll<Y: Zone, T: Encode<Y>, const N: usize> {
-    state: [T::EncodePoll; N],
+pub struct ArraySavePoll<Q: Ptr, T: Save<Q>, const N: usize> {
+    state: [T::SavePoll; N],
     idx: usize,
 }
 
-impl<Y: Zone, T: Encode<Y>, const N: usize> fmt::Debug for ArrayEncodePoll<Y, T, N>
-where T::EncodePoll: fmt::Debug,
+impl<Q: Ptr, T: Save<Q>, const N: usize> fmt::Debug for ArraySavePoll<Q, T, N>
+where T::SavePoll: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
@@ -90,22 +79,60 @@ where T::EncodePoll: fmt::Debug,
     }
 }
 
-impl<Y: Zone, T: Encode<Y>, const N: usize> EncodePoll for ArrayEncodePoll<Y, T, N> {
-    type DstZone = Y;
-    type Target = [T::Encoded; N];
-    type SrcPtr = <T::Ptr as Ptr>::Persist;
+impl<Q: Ptr, T: Saved<Q>, const N: usize> Saved<Q> for [T; N]
+where T::Saved: Sized,
+{
+    type Saved = [T::Saved; N];
+}
 
-    fn encode_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<DstZone = Self::DstZone>,
+impl<Q: Ptr, T: Save<Q> + Decode, const N: usize> Save<Q> for [T; N]
+where T::Saved: Sized,
+{
+    type SavePoll = ArraySavePoll<Q, T, N>;
+
+    fn init_save(&self) -> Self::SavePoll {
+        let mut state = UninitArray::new();
+
+        for item in self.iter() {
+            state.push(item.init_save());
+        }
+
+        ArraySavePoll {
+            state: state.done(),
+            idx: 0,
+        }
+    }
+}
+
+impl<Q: Ptr, T: Save<Q> + Decode, const N: usize> EncodeBlob for ArraySavePoll<Q, T, N>
+where T::Saved: Sized
+{
+    type Target = [T::Saved; N];
+
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
+        todo!()
+    }
+}
+
+impl<Q: Ptr, T: Save<Q> + Decode, const N: usize> SavePoll for ArraySavePoll<Q, T, N>
+where T::Saved: Sized
+{
+    type SrcPtr = T::Ptr;
+
+    type DstPtr = Q;
+
+    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>,
     {
         while self.idx < N {
-            self.state[self.idx].encode_poll(saver)?;
+            self.state[self.idx].save_poll(saver)?;
             self.idx += 1;
         }
         Ok(())
     }
 }
 
+/*
 /*
 impl<Y, Q, T: SavePoll<Y, Q>, const N: usize> SavePoll<Y, Q> for ArraySavePoll<T, N>
 where T::Target: BlobSize + Decode<Y>

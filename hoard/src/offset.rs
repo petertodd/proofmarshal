@@ -7,6 +7,7 @@ use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
 use std::num::NonZeroU64;
 use std::ptr::NonNull;
+use std::hint::unreachable_unchecked;
 
 use thiserror::Error;
 use leint::Le;
@@ -19,7 +20,9 @@ use crate::blob::*;
 use crate::load::*;
 use crate::save::*;
 use crate::scalar::*;
-use crate::zone::*;
+use crate::ptr::*;
+use crate::pile::*;
+use crate::heap::*;
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
@@ -35,49 +38,53 @@ unsafe impl Persist for Offset<'_, '_> {}
 
 impl fmt::Debug for Offset<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        //self.get().fmt(f)
-        todo!()
+        self.get().fmt(f)
     }
 }
 
 #[derive(Debug, Error)]
 #[error("invalid offset")]
 #[non_exhaustive]
-pub struct LoadOffsetError;
+pub struct ValidateOffsetBlobError;
 
-/*
 impl Scalar for Offset<'_, '_> {
-    type Error = LoadOffsetError;
-
     const BLOB_LAYOUT: BlobLayout = BlobLayout::new_nonzero(mem::size_of::<Self>());
 
-    fn validate_blob<'a>(blob: Blob<'a, Self>, _: bool) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        todo!()
+    type ScalarBlobError = ValidateOffsetBlobError;
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::ScalarBlobError> {
+        let raw = u64::from_le_bytes(blob.as_bytes().try_into().unwrap());
+
+        if raw & 0b1 == 0b1 && (raw >> 1) < Offset::MAX as u64 {
+            unsafe { Ok(blob.assume_valid()) }
+        } else {
+            Err(ValidateOffsetBlobError)
+        }
     }
 
-    fn decode_blob(blob: ValidBlob<Self>) -> Self {
-        todo!()
+    fn decode_blob<'a>(blob: ValidBlob<'a, Self>) -> Self {
+        blob.as_value().clone()
     }
 
-    fn deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Ref<'a, Self> {
-        todo!()
+    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Result<&'a Self, ValidBlob<'a, Self>> {
+        Ok(blob.as_value())
     }
 
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W, W::Error> {
+    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
         todo!()
     }
 }
-*/
 
-impl AsPtr<Self> for Offset<'_, '_> {
-    fn as_ptr(&self) -> &Self {
-        self
+impl AsPtrImpl<Self> for Offset<'_, '_> {
+    fn as_ptr_impl(this: &Self) -> &Self {
+        this
     }
 }
 
-impl PersistPtr for Offset<'_, '_> {
+impl<'p, 'v> PersistPtr for Offset<'p, 'v> {
+    type Zone = !;
+    type BlobZone = TryPile<'p, 'v>;
 }
-
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
@@ -86,17 +93,48 @@ pub struct OffsetMut<'p, 'v, A = System> {
     inner: Offset<'p, 'v>,
 }
 
+unsafe impl Persist for OffsetMut<'_, '_> {}
+
 impl fmt::Debug for OffsetMut<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        //self.kind().fmt(f)
-        todo!()
+        self.kind().fmt(f)
     }
 }
 
-/*
-unsafe impl<'p, 'v> Persist for Offset<'p, 'v> {}
-unsafe impl<'p, 'v, A> Persist for OffsetMut<'p, 'v, A> {}
+unsafe impl ValidateBlob for OffsetMut<'_, '_> {
+    type BlobError = ValidateOffsetBlobError;
 
+    fn try_blob_layout(_: ()) -> Result<BlobLayout, !> {
+        Ok(BlobLayout::new_nonzero(mem::size_of::<Self>()))
+    }
+
+    fn validate_blob<'a>(blob: Blob<'a, Self>, ignore_padding: bool) -> Result<ValidBlob<'a, Self>, Self::BlobError> {
+        let mut fields = blob.validate_fields(ignore_padding);
+        fields.validate_blob::<Offset>()?;
+        unsafe { Ok(fields.finish()) }
+    }
+}
+
+impl Load for OffsetMut<'_, '_> {
+    type Ptr = !;
+
+    fn decode_blob(blob: ValidBlob<Self>, _: &<Self::Ptr as Ptr>::BlobZone) -> Self {
+        blob.as_value().clone()
+    }
+
+    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, _: &()) -> Result<&'a Self, ValidBlob<'a, Self>> {
+        Ok(blob.as_value())
+    }
+}
+
+impl AsPtrImpl<Self> for OffsetMut<'_, '_> {
+    fn as_ptr_impl(this: &Self) -> &Self {
+        this
+    }
+}
+
+
+/*
 impl<'p, 'v, A> Borrow<OffsetMut<'p, 'v, A>> for Offset<'p, 'v> {
     #[inline(always)]
     fn borrow(&self) -> &OffsetMut<'p, 'v, A> {
@@ -111,9 +149,9 @@ impl<'p, 'v, A> AsRef<OffsetMut<'p, 'v, A>> for Offset<'p, 'v> {
         unsafe { &*(self as *const Self as *const _) }
     }
 }
+*/
 
 impl<'p, 'v> From<Offset<'p, 'v>> for usize {
-    #[inline(always)]
     fn from(offset: Offset<'p, 'v>) -> usize {
         offset.get()
     }
@@ -133,6 +171,7 @@ impl cmp::PartialEq<usize> for Offset<'_, '_> {
         self.get() == *other
     }
 }
+
 impl cmp::PartialEq<Offset<'_, '_>> for usize {
     fn eq(&self, other: &Offset<'_, '_>) -> bool {
         *self == other.get()
@@ -140,19 +179,46 @@ impl cmp::PartialEq<Offset<'_, '_>> for usize {
 }
 
 impl<'p, 'v> Offset<'p, 'v> {
+    /// The largest `Offset`.
     pub const MAX: usize = (1 << 62) - 1;
 
-    #[inline(always)]
+    /// Creates a new `Offset`.
+    ///
+    /// Returns `None` if the offset is out of range:
+    ///
+    /// ```
+    /// use hoard::offset::Offset;
+    ///
+    /// assert!(Offset::new(Offset::MAX + 1)
+    ///                .is_none());
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// Zero is a valid offset:
+    ///
+    /// ```
+    /// use hoard::offset::Offset;
+    ///
+    /// Offset::new(0).unwrap();
+    /// ```
     pub fn new(offset: usize) -> Option<Self> {
-        let offset = offset as u64;
-        offset.checked_shl(1).map(|offset|
-            Self {
-                marker: PhantomData,
-                raw: NonZeroU64::new(offset | 1).unwrap().into(),
-            }
-        )
+        if offset <= Self::MAX {
+            let offset = offset as u64;
+            Some(offset.checked_shl(1).map(|offset|
+                Self {
+                    marker: PhantomData,
+                    raw: NonZeroU64::new(offset | 1).unwrap().into(),
+                }
+            ).unwrap())
+        } else {
+            None
+        }
     }
 
+    /// Casts the `Offset` to a different lifetime.
+    ///
+    /// This is *safe* because an offset by itself has no guarantees associated with it.
     #[inline(always)]
     pub fn cast<'p2, 'v2>(&self) -> Offset<'p2, 'v2> {
         Offset {
@@ -161,16 +227,36 @@ impl<'p, 'v> Offset<'p, 'v> {
         }
     }
 
+    /// Gets the offset as a `usize`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hoard::offset::Offset;
+    ///
+    /// assert_eq!(Offset::new(0).unwrap().get(), 0);
+    /// assert_eq!(Offset::new(1).unwrap().get(), 1);
+    /// ```
     #[inline(always)]
     pub fn get(&self) -> usize {
         (self.raw.get().get() >> 1) as usize
     }
 
+    /// Creates a dangling `Offset`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hoard::offset::Offset;
+    ///
+    /// assert_eq!(Offset::dangling().get(), Offset::MAX);
+    /// ```
     #[inline(always)]
     pub fn dangling() -> Self {
         Self::new(Self::MAX).unwrap()
     }
 
+    /// Erases the lifetime of an `Offset`.
     pub fn to_static(&self) -> Offset<'static, 'static> {
         Offset {
             marker: PhantomData,
@@ -179,69 +265,56 @@ impl<'p, 'v> Offset<'p, 'v> {
     }
 }
 
-#[derive(Debug, Error)]
-#[error("FIXME")]
-pub struct ValidateBlobOffsetError;
-
-impl<'p, 'v> ValidateBlob for Offset<'p, 'v> {
-    const BLOB_LEN: usize = mem::size_of::<Self>();
-    type Error = ValidateBlobOffsetError;
-
-    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        todo!()
-    }
-}
-
-impl<'p, 'v, A> ValidateBlob for OffsetMut<'p, 'v, A> {
-    const BLOB_LEN: usize = mem::size_of::<Self>();
-    type Error = ValidateBlobOffsetError;
-
-    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        todo!()
-    }
-}
-
-impl<Q: Ptr> Decode<Q> for Offset<'_, '_> {
-    fn decode_blob(blob: BlobDecoder<Q, Self>) -> Self {
-        todo!()
-    }
-}
-
-impl<Q: Ptr> Decode<Q> for OffsetMut<'_, '_> {
-    fn decode_blob(blob: BlobDecoder<Q, Self>) -> Self {
-        todo!()
-    }
-}
-
+/// Enum for the kinds of `OffsetMut`.
 #[derive(Debug)]
 pub enum Kind<'p, 'v> {
+    /// An unmodified `Offset`.
     Offset(Offset<'p, 'v>),
-    Ptr(NonNull<u16>),
+
+    /// A pointer to something in the heap.
+    Ptr(HeapPtr),
 }
 
 impl<'p, 'v, A> OffsetMut<'p, 'v, A> {
+    /// Create an `OffsetMut` from a pointer.
+    ///
+    /// Returns `None` if the alignment is incorrect.
     #[inline]
-    pub unsafe fn from_ptr(ptr: NonNull<u16>) -> Self {
+    pub fn from_ptr(ptr: NonNull<u16>) -> Option<Self> {
         let raw = ptr.as_ptr() as usize as u64;
 
-        debug_assert_eq!(raw & 1, 0,
-                   "{:p} unaligned", ptr);
-
-        mem::transmute(ptr.as_ptr() as usize as u64)
+        if raw & 1 == 1 {
+            unsafe { Some(mem::transmute(ptr.as_ptr() as usize as u64)) }
+        } else {
+            None
+        }
     }
 
+    /// Creates an `OffsetMut` from a pointer without checking the alignment.
+    ///
+    /// # Safety
+    ///
+    /// The pointer must be properly aligned.
     #[inline]
+    pub unsafe fn from_ptr_unchecked(ptr: NonNull<u16>) -> Self {
+        match Self::from_ptr(ptr) {
+            Some(this) => this,
+            None => {
+                unreachable_unchecked()
+            }
+        }
+    }
+
+    /// Returns the kind of offset.
     pub fn kind(&self) -> Kind<'p, 'v> {
         if self.inner.raw.get().get() & 1 == 1 {
             Kind::Offset(self.inner)
         } else {
-            Kind::Ptr(unsafe {
-                let raw = self.inner.raw.get().get();
-                NonNull::new_unchecked(raw as usize as *mut u16)
-            })
+            Kind::Ptr(unsafe { mem::transmute(self.inner) })
         }
     }
 
+    /// Gets the `Offset` from a clean `OffsetMut`.
     #[inline(always)]
     pub fn get_offset(&self) -> Option<Offset<'p, 'v>> {
         match self.kind() {
@@ -250,8 +323,9 @@ impl<'p, 'v, A> OffsetMut<'p, 'v, A> {
         }
     }
 
+    /// Gets the pointer from a dirty `OffsetMut`.
     #[inline(always)]
-    pub fn get_ptr(&self) -> Option<NonNull<u16>> {
+    pub fn get_ptr(&self) -> Option<HeapPtr> {
         match self.kind() {
             Kind::Ptr(ptr) => Some(ptr),
             Kind::Offset(_) => None,
@@ -259,62 +333,7 @@ impl<'p, 'v, A> OffsetMut<'p, 'v, A> {
     }
 }
 
-impl<'p, 'v> AsPtr<Self> for Offset<'p, 'v> {
-    #[inline(always)]
-    fn as_ptr(&self) -> &Self {
-        self
-    }
-}
-
-impl<'p, 'v> Ptr for Offset<'p, 'v> {
-    type Persist = Self;
-    type PersistZone = Pile<'p, 'v>;
-
-    #[inline(always)]
-    unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
-        // nothing to do here
-    }
-
-    #[inline(always)]
-    fn duplicate(&self) -> Self {
-        Self {
-            marker: PhantomData,
-            raw: self.raw,
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn clone_unchecked_with<T: ?Sized + Pointee, U, F>(&self, metadata: T::Metadata, _: F) -> Own<T, Self> {
-        Own::new_unchecked(Fat::new(*self, metadata))
-    }
-
-    #[inline(always)]
-    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, _: T::Metadata) -> Result<&T, Self::Persist> {
-        Err(*self)
-    }
-
-    #[inline(always)]
-    unsafe fn try_take_dirty_unchecked<T: ?Sized + Pointee>(self, _: T::Metadata) -> Result<T::Owned, Self::Persist>
-        where T: IntoOwned
-    {
-        Err(self)
-    }
-}
-
-impl<'p, 'v, A> AsPtr<Self> for OffsetMut<'p, 'v, A> {
-    #[inline(always)]
-    fn as_ptr(&self) -> &Self {
-        self
-    }
-}
-
-impl<'p, 'v, A> AsPtr<OffsetMut<'p, 'v, A>> for Offset<'p, 'v> {
-    #[inline(always)]
-    fn as_ptr(&self) -> &OffsetMut<'p, 'v, A> {
-        self.as_ref()
-    }
-}
-
+/*
 impl<'p, 'v, A> AsPtr<OffsetMut<'p, 'v, A>> for HeapPtr {
     #[inline(always)]
     fn as_ptr(&self) -> &OffsetMut<'p, 'v, A> {
@@ -324,67 +343,26 @@ impl<'p, 'v, A> AsPtr<OffsetMut<'p, 'v, A>> for HeapPtr {
         }
     }
 }
+*/
 
 impl<'p, 'v> Ptr for OffsetMut<'p, 'v> {
+    type Zone = TryPile<'p, 'v>;
+    type BlobZone = TryPile<'p, 'v>;
     type Persist = Offset<'p, 'v>;
-    type PersistZone = Pile<'p, 'v>;
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata) {
         match self.kind() {
             Kind::Offset(_) => {},
-            Kind::Ptr(ptr) => HeapPtr(ptr).dealloc::<T>(metadata),
-        }
-    }
-
-    fn alloc<T: ?Sized + Pointee, U: Take<T>>(src: U) -> Own<T, Self> {
-        let fat = HeapPtr::alloc(src).into_inner();
-
-        unsafe {
-            Own::new_unchecked(Fat::new(Self::from_ptr(fat.raw.0), fat.metadata))
-        }
-    }
-
-    fn duplicate(&self) -> Self {
-        Self {
-            marker: PhantomData,
-            inner: self.inner.duplicate(),
-        }
-    }
-
-    unsafe fn clone_unchecked_with<T: ?Sized, U, F>(&self, metadata: T::Metadata, f: F) -> Own<T, Self>
-        where T: Pointee,
-              F: FnOnce(&T) -> U,
-              U: Take<T>,
-    {
-        match self.try_get_dirty_unchecked::<T>(metadata) {
-            Err(offset) => {
-                Own::new_unchecked(Fat::new(
-                        Self {
-                            marker: PhantomData,
-                            inner: offset.cast(),
-                        },
-                        metadata
-                ))
-            },
-            Ok(value) => Self::alloc(f(value)),
+            Kind::Ptr(heap_ptr) => heap_ptr.dealloc::<T>(metadata),
         }
     }
 
     unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist> {
         match self.kind() {
-            Kind::Ptr(ptr) => Ok(&*T::make_fat_ptr_mut(ptr.cast().as_ptr(), metadata)),
-            Kind::Offset(offset) => Err(offset.cast()),
-        }
-    }
-
-    unsafe fn try_take_dirty_unchecked<T: ?Sized + Pointee>(self, metadata: T::Metadata) -> Result<T::Owned, Self::Persist>
-        where T: IntoOwned
-    {
-        match self.kind() {
-            Kind::Offset(offset) => Err(offset.cast()),
             Kind::Ptr(ptr) => {
-                Ok(crate::heap::HeapPtr(ptr).try_take_dirty_unchecked::<T>(metadata).into_ok())
+                todo!()
             },
+            Kind::Offset(offset) => Err(offset),
         }
     }
 }
@@ -395,15 +373,6 @@ impl<'p,'v> Default for OffsetMut<'p, 'v> {
     }
 }
 
-impl<Q, R> Encode<Q, R> for Offset<'_, '_> {
-    type EncodePoll = <Le<NonZeroU64> as Encode<Q, R>>::EncodePoll;
-    fn init_encode(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::EncodePoll {
-        self.raw.init_encode(dst)
-    }
-}
-
-impl Primitive for Offset<'_, '_> {}
-
 #[derive(Debug, Default)]
 pub struct ShallowDumper<'p, 'v> {
     marker: PhantomData<OffsetMut<'p, 'v>>,
@@ -411,29 +380,33 @@ pub struct ShallowDumper<'p, 'v> {
     initial_offset: usize,
 }
 
-impl<'p, 'v> SavePtr for ShallowDumper<'p, 'v> {
-    type Source = OffsetMut<'p, 'v>;
-    type Target = Offset<'p, 'v>;
+impl<'p, 'v> Saver for ShallowDumper<'p, 'v> {
+    type SrcPtr = OffsetMut<'p, 'v>;
+    type DstPtr = Offset<'p, 'v>;
     type Error = !;
 
-    unsafe fn check_dirty<'a, T: ?Sized>(&self, ptr: &'a Self::Source, metadata: T::Metadata) -> Result<Self::Target, &'a T>
-        where T: Pointee
+    fn try_save_raw<R, T: ?Sized + ValidateBlob>(&self,
+        ptr: &Offset<'p, 'v>,
+        _metadata: T::Metadata,
+        _f: impl FnOnce(ValidBlob<T>, &<Self::SrcPtr as Ptr>::BlobZone) -> R,
+    ) -> Result<Result<<Self::DstPtr as Ptr>::Persist, R>,
+                Self::Error>
     {
-        match ptr.try_get_dirty_unchecked::<T>(metadata) {
-            Ok(r) => Err(r),
-            Err(offset) => Ok(offset.cast())
-        }
+        Ok(Ok(*ptr))
     }
 
-    fn try_save_ptr(mut self, value: &impl SaveBlob) -> Result<(Self, Self::Target), Self::Error> {
+
+    fn finish_save<T>(&mut self, value_poll: &T) -> Result<Offset<'p, 'v>, Self::Error>
+        where T: EncodeBlob
+    {
         let offset = self.initial_offset
                          .checked_add(self.written.len())
                          .and_then(Offset::new)
                          .expect("overflow");
 
         let written = mem::replace(&mut self.written, vec![]);
-        self.written = value.save_blob(written).into_ok();
-        Ok((self, offset))
+        self.written = value_poll.encode_blob(written).into_ok();
+        Ok(offset)
     }
 }
 
@@ -446,25 +419,23 @@ impl<'p, 'v> ShallowDumper<'p, 'v> {
         }
     }
 
-    pub fn from_buf(buf: &[u8]) -> Self {
+    pub fn from_buf(buf: impl Into<Vec<u8>>) -> Self {
         Self {
             marker: PhantomData,
             initial_offset: 0,
-            written: Vec::from(buf),
+            written: buf.into(),
         }
     }
 
-
-    pub fn save<T: ?Sized>(self, value: &T) -> (Vec<u8>, Offset<'p, 'v>)
-        where T: Save<OffsetMut<'p, 'v>, Offset<'p, 'v>>
+    pub fn save<T: ?Sized>(mut self, value: &T) -> (Vec<u8>, Offset<'p, 'v>)
+        where T: SavePtr<OffsetMut<'p, 'v>, Offset<'p, 'v>>
     {
-        let mut encoder = value.init_save(&self);
-        let this = encoder.save_poll(self).into_ok();
-        let (this, offset) = this.try_save_ptr(&encoder).into_ok();
-        (this.written, offset)
+        let mut encoder = value.init_save_ptr();
+        encoder.save_poll(&mut self).into_ok();
+        let offset = self.finish_save(&encoder).into_ok();
+        (self.written, offset)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -474,9 +445,10 @@ mod tests {
     #[test]
     fn test_shallow_dumper() {
         let (buf, offset) = ShallowDumper::new(0).save(&42u8);
-        assert_eq!(offset, 0);
-        assert_eq!(buf, &[42]);
+        //assert_eq!(offset, 0);
+        //assert_eq!(buf, &[42]);
 
+        /*
         let own = OffsetMut::alloc(42u8);
 
         let (buf, offset) = ShallowDumper::new(0).save(&own);
@@ -491,6 +463,6 @@ mod tests {
               1,0,0,0,0,0,0,0,
               3,0,0,0,0,0,0,0,
             ]);
+        */
     }
 }
-*/
