@@ -15,7 +15,7 @@ use crate::refs::Ref;
 use crate::blob::*;
 use crate::ptr::{Ptr, AsZone};
 
-/// A type that can be loaded into memory.
+/// A data structure that can be loaded into memory.
 pub trait Load : IntoOwned + ValidateBlob {
     /// The type of `Ptr` values of this type will contain.
     type Ptr : Ptr;
@@ -53,7 +53,7 @@ pub trait LoadPtr<P: Ptr> : IntoOwned + ValidateBlob {
 pub trait DecodePtr<P: Ptr> : Sized + LoadPtr<P, Owned=Self> {
 }
 
-impl<P: Ptr, T: Sized + LoadPtr<P, Owned=Self> + ValidateBlob> DecodePtr<P> for T {
+impl<P: Ptr, T: LoadPtr<P, Owned=Self> + ValidateBlob> DecodePtr<P> for T {
 }
 
 impl<P: Ptr, T: ?Sized + IntoOwned + Load> LoadPtr<P> for T

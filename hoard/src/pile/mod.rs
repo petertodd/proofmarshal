@@ -29,23 +29,24 @@ use crate::load::*;
 use crate::blob::*;
 
 #[derive(Debug, Clone, Copy)]
-pub struct TryPile<'p, 'v> {
+pub struct Pile<'p, 'v> {
     marker: PhantomData<fn(&'p ()) -> &'p ()>,
     buf: &'v [u8],
 }
 
-impl<'p> Default for TryPile<'p, 'static> {
+impl<'p> Default for Pile<'p, 'static> {
     fn default() -> Self {
         unsafe { Self::new_unchecked(&[]) }
     }
 }
 
-impl<'p, 'v> TryPile<'p, 'v> {
+impl<'p, 'v> Pile<'p, 'v> {
     pub unsafe fn new_unchecked(buf: &'v [u8]) -> Self {
         Self { marker: PhantomData, buf, }
     }
 }
 
+/*
 pub struct TryPilePtr<'p, 'v> {
     offset: Offset<'p, 'v>,
     pile: TryPile<'p, 'v>,
@@ -1663,6 +1664,7 @@ pub mod test {
         */
     }
 }
+*/
 */
 */
 */

@@ -75,6 +75,7 @@ impl Scalar for Offset<'_, '_> {
     }
 }
 
+/*
 impl AsPtrImpl<Self> for Offset<'_, '_> {
     fn as_ptr_impl(this: &Self) -> &Self {
         this
@@ -83,7 +84,7 @@ impl AsPtrImpl<Self> for Offset<'_, '_> {
 
 impl<'p, 'v> PersistPtr for Offset<'p, 'v> {
     type Zone = !;
-    type BlobZone = TryPile<'p, 'v>;
+    type BlobZone = Pile<'p, 'v>;
 }
 
 #[derive(Clone, Copy)]
@@ -178,6 +179,8 @@ impl cmp::PartialEq<Offset<'_, '_>> for usize {
     }
 }
 
+*/
+
 impl<'p, 'v> Offset<'p, 'v> {
     /// The largest `Offset`.
     pub const MAX: usize = (1 << 62) - 1;
@@ -265,6 +268,7 @@ impl<'p, 'v> Offset<'p, 'v> {
     }
 }
 
+/*
 /// Enum for the kinds of `OffsetMut`.
 #[derive(Debug)]
 pub enum Kind<'p, 'v> {
@@ -466,3 +470,4 @@ mod tests {
         */
     }
 }
+*/

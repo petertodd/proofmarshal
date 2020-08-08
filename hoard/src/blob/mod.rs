@@ -21,9 +21,9 @@ use crate::load::*;
 pub mod layout;
 pub use self::layout::BlobLayout;
 
-/// Blob validation for `?Sized` types.
+/// A **data structure**'s ability to validate a `Blob`.
 pub unsafe trait ValidateBlob : Pointee {
-    /// Error returned when a load fails (for whatever reason).
+    /// Error returned when blob validation fails.
     type BlobError : std::error::Error + 'static + Send + Sync;
 
     fn try_blob_layout(metadata: Self::Metadata) -> Result<BlobLayout, Self::LayoutError>;
