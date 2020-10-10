@@ -467,14 +467,14 @@ mod test {
 
         let bag1 = pile.alloc(42u8);
 
-        let mut saver = VecSaver::new(pile.into());
+        let saver = VecSaver::new(pile.into());
         let (buf, offset) = saver.save_dirty(&bag1);
         assert_eq!(offset, 1u64);
         assert_eq!(buf, &[42, 0,0,0,0,0,0,0,0]);
 
         let bag2 = pile.alloc(bag1);
 
-        let mut saver = VecSaver::new(pile.into());
+        let saver = VecSaver::new(pile.into());
         let (buf, offset) = saver.save_dirty(&bag2);
         assert_eq!(offset, 9u64);
         assert_eq!(buf, &[42,
