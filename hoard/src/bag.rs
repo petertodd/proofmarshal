@@ -119,29 +119,31 @@ where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
 
 #[derive(Error)]
 #[error("FIXME")]
-pub enum DecodeBagBytesError<T: ?Sized + BlobDyn, P: PtrBlob> {
+pub enum DecodeBagBytesError<T: ?Sized + BlobDyn, Z: Blob, P: PtrBlob> {
     Ptr(P::DecodeBytesError),
     Metadata(<T::Metadata as Primitive>::DecodeBytesError),
     Layout(<T as Pointee>::LayoutError),
+    Zone(Z::DecodeBytesError),
 }
 
-impl<T: ?Sized + BlobDyn, P: PtrBlob> fmt::Debug for DecodeBagBytesError<T, P> {
+impl<T: ?Sized + BlobDyn, Z: Blob, P: PtrBlob> fmt::Debug for DecodeBagBytesError<T, Z, P> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         todo!()
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr> Blob for Bag<T, (), P>
+impl<T: ?Sized + Pointee, Z: Blob, P: Ptr> Blob for Bag<T, Z, P>
 where T: BlobDyn,
       P: PtrBlob,
 {
-    const SIZE: usize = <P as Blob>::SIZE + <T::Metadata as Blob>::SIZE;
-    type DecodeBytesError = DecodeBagBytesError<T, P>;
+    const SIZE: usize = <P as Blob>::SIZE + <Z as Blob>::SIZE + <T::Metadata as Blob>::SIZE;
+    type DecodeBytesError = DecodeBagBytesError<T, Z, P>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
            .write_field(&self.ptr)
            .write_field(&self.metadata())
+           .write_field(&self.zone)
            .done()
     }
 
@@ -150,11 +152,12 @@ where T: BlobDyn,
 
         let ptr = fields.trust_field().map_err(DecodeBagBytesError::Ptr)?;
         let metadata = fields.trust_field().map_err(DecodeBagBytesError::Metadata)?;
+        let zone = fields.trust_field().map_err(DecodeBagBytesError::Zone)?;
         T::try_size(metadata).map_err(DecodeBagBytesError::Layout)?;
         fields.assert_done();
 
         unsafe {
-            Ok(Self::from_raw_parts(ptr, metadata, ()).into())
+            Ok(Self::from_raw_parts(ptr, metadata, zone).into())
         }
     }
 }
