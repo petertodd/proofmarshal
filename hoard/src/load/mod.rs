@@ -1,65 +1,85 @@
-//! Loading of data behind zone pointers.
+use std::task::Poll;
 
-use std::error::Error;
-use std::alloc::Layout;
-use std::marker::PhantomData;
-use std::mem::{self, ManuallyDrop};
-use std::ops;
-
-use thiserror::Error;
-
-use owned::IntoOwned;
-
+use crate::blob::{Blob, BlobDyn, Bytes};
 use crate::pointee::Pointee;
-use crate::refs::Ref;
-use crate::blob::*;
-use crate::ptr::{Ptr, AsZone};
+use crate::owned::{Ref, IntoOwned};
+use crate::zone::{PtrConst, PtrBlob, FromPtr};
 
-/// A data structure that can be loaded into memory.
-pub trait Load : IntoOwned + ValidateBlob {
-    /// The type of `Ptr` values of this type will contain.
-    type Ptr : Ptr;
+pub mod impls;
 
-    fn decode_blob(blob: ValidBlob<Self>, zone: &<Self::Ptr as Ptr>::BlobZone) -> Self::Owned;
+pub use crate::maybevalid::MaybeValid;
 
-    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &<Self::Ptr as Ptr>::BlobZone) -> Result<&'a Self, ValidBlob<'a, Self>> {
-        Err(blob)
+pub trait Load : Sized {
+    type Blob : Blob;
+    type Zone;
+
+    fn load(blob: Self::Blob, zone: &Self::Zone) -> Self;
+
+    fn load_maybe_valid(blob: MaybeValid<Self::Blob>, zone: &Self::Zone) -> MaybeValid<Self> {
+        Self::load(blob.trust(), zone).into()
     }
-}
 
-/// Automatically implemented for `Sized` types that implement `Load`.
-pub trait Decode : Sized + Load + IntoOwned<Owned=Self> {
-}
-
-impl<T: Load + IntoOwned<Owned=Self>> Decode for T {
-}
-
-/// `Load`, but automatically implemented for any compatible pointer type.
-pub trait LoadPtr<P: Ptr> : IntoOwned + ValidateBlob {
-    fn decode_blob(blob: ValidBlob<Self>, zone: &P::BlobZone) -> Self::Owned;
-
-    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &P::BlobZone) -> Result<&'a Self, ValidBlob<'a, Self>>
+    fn load_bytes<'a>(bytes: Bytes<'a, Self::Blob>, zone: &Self::Zone)
+        -> Result<MaybeValid<Ref<'a, Self>>,
+                  <Self::Blob as Blob>::DecodeBytesError>
     {
-        Err(blob)
-    }
+        let blob = <Self::Blob as Blob>::decode_bytes(bytes)?
+                                        .trust();
+        let this = Self::load(blob, zone);
 
-    fn deref_blob<'a>(blob: ValidBlob<'a, Self>, zone: &P::BlobZone) -> Ref<'a, Self>
+        Ok(MaybeValid::from(Ref::<Self>::Owned(this)))
+    }
+}
+
+pub trait LoadRef : Pointee + IntoOwned {
+    type BlobDyn : BlobDyn<Metadata = Self::Metadata>;
+    type Zone;
+
+    fn load_ref_from_bytes<'a>(bytes: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
+        -> Result<MaybeValid<Ref<'a, Self>>,
+                  <Self::BlobDyn as BlobDyn>::DecodeBytesError>;
+
+    fn load_owned_from_bytes(bytes: Bytes<'_, Self::BlobDyn>, zone: &Self::Zone)
+        -> Result<MaybeValid<Self::Owned>,
+                  <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
-        Ref::Owned(Self::decode_blob(blob, zone))
+        todo!()
     }
 }
 
-/// `LoadPtr`, but for `Sized` types.
-pub trait DecodePtr<P: Ptr> : Sized + LoadPtr<P, Owned=Self> {
-}
+impl<T: Load> LoadRef for T {
+    type BlobDyn = T::Blob;
+    type Zone = T::Zone;
 
-impl<P: Ptr, T: LoadPtr<P, Owned=Self> + ValidateBlob> DecodePtr<P> for T {
-}
-
-impl<P: Ptr, T: ?Sized + IntoOwned + Load> LoadPtr<P> for T
-where P::BlobZone: AsZone<<T::Ptr as Ptr>::BlobZone>
-{
-    fn decode_blob(blob: ValidBlob<Self>, zone: &P::BlobZone) -> Self::Owned {
-        T::decode_blob(blob, zone.as_zone())
+    fn load_ref_from_bytes<'a>(bytes: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
+        -> Result<MaybeValid<Ref<'a, Self>>,
+                  <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    {
+        T::load_bytes(bytes, zone)
     }
 }
+
+/*
+pub trait Validate : Load {
+    type CleanPtr : PtrConst;
+    type ValidateError : 'static + std::error::Error;
+    type ValidatePoll : ValidatePoll<CleanPtr = Self::CleanPtr>;
+}
+
+pub trait ValidatePoll {
+    type CleanPtr : PtrConst;
+    type Error : 'static + std::error::Error;
+
+    fn validate_poll_impl<V>(&mut self, validator: &mut V) -> Poll<Result<(), Self::Error>>
+        where V: Validator<Ptr = Self::CleanPtr>;
+
+    fn validate_poll<V>(&mut self, validator: &mut V) -> Poll<Result<(), Self::Error>>
+        where V: Validator,
+              V::Ptr: FromPtr<Self::CleanPtr>;
+}
+
+pub trait Validator {
+    type Ptr : PtrConst;
+    type Error : 'static + std::error::Error;
+}
+*/

@@ -1,423 +1,397 @@
-/// A `Box` that is generic over the type of `Ptr`.
-
-use std::any::{Any, type_name};
-use std::borrow::{Borrow, BorrowMut};
+use std::ptr::null;
+use std::task::Poll;
 use std::fmt;
-use std::marker::PhantomData;
-use std::mem::{self, ManuallyDrop};
-use std::ptr;
-use std::error::Error;
+use std::any;
+use std::mem::ManuallyDrop;
 
 use thiserror::Error;
 
-use owned::{Take, IntoOwned};
-
-use crate::pointee::Pointee;
-use crate::refs::*;
 use crate::blob::*;
-use crate::load::*;
+use crate::load::{Load, LoadRef, MaybeValid};
 use crate::save::*;
-use crate::ptr::*;
+use crate::owned::{Ref, Take};
 
-/// A `Box` that is generic over the type of `Ptr`.
-///
-/// # Metadata Type Parameter
-///
-/// Currently in Rust the use of associated types from traits makes a struct invariant over the
-/// type. We however want to be covariant over `T`, so the metadata is provided as a third type
-/// parameter.
-#[repr(C)]
-pub struct Bag<T: ?Sized + Pointee, P: Ptr, M: 'static = <T as Pointee>::Metadata> {
-    marker: PhantomData<T>,
+use crate::zone::{AsPtr, FromPtr, Ptr, PtrConst, PtrBlob, Zone, AsZone, Get, GetMut};
+use crate::pointee::Pointee;
+use crate::primitive::Primitive;
+
+pub struct Bag<T: ?Sized + Pointee, Z, P: Ptr> {
     ptr: P,
-    metadata: M,
+    metadata: *const T,
+    zone: Z,
 }
 
-impl<T: ?Sized + Pointee, P: Ptr, M: 'static> Drop for Bag<T, P, M> {
+impl<T: ?Sized + Pointee, Z, P: Ptr> Drop for Bag<T, Z, P> {
     fn drop(&mut self) {
-        // We have to be generic over M because Rust requires Drop to be implemented for all even
-        // though the only way to create a Bag is for M to be T::Metadata
-        let metadata: &dyn Any = &self.metadata;
-        let metadata: &T::Metadata = metadata.downcast_ref()
-                                             .expect("metadata to be correct type");
+        let metadata = T::metadata(self.metadata);
 
-        // SAFETY: ptr being valid is an invariant we uphold
-        unsafe { self.ptr.dealloc::<T>(*metadata) };
+        unsafe {
+            self.ptr.dealloc::<T>(metadata);
+        }
     }
 }
 
+impl<T: ?Sized + Pointee, Z, P: Ptr> Bag<T, Z, P> {
+    pub fn new(src: impl Take<T>) -> Self
+        where Z: Default, P: Default,
+    {
+        let (ptr, metadata, ()) = P::alloc(src).into_raw_parts();
 
-/// Error returned when validation of a `Blob<Bag>` fails.
-#[derive(Debug, Error)]
-#[error("bag failed")]
-pub enum ValidateBagBlobError<PtrError: Error, MetadataError: Error, LayoutError: Error> {
-    Ptr(PtrError),
-    Metadata(MetadataError),
-    Layout(LayoutError),
-}
-
-unsafe impl<T: ?Sized + ValidateBlob, P: Ptr> ValidateBlob for Bag<T, P> {
-    type BlobError = ValidateBagBlobError<<P as ValidateBlob>::BlobError, <T::Metadata as ValidateBlob>::BlobError, T::LayoutError>;
-
-    fn try_blob_layout(_: ()) -> Result<BlobLayout, !> {
-        Ok(P::blob_layout().extend(T::Metadata::blob_layout()))
+        unsafe {
+            Self::from_raw_parts(ptr, metadata, Z::default())
+        }
     }
 
-    fn validate_blob<'a>(blob: Blob<'a, Self>, ignore_padding: bool) -> Result<ValidBlob<'a, Self>, Self::BlobError> {
-        let mut fields = blob.validate_fields(ignore_padding);
-
-        fields.validate_blob::<P>().map_err(ValidateBagBlobError::Ptr)?;
-        let metadata_blob = fields.validate_blob::<T::Metadata>().map_err(ValidateBagBlobError::Metadata)?;
-        let metadata = metadata_blob.as_value().clone();
-
-        T::try_blob_layout(metadata).map_err(ValidateBagBlobError::Layout)?;
-
-        unsafe { Ok(fields.finish()) }
+    pub unsafe fn from_raw_parts(ptr: P, metadata: T::Metadata, zone: Z) -> Self {
+        Self {
+            ptr,
+            metadata: T::make_fat_ptr(null(), metadata),
+            zone,
+        }
     }
-}
 
-impl<T: ?Sized + ValidateBlob, P: Ptr> Load for Bag<T, P> {
-    type Ptr = P;
+    pub fn into_raw_parts(self) -> (P, T::Metadata, Z) {
+        let this = ManuallyDrop::new(self);
 
-    fn decode_blob(blob: ValidBlob<Self>, zone: &<Self::Ptr as Ptr>::BlobZone) -> Self {
-        let mut fields = blob.decode_fields(zone);
+        unsafe {
+            (std::ptr::read(&this.ptr),
+             T::metadata(this.metadata),
+             std::ptr::read(&this.zone))
+        }
+    }
 
-        let r = unsafe {
-            Self {
-                marker: PhantomData,
-                ptr: fields.decode_unchecked(),
-                metadata: fields.decode_unchecked(),
-            }
-        };
-        fields.finish();
-        r
+    pub fn metadata(&self) -> T::Metadata {
+        T::metadata(self.metadata)
+    }
+
+    pub fn try_get_dirty(&self) -> Result<&T, P::Clean> {
+        unsafe {
+            self.ptr.try_get_dirty::<T>(self.metadata())
+        }
     }
 }
 
-impl<Q: Ptr, T: ?Sized + Saved<Q>, P: Ptr> Saved<Q> for Bag<T, P> {
-    type Saved = Bag<T::Saved, Q>;
-}
-
-/// The poller used to save a `Bag`.
-pub struct BagSavePoll<Q: Ptr, T: ?Sized + SavePtr<P, Q>, P: Ptr> {
-    metadata: T::Metadata,
-    state: State<Q::Persist, T::SavePtrPoll, P::Persist>,
-}
-
-enum State<QPersist, TSavePoll, PPersist> {
-    Clean(PPersist),
-    Dirty(TSavePoll),
-    Done(QPersist),
-}
-
-
-impl<Q: Ptr, T: ?Sized + SavePtr<P, Q>, P: Ptr> Save<Q> for Bag<T, P>
+impl<T: ?Sized + Pointee, Z, P: Ptr> Bag<T, Z, P>
+where T: LoadRef,
+      Z: Zone + AsZone<T::Zone>
 {
-    type SavePoll = BagSavePoll<Q, T, P>;
+    pub fn get<'a>(&'a self) -> Result<Ref<'a, T>, Z::Error>
+        where Z: Get<P>
+    {
+        unsafe {
+            self.zone.get_unchecked(&self.ptr, self.metadata())
+                .map(MaybeValid::trust)
+        }
+    }
 
-    fn init_save(&self) -> Self::SavePoll {
-        BagSavePoll {
-            metadata: self.metadata,
+    pub fn take(self) -> Result<T::Owned, Z::Error>
+        where Z: Get<P>
+    {
+        let (ptr, metadata, zone) = self.into_raw_parts();
+        unsafe {
+            zone.take_unchecked::<T>(ptr, metadata)
+                .map(MaybeValid::trust)
+        }
+    }
 
-            // SAFETY: self.ptr being valid is an invariant we uphold
-            state: match unsafe { self.ptr.try_get_dirty_unchecked::<T>(self.metadata) } {
-                       Ok(value) => State::Dirty(value.init_save_ptr()),
-                       Err(persist_ptr) => State::Clean(persist_ptr),
-                   },
+    pub fn get_mut<'a>(&'a mut self) -> Result<&mut T, Z::Error>
+        where Z: GetMut<P>
+    {
+        let metadata = self.metadata();
+        unsafe {
+            self.zone.get_unchecked_mut(&mut self.ptr, metadata)
+                .map(MaybeValid::trust)
         }
     }
 }
 
-impl<Q: Ptr, T: ?Sized + SavePtr<P, Q>, P: Ptr> EncodeBlob for BagSavePoll<Q, T, P> {
-    type Target = Bag<T::Saved, Q>;
+impl<T: ?Sized + Pointee, Z, P: Ptr> fmt::Debug for Bag<T, Z, P>
+where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        f.debug_struct(any::type_name::<Self>())
+            .field("ptr", &self.ptr)
+            .field("metadata", &self.metadata())
+            .field("zone", &self.zone)
+            .finish()
+    }
+}
 
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
-        if let State::Done(q_persist) = self.state {
-            todo!()
-        } else {
-            panic!("polling incomplete")
+#[derive(Error)]
+#[error("FIXME")]
+pub enum DecodeBagBytesError<T: ?Sized + BlobDyn, P: PtrBlob> {
+    Ptr(P::DecodeBytesError),
+    Metadata(<T::Metadata as Primitive>::DecodeBytesError),
+    Layout(<T as Pointee>::LayoutError),
+}
+
+impl<T: ?Sized + BlobDyn, P: PtrBlob> fmt::Debug for DecodeBagBytesError<T, P> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        todo!()
+    }
+}
+
+impl<T: ?Sized + Pointee, P: Ptr> Blob for Bag<T, (), P>
+where T: BlobDyn,
+      P: PtrBlob,
+{
+    const SIZE: usize = <P as Blob>::SIZE + <T::Metadata as Blob>::SIZE;
+    type DecodeBytesError = DecodeBagBytesError<T, P>;
+
+    fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        dst.write_struct()
+           .write_field(&self.ptr)
+           .write_field(&self.metadata())
+           .done()
+    }
+
+    fn decode_bytes(blob: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
+        let mut fields = blob.struct_fields();
+
+        let ptr = fields.trust_field().map_err(DecodeBagBytesError::Ptr)?;
+        let metadata = fields.trust_field().map_err(DecodeBagBytesError::Metadata)?;
+        T::try_size(metadata).map_err(DecodeBagBytesError::Layout)?;
+        fields.assert_done();
+
+        unsafe {
+            Ok(Self::from_raw_parts(ptr, metadata, ()).into())
         }
     }
 }
 
-impl<Q: Ptr, T: ?Sized + SavePtr<P, Q>, P: Ptr> SavePoll for BagSavePoll<Q, T, P> {
-    type SrcPtr = P;
-    type DstPtr = Q;
+/*
+#[derive(Error)]
+#[error("FIXME")]
+pub enum ValidateBagError<T: ?Sized + BlobDyn, P: PtrBlob> {
+    Ptr {
+        ptr: P,
+        metadata: T::Metadata,
+        err: Box<dyn std::error::Error>,
+    },
+    PointeeBytes(T::DecodeBytesError),
+    PointeeChildren(T::ValidateError),
+}
 
-    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>,
+impl<T: ?Sized + BlobDyn, P: PtrBlob> fmt::Debug for ValidateBagError<T, P> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        todo!()
+    }
+}
+
+pub struct BagValidator<T: ?Sized + BlobDyn, P: Ptr> {
+    ptr: P,
+    metadata: T::Metadata,
+    state: State<T::ValidatePoll>,
+}
+
+enum State<T> {
+    Pending,
+    Polling(T),
+    Done,
+}
+
+impl<T: ?Sized + Pointee, P: PtrBlob> ValidatePoll for BagValidator<T, P>
+where T: BlobDyn,
+      P: FromPtr<T::Ptr>,
+{
+    type Ptr = P;
+    type Error = ValidateBagError<T, P>;
+
+    fn validate_poll_impl<V>(&mut self, validator: &mut V) -> Poll<Result<(), Self::Error>>
+        where V: Validator<Ptr = P>
     {
         loop {
             self.state = match &mut self.state {
-                State::Clean(persist_ptr) => {
-                    match saver.try_save::<T>(persist_ptr, self.metadata)? {
-                        Ok(dst_persist) => State::Done(dst_persist),
-                        Err(value_poller) => State::Dirty(value_poller),
+                State::Pending => {
+                    let r = validator.check_blob(self.ptr, self.metadata, |maybe_blob| {
+                        maybe_blob.map(T::validate_bytes_children)
+                    }).map_err(|ptr_err| ValidateBagError::Ptr {
+                        ptr: self.ptr,
+                        metadata: self.metadata,
+                        err: Box::new(ptr_err),
+                    })?;
+
+                    match r {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Some(Err(decode_err))) => {
+                            return Err(ValidateBagError::PointeeBytes(decode_err)).into();
+                        },
+                        Poll::Ready(Some(Ok(pointee_poll))) => State::Polling(pointee_poll),
+                        Poll::Ready(None) => State::Done,
                     }
                 },
-                State::Dirty(value_poller) => {
-                    value_poller.save_poll(saver)?;
+                State::Polling(pointee_poll) => {
+                    match pointee_poll.validate_poll(validator)
+                                      .map_err(ValidateBagError::PointeeChildren)?
+                    {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(()) => State::Done,
+                    }
+                }
+                State::Done => break Ok(()).into(),
+            };
+        }
+    }
+}
+*/
 
-                    let persist_ptr = saver.finish_save(value_poller)?;
-                    State::Done(persist_ptr)
+impl<T: ?Sized + Pointee, Z, P: Ptr> Load for Bag<T, Z, P>
+where T: LoadRef, Z: Zone,
+{
+    type Blob = Bag<T::BlobDyn, (), P::Blob>;
+    type Zone = Z;
+
+    fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
+        let ptr = P::from_clean(P::Clean::from_blob(blob.ptr));
+        let metadata = blob.metadata();
+        unsafe {
+            Self::from_raw_parts(ptr, metadata, *zone)
+        }
+    }
+}
+
+impl<Y: Zone, Q: Ptr, T: ?Sized, Z, P: Ptr> Saved<Y, Q> for Bag<T, Z, P>
+where T: SavedRef<Y, Q>,
+{
+    type Saved = Bag<T::SavedRef, Y, Q>;
+}
+
+impl<T: ?Sized + SaveDirtyRef, Z: Zone, P: Ptr> SaveDirty for Bag<T, Z, P>
+where T::CleanPtr: FromPtr<P::Clean>
+{
+    type CleanPtr = P::Clean;
+    type SaveDirtyPoll = BagSaveDirtyPoll<T::SaveDirtyRefPoll, P::Clean>;
+
+    fn init_save_dirty(&self) -> Self::SaveDirtyPoll {
+        BagSaveDirtyPoll {
+            metadata: self.metadata(),
+            state: match self.try_get_dirty() {
+                Ok(dirty) => State::Dirty(dirty.init_save_dirty_ref()),
+                Err(p_clean) => {
+                    State::Done(p_clean.to_blob())
+                }
+            }
+        }
+    }
+}
+
+pub struct BagSaveDirtyPoll<T: SaveDirtyRefPoll, P: PtrConst> {
+    metadata: <T::SavedBlobDyn as Pointee>::Metadata,
+    state: State<T, P::Blob>,
+}
+
+enum State<T, P> {
+    Dirty(T),
+    Done(P),
+}
+
+impl<T: SaveDirtyRefPoll, P: PtrConst> SaveDirtyPoll for BagSaveDirtyPoll<T, P>
+where T::CleanPtr: FromPtr<P>
+{
+    type CleanPtr = P;
+    type SavedBlob = Bag<T::SavedBlobDyn, (), P::Blob>;
+
+    fn save_dirty_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: BlobSaver<CleanPtr = Self::CleanPtr>
+    {
+        loop {
+            self.state = match &mut self.state {
+                State::Dirty(dirty) => {
+                    dirty.save_dirty_ref_poll(saver)?;
+
+                    let q_blob = saver.save_bytes(self.metadata, |dst| {
+                        dirty.encode_blob_dyn_bytes(dst)
+                    })?;
+
+                    State::Done(q_blob)
                 },
                 State::Done(_) => break Ok(()),
             };
         }
     }
-}
 
-/*
-impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z> {
-    pub fn new_in(value: impl Take<T>, mut alloc: impl Alloc<Ptr=P, Zone=Z>) -> Self {
-        Self {
-            inner: alloc.alloc_own(value),
-            zone: alloc.zone(),
+    fn encode_blob(&self) -> Self::SavedBlob {
+        match self.state {
+            State::Done(ptr_blob) => {
+                unsafe { Bag::from_raw_parts(ptr_blob, self.metadata, ()) }
+            },
+            State::Dirty(_) => panic!(),
         }
     }
 }
 
-impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z>
-where T: Load<P>,
-{
-    pub fn get<'a>(&'a self) -> Ref<'a, T>
-        where Z: Get<P>
-    {
-        self.inner.get_in(&self.zone)
-    }
-
-    pub fn try_get<'a>(&'a self) -> Result<Ref<'a, T>, Z::Error>
-        where Z: TryGet<P>
-    {
-        self.inner.try_get_in(&self.zone)
-    }
-
-    pub fn get_mut<'a>(&'a mut self) -> &'a mut T
-        where Z: GetMut<P>
-    {
-        self.inner.get_mut_in(&self.zone)
-    }
-
-    pub fn try_get_mut<'a>(&'a mut self) -> Result<&'a mut T, Z::Error>
-        where Z: TryGetMut<P>
-    {
-        self.inner.try_get_mut_in(&self.zone)
-    }
-
-    pub fn take(self) -> T::Owned
-        where Z: Get<P>
-    {
-        let (own, zone) = self.into_parts();
-        own.take_in(&zone)
-    }
-
-    pub fn try_take(self) -> Result<T::Owned, Z::Error>
-        where Z: TryGet<P>
-    {
-        let (own, zone) = self.into_parts();
-        own.try_take_in(&zone)
-    }
-}
-
-impl<T: ?Sized + Pointee, P: Ptr, Z> Bag<T, P, Z> {
-    pub fn from_parts(inner: Own<T, P>, zone: Z) -> Self {
-        Self { inner, zone }
-    }
-
-    pub fn into_parts(self) -> (Own<T, P>, Z) {
-        (self.inner, self.zone)
-    }
-}
-
-impl<T: ?Sized + Pointee, P: Ptr, Z, M> From<Bag<T, P, Z, M>> for Own<T, P, M> {
-    fn from(bag: Bag<T, P, Z, M>) -> Self {
-        bag.inner
-    }
-}
-*/
-
 /*
-impl<T: ?Sized + Pointee, Z, P: Ptr> BlobSize for Bag<T, Z, P> {
-}
-
-impl<V: Copy, T: ?Sized + Pointee, Z, P: Ptr> ValidateBlob<V> for Bag<T, Z, P> {
-    type Error = <Own<T, P> as ValidateBlob<V>>::Error;
-
-    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        todo!()
-    }
-}
-*/
-
-/*
-impl<T: ?Sized + Load, Z: Zone, P: Ptr> Decode for Bag<T, Z, P>
-where Z: Clone
+impl<Y: Zone, Q: Ptr, T: ?Sized + Pointee, Z: Zone, P: Ptr> Save<Y, Q> for Bag<T, Z, P>
+where T: SaveRef<Y, Q>,
+      Q::Blob: PtrConst,
+      P::Blob: PtrConst + Into<Q::Blob>,
 {
-    type Zone = Z;
-    type Ptr = P;
+    type SavePoll = BagSavePoll<Q, T::SaveRefPoll>;
 
-    fn decode_blob(blob: ValidBlob<Self>, zone: &Self::Zone) -> Self {
-        let mut fields = blob.decode_fields(zone);
-        let inner = unsafe { fields.decode_unchecked() };
-        fields.finish();
-
-        Self {
-            inner,
-            zone: zone.clone(),
-        }
-    }
-}
-*/
-
-/*
-#[derive(Debug, Error)]
-#[error("FIXME")]
-pub enum ValidateBagBlobError<OwnError: Error, ZoneError: Error> {
-    Own(OwnError),
-    Zone(ZoneError),
-}
-
-
-impl<V: Copy, T: ?Sized + Pointee, Z, P: Ptr> ValidateBlob<V> for Bag<T, Z, P>
-where P: ValidateBlob<V>,
-      T::Metadata: ValidateBlob<V>,
-      Z: ValidateBlob<V>,
-{
-    type Error = ValidateBagBlobError<<Own<T, P> as ValidateBlob<V>>::Error, Z::Error>;
-
-    fn validate_blob<'a>(blob: Blob<'a, Self>, padval: V) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        let mut fields = blob.validate_fields(padval);
-        fields.field::<Own<T, P>>().map_err(ValidateBagBlobError::Own)?;
-        fields.field::<Z>().map_err(ValidateBagBlobError::Zone)?;
-        unsafe { Ok(fields.finish()) }
-    }
-}
-
-impl<Y: Zone, T: ?Sized + Pointee, P: Ptr, Z> Decode<Y> for Bag<T, Z, P>
-where Z: Decode<Y>,
-      P: Decode<Y>,
-      T::Metadata: Decode<Y>,
-{
-    fn decode_blob(blob: ValidBlob<Self>, zone: &Y) -> Self {
-        let mut fields = blob.decode_fields(zone);
-        let r = unsafe {
-            Self {
-                inner: fields.decode_unchecked(),
-                zone: fields.decode_unchecked(),
-            }
-        };
-        fields.finish();
-        r
-    }
-}
-
-unsafe impl<T: ?Sized + Pointee, Z, P: Ptr, M> Persist for Bag<T, Z, P, M>
-where Z: Persist,
-      P: Persist,
-      M: Persist,
-{}
-*/
-
-/*
-/*
-impl<Q, R, T: ?Sized + Pointee, P: Ptr, Z> Encode<Q, R> for Bag<T, P, Z>
-where R: Primitive,
-      T: Save<Q, R>,
-      Z: Encode<Q, R>,
-      P: AsPtr<Q>,
-{
-    type EncodePoll = (<Own<T, P> as Encode<Q, R>>::EncodePoll, Z::EncodePoll);
-
-    fn init_encode(&self, dst: &impl SavePtr<Source=Q, Target=R>) -> Self::EncodePoll {
-        (self.inner.init_encode(dst),
-         self.zone.init_encode(dst))
-    }
-}
-
-/*
-
-impl<T, P: Ptr, Z, M> Clone for Bag<T, P, Z, M>
-where T: Clone, P: Clone, Z: Clone, M: Clone,
-{
-    fn clone(&self) -> Self {
-        unsafe {
-            let cloned_ptr = self.ptr.clone_unchecked::<T>();
-            Self {
-                marker: PhantomData,
-                ptr: self.ptr.clone_unchecked::<T>(),
-                metadata: self.metadata.clone(),
-                zone: self.zone.clone(),
+    fn init_save(&self) -> Self::SavePoll {
+        BagSavePoll {
+            metadata: self.metadata(),
+            state: match self.try_get_dirty() {
+                Ok(dirty) => State::Dirty(dirty.init_save_ref()),
+                Err(p_clean) => {
+                    let p_blob: P::Blob = p_clean.to_blob();
+                    let q_blob: Q::Blob = p_blob.into();
+                    State::Done(q_blob)
+                }
             }
         }
     }
 }
 
-impl<T, P: Ptr, Z> Default for Bag<T, P, Z>
-where T: Default, P: Default, Z: Default,
-{
-    fn default() -> Self {
-        let mut value = ManuallyDrop::new(T::default());
-        let metadata = T::metadata(&value);
+pub struct BagSavePoll<Q: Ptr, T: SaveRefPoll<Q>> {
+    metadata: <T::SavedBlob as Pointee>::Metadata,
+    state: State<Q, T>,
+}
 
-        unsafe {
-            Self::from_raw_parts(
-                P::alloc_unchecked(&mut value),
-                metadata,
-                Z::default()
-            )
+enum State<Q: Ptr, T> {
+    Dirty(T),
+    Done(<Q as Load>::Blob),
+}
+
+impl<Q: Ptr, T> SavePoll<Q> for BagSavePoll<Q, T>
+where T: SaveRefPoll<Q>,
+      Q::Blob: PtrConst,
+{
+    type SavedBlob = Bag<T::SavedBlob, (), Q::Blob>;
+
+    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver<DstPtr = Q>
+    {
+        loop {
+            self.state = match &mut self.state {
+                State::Dirty(dirty) => {
+                    dirty.save_ref_poll(saver)?;
+
+                    let q_blob = saver.save_bytes(self.metadata, |dst| {
+                        dirty.encode_blob_bytes(dst)
+                    })?;
+
+                    State::Done(q_blob)
+                },
+                State::Done(_) => break Ok(()),
+            };
         }
     }
-}
 
-// serialization
-
-
-
-impl<T: ?Sized + Pointee, P: Ptr, Z> ValidateBlob for Bag<T, P, Z>
-where T::Metadata: ValidateBlob,
-      P: ValidateBlob,
-      Z: ValidateBlob,
-{
-    type Error = ValidateBlobBagError<P::Error, <T::Metadata as ValidateBlob>::Error, Z::Error>;
-
-    const BLOB_LEN: usize = P::BLOB_LEN + <T::Metadata as ValidateBlob>::BLOB_LEN + Z::BLOB_LEN;
-
-    fn validate_blob<'a>(mut blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        blob.field::<P>().map_err(ValidateBlobBagError::Ptr)?
-            .field::<T::Metadata>().map_err(ValidateBlobBagError::Metadata)?
-            .field::<Z>().map_err(ValidateBlobBagError::Zone)?;
-
-        unsafe { Ok(blob.finish()) }
-    }
-}
-
-impl<Q: Ptr, T: ?Sized + Pointee, P: Ptr, Z> Load<Q> for Bag<T, P, Z>
-where T::Metadata: Decode<Q>,
-      P: Decode<Q>,
-      Z: Decode<Q>,
-{
-    fn decode_blob<'a>(mut blob: BlobDecoder<'a, Self, Q>) -> Self {
-        let r = unsafe {
-            Self {
-                marker: PhantomData,
-                ptr: blob.decode_unchecked(),
-                metadata: blob.decode_unchecked(),
-                zone: blob.decode_unchecked(),
-            }
-        };
-        blob.finish();
-        r
+    fn encode_blob(&self) -> Self::SavedBlob {
+        match self.state {
+            State::Done(q_blob) => {
+                unsafe { Bag::from_raw_parts(q_blob, self.metadata, ()) }
+            },
+            State::Dirty(_) => panic!(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test() {
     }
 }
-*/
-*/
 */

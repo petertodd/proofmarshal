@@ -1,132 +1,93 @@
-//! Marshalling of basic scalar types.
+use crate::blob::{Blob, Bytes, BytesUninit, ValidBytes};
+use crate::owned::Ref;
+use crate::load::Load;
 
-use std::convert::TryFrom;
-use std::fmt;
-use std::num;
-use std::marker::PhantomData;
+pub trait Scalar : Copy + core::fmt::Debug + Eq + Ord + core::hash::Hash + Send + Sync {
+    const SIZE: usize;
 
-use crate::pointee::Pointee;
-use crate::blob::*;
-use crate::refs::Ref;
-use crate::load::*;
-use crate::save::*;
-use crate::ptr::*;
+    type Error;
 
-use leint::Le;
+    fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> ValidBytes<'a, Self>;
 
-pub trait Scalar : Copy {
-    const BLOB_LAYOUT: BlobLayout;
-    type ScalarBlobError : std::error::Error + 'static + Send + Sync;
+    fn validate_blob_bytes<'a>(blob: Bytes<'a, Self>) -> Result<ValidBytes<'a, Self>, Self::Error>;
+    fn decode_blob_bytes(blob: ValidBytes<'_, Self>) -> Self;
 
-    fn validate_blob(blob: Blob<Self>) -> Result<ValidBlob<Self>, Self::ScalarBlobError>;
-
-    fn decode_blob(blob: ValidBlob<Self>) -> Self;
-
-    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>) -> Result<&'a Self, ValidBlob<'a, Self>> {
-        Err(blob)
-    }
-
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error>;
-}
-
-unsafe impl<T: Scalar> ValidateBlob for T {
-    type BlobError = T::ScalarBlobError;
-
-    fn try_blob_layout(_: ()) -> Result<BlobLayout, !> {
-        Ok(T::BLOB_LAYOUT)
-    }
-
-    fn validate_blob(blob: Blob<Self>, _: bool) -> Result<ValidBlob<Self>, Self::BlobError> {
-        T::validate_blob(blob)
+    fn deref_blob_bytes<'a>(blob: ValidBytes<'_, Self>) -> Ref<'a, Self> {
+        Ref::Owned(Self::decode_blob_bytes(blob))
     }
 }
+
+impl<T: Scalar
 
 impl<T: Scalar> Load for T {
-    type Ptr = !;
+    type Zone = ();
+    type Blob = Self;
+}
 
-    fn decode_blob(blob: ValidBlob<Self>, _: &()) -> Self {
-        T::decode_blob(blob)
+
+impl Scalar for ! {
+    const SIZE: usize = 0;
+
+    type Error = !;
+
+    fn validate_blob_bytes<'a>(blob: Bytes<'a, Self>) -> Result<ValidBytes<'a, Self>, Self::Error> {
+        unsafe { Ok(blob.assume_valid()) }
     }
 
-    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, _: &()) -> Result<&'a Self, ValidBlob<'a, Self>> {
-        T::try_deref_blob(blob)
+    fn decode_blob_bytes(_bytes: ValidBytes<'_, Self>) -> Self {
+        panic!()
+    }
+
+    fn encode_blob_bytes<'a>(&self, _dst: BytesUninit<'a, Self>) -> ValidBytes<'a, Self> {
+        match *self {}
     }
 }
 
-impl<Q: Ptr, T: Scalar> Saved<Q> for T {
-    type Saved = T;
-}
+impl Scalar for () {
+    const SIZE: usize = 0;
 
-impl<Q: Ptr, T: Scalar> Save<Q> for T {
-    type SavePoll = ScalarSavePoll<Q, T>;
+    type Error = !;
 
-    fn init_save(&self) -> Self::SavePoll {
-        ScalarSavePoll {
-            marker: PhantomData,
-            value: *self,
-        }
+    fn validate_blob_bytes<'a>(blob: Bytes<'a, Self>) -> Result<ValidBytes<'a, Self>, Self::Error> {
+        unsafe { Ok(blob.assume_valid()) }
+    }
+
+    fn decode_blob_bytes(_bytes: ValidBytes<'_, Self>) -> Self {
+        ()
+    }
+
+    fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> ValidBytes<'a, Self> {
+        let bytes = dst.write_bytes(&[]);
+        unsafe { ValidBytes::new_unchecked(bytes) }
     }
 }
 
 #[derive(Debug)]
-pub struct ScalarSavePoll<Q, T> {
-    marker: PhantomData<Q>,
-    value: T,
-}
+#[non_exhaustive]
+pub struct DecodeBoolError;
 
-impl<Q: Ptr, T: Scalar> EncodeBlob for ScalarSavePoll<Q, T> {
-    type Target = T;
+impl Scalar for bool {
+    const SIZE: usize = 1;
 
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Ok, W::Error> {
-        self.value.encode_blob(dst)
-    }
-}
+    type Error = DecodeBoolError;
 
-impl<Q: Ptr, T: Scalar> SavePoll for ScalarSavePoll<Q, T> {
-    type SrcPtr = !;
-
-    type DstPtr = Q;
-
-    fn save_poll<S: Saver>(&mut self, _saver: &mut S) -> Result<(), S::Error> {
-        Ok(())
-    }
-}
-
-/*
-impl<T: Scalar> Decode for T {
-    type Zone = ();
-    type Ptr = !;
-
-    fn decode_blob(blob: ValidBlob<Self>, _: &()) -> Self {
-        T::decode_blob(blob)
-    }
-
-    fn try_deref_blob<'a>(blob: ValidBlob<'a, Self>, _: &()) -> Result<&'a Self, ValidBlob<'a, Self>> {
-        T::try_deref_blob(blob)
-    }
-}
-
-impl<Y: Zone, T: Scalar> Encode<Y> for T {
-    type Encoded = Self;
-    type EncodePoll = ScalarEncodePoll<Y, T>;
-
-    fn init_encode(&self) -> Self::EncodePoll {
-        ScalarEncodePoll {
-            marker: PhantomData,
-            value: self.clone(),
+    fn validate_blob_bytes<'a>(blob: Bytes<'a, Self>) -> Result<ValidBytes<'a, Self>, Self::Error> {
+        match blob[0] {
+            0 | 1 => unsafe { Ok(blob.assume_valid())},
+            _ => Err(DecodeBoolError),
         }
     }
-}
 
+    fn decode_blob_bytes(blob: ValidBytes<'_, Self>) -> Self {
+        match blob[0] {
+            0 => false,
+            1 => true,
+            _ => unreachable!(),
+        }
+    }
 
-impl<Y: Zone, T: Scalar> EncodePoll for ScalarEncodePoll<Y, T> {
-    type SrcZone = ();
-    type SrcPtr = !;
-    type DstZone = Y;
-    type Target = T;
-
-    fn encode_poll<S: Saver>(&mut self, _: &mut S) -> Result<(), S::Error> {
-        Ok(())
+    fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> ValidBytes<'a, Self> {
+        let bytes = dst.write_bytes(&[*self as u8]);
+        unsafe { ValidBytes::new_unchecked(bytes) }
     }
 }
-*/

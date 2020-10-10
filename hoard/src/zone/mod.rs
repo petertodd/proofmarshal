@@ -1,290 +1,208 @@
-//! Generic pointers.
-
-use std::borrow::Borrow;
-use std::cmp;
-use std::fmt;
-use std::mem::ManuallyDrop;
-
-use owned::{Take, IntoOwned};
+use std::ptr::{self, NonNull};
+use std::mem::{self, ManuallyDrop};
+use std::alloc::Layout;
 
 use crate::pointee::Pointee;
-//use crate::load::{Decode, Load};
-use crate::scalar::Scalar;
-use crate::refs::Ref;
+use crate::blob::Blob;
+use crate::load::{Load, LoadRef, MaybeValid};
+use crate::primitive::Primitive;
+use crate::owned::{Take, Ref};
+use crate::bag::Bag;
 
-/*
-mod error;
-pub use self::error::*;
-*/
+pub mod heap;
 
-pub mod fat;
-pub use self::fat::Fat;
+unsafe fn make_bag_from_allocation<T: ?Sized + Pointee, Z, P: Ptr>(
+    src: &mut ManuallyDrop<T>,
+    dst: NonNull<()>,
+    zone_ptr: P,
+    zone: Z,
+) -> Bag<T, Z, P>
+{
+    let metadata = T::metadata(&**src);
+    let size = mem::size_of_val(src);
 
-pub mod own;
-pub use self::own::Own;
+    ptr::copy_nonoverlapping(
+        src as *const _ as *const u8,
+        dst.as_ptr().cast(),
+        size
+    );
 
-pub mod bag;
-pub use self::bag::Bag;
+    Bag::from_raw_parts(zone_ptr, metadata, zone)
+}
+
+pub trait Ptr : Sized + FromPtr<Self> + AsPtr<Self> {
+    type Clean : PtrConst<Blob = Self::Blob>;
+    type Blob : PtrBlob;
+
+    fn from_clean(clean: Self::Clean) -> Self;
+
+    unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata);
+    unsafe fn try_get_dirty<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Clean>;
+    unsafe fn try_get_dirty_mut<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) -> Result<&mut T, Self::Clean>;
+
+    fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, (), Self>
+        where Self: Default
+    {
+        src.take_unsized(|src| {
+            let (dst, zone_ptr) = Self::alloc_raw(Layout::for_value(src));
+
+            unsafe {
+                make_bag_from_allocation(src, dst, zone_ptr, ())
+            }
+        })
+    }
+
+    fn alloc_raw(layout: core::alloc::Layout) -> (NonNull<()>, Self)
+        where Self: Default
+    {
+        Self::alloc_raw_impl(layout)
+    }
+
+    fn alloc_raw_impl(layout: core::alloc::Layout) -> (NonNull<()>, Self) {
+        unimplemented!()
+    }
+}
+
+pub trait PtrConst : Copy + FromPtr<Self> + AsPtr<Self> {
+    type Blob : PtrBlob;
+
+    fn to_blob(self) -> Self::Blob;
+    fn from_blob(blob: Self::Blob) -> Self;
+}
+
+pub trait PtrBlob : Primitive + FromPtr<Self> + AsPtr<Self> {
+}
+
+impl<P: PtrBlob> PtrConst for P {
+    type Blob = Self;
+
+    fn to_blob(self) -> Self::Blob {
+        self
+    }
+
+    fn from_blob(this: Self) -> Self {
+        this
+    }
+}
+
+impl<P: PtrConst> Ptr for P {
+    type Clean = Self;
+    type Blob = P::Blob;
+
+    fn from_clean(this: Self) -> Self {
+        this
+    }
+
+    unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, _metadata: T::Metadata) {
+    }
+
+    unsafe fn try_get_dirty<T: ?Sized + Pointee>(&self, _metadata: T::Metadata) -> Result<&T, Self> {
+        Err(*self)
+    }
+
+    unsafe fn try_get_dirty_mut<T: ?Sized + Pointee>(&mut self, _metadata: T::Metadata) -> Result<&mut T, Self> {
+        Err(*self)
+    }
+}
+
+impl PtrBlob for ! {
+    /*
+    fn to_blob(self) -> Self {
+        match self {}
+    }
+    */
+}
 
 pub trait AsPtr<Q> {
     fn as_ptr(&self) -> &Q;
 }
 
-impl<Q> AsPtr<Q> for ! {
-    fn as_ptr(&self) -> &Q {
+pub trait FromPtr<Q> {
+    fn from_ptr(ptr: Q) -> Self;
+}
+
+pub trait IntoPtr<Q> {
+    fn into_ptr(self) -> Q;
+}
+
+impl<P, Q> IntoPtr<Q> for P
+where Q: FromPtr<P>
+{
+    fn into_ptr(self) -> Q {
+        Q::from_ptr(self)
+    }
+}
+
+impl<Q: Ptr> FromPtr<Q> for ! {
+    fn from_ptr(_ptr: Q) -> Self {
+        panic!()
+    }
+}
+
+impl<P: Ptr> AsPtr<P> for ! {
+    fn as_ptr(&self) -> &P {
         match *self {}
     }
+}
+
+pub trait Get<P> : Zone {
+    unsafe fn get_unchecked<'a, T: ?Sized>(
+        &'a self,
+        ptr: &'a P,
+        metadata: T::Metadata
+    ) -> Result<MaybeValid<Ref<'a, T>>, Self::Error>
+        where T: LoadRef,
+              Self: AsZone<T::Zone>;
+
+    unsafe fn take_unchecked<T: ?Sized>(
+        &self,
+        ptr: P,
+        metadata: T::Metadata
+    ) -> Result<MaybeValid<T::Owned>, Self::Error>
+        where T: LoadRef,
+              Self: AsZone<T::Zone>;
+}
+
+pub trait GetMut<P> : Get<P> {
+    unsafe fn get_unchecked_mut<'a, T: ?Sized>(
+        &'a self,
+        ptr: &'a mut P,
+        metadata: T::Metadata
+    ) -> Result<MaybeValid<&'a mut T>, Self::Error>
+        where T: LoadRef,
+              Self: AsZone<T::Zone>;
+}
+
+pub trait Zone : Copy + AsZone<Self> {
+    type Error : 'static;
+    type Ptr : Ptr;
+}
+
+impl Zone for () {
+    type Error = !;
+    type Ptr = !;
 }
 
 pub trait AsZone<Z> {
     fn as_zone(&self) -> &Z;
 }
 
-impl AsZone<()> for () {
-    fn as_zone(&self) -> &Self {
-        self
+impl<Z: Zone> AsZone<()> for Z {
+    fn as_zone(&self) -> &() {
+        &()
     }
 }
 
-pub trait Zone : Sized + AsZone<Self> + AsZone<()> {
-    type Ptr : Ptr<Persist = Self::PersistPtr>;
-    type PersistPtr : PersistPtr + AsPtr<Self::Ptr> + Into<Self::Ptr>;
-}
+pub trait Alloc : Zone {
+    fn alloc_raw(&mut self, layout: core::alloc::Layout) -> (NonNull<()>, Self::Ptr, Self);
 
-impl Zone for () {
-    type Ptr = !;
-    type PersistPtr = !;
-}
+    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Bag<T, Self, Self::Ptr> {
+        src.take_unsized(|src| {
+            let (dst, zone_ptr, zone) = self.alloc_raw(Layout::for_value(src));
 
-pub trait Ptr : Sized + fmt::Debug {
-    type Persist : PersistPtr + AsPtr<Self> + Into<Self>;
-    unsafe fn dealloc<T: ?Sized + Pointee>(&self, metadata: T::Metadata);
-
-    /*
-    fn duplicate(&self) -> Self;
-
-    unsafe fn clone_unchecked_with<T, U, F>(&self, metadata: T::Metadata, f: F) -> Own<T, Self>
-        where T: ?Sized + Pointee,
-              F: FnOnce(&T) -> U,
-              U: Take<T>,
-              Self: Clone
-    {
-        unimplemented!()
-    }
-
-    unsafe fn clone_unchecked<T>(&self, metadata: T::Metadata) -> Own<T, Self>
-        where T: ?Sized + Pointee + ToOwned,
-              T::Owned: Take<T>,
-              Self: Clone
-    {
-        self.clone_unchecked_with(metadata, T::to_owned)
-    }
-
-    fn alloc<T: ?Sized + Pointee, U: Take<T>>(src: U) -> Own<T, Self>
-        where Self: Default
-    {
-        unimplemented!()
-    }
-    */
-
-    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Persist>;
-    /*unsafe fn try_take_dirty_unchecked<T: ?Sized + Pointee>(self, metadata: T::Metadata) -> Result<T::Owned, Self::Persist>
-        where T: IntoOwned;
-    */
-}
-
-pub trait PersistPtr : Sized + Copy + Scalar + fmt::Debug + AsPtr<Self> {
-}
-
-impl PersistPtr for ! {
-}
-
-impl<P: PersistPtr> Ptr for P {
-    type Persist = Self;
-
-    unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
-    }
-
-    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, _: T::Metadata) -> Result<&T, Self::Persist> {
-        Err(*self)
+            unsafe {
+                make_bag_from_allocation(src, dst, zone_ptr, zone)
+            }
+        })
     }
 }
-
-/*
-pub trait Get<P: Ptr> : Sized {
-    unsafe fn get_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a P, metadata: T::Metadata) -> Ref<'a, T>
-        where T: Load<P>;
-
-    unsafe fn take_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: P, metadata: T::Metadata) -> T::Owned
-        where T: Load<P>;
-}
-
-pub trait GetMut<P: Ptr> : Get<P> {
-    unsafe fn get_mut_unchecked<'a, T: ?Sized + Pointee>(&self, ptr: &'a mut P, metadata: T::Metadata) -> &'a mut T
-        where T: Load<P>;
-}
-
-pub trait TryGet<P: Ptr> : Sized {
-    type Error;
-
-    unsafe fn try_get_unchecked<'a, T: ?Sized>(&self, ptr: &'a P, metadata: T::Metadata)
-        -> Result<Ref<'a, T>, Self::Error>
-        where T: Load<P>;
-
-    unsafe fn try_take_unchecked<'a, T: ?Sized>(&self, ptr: P, metadata: T::Metadata)
-        -> Result<T::Owned, Self::Error>
-        where T: Load<P>;
-}
-
-pub trait TryGetMut<P: Ptr> : TryGet<P> {
-    unsafe fn try_get_mut_unchecked<'a, T: ?Sized>(&self, ptr: &'a mut P, metadata: T::Metadata)
-        -> Result<&'a mut T, Self::Error>
-        where T: Load<P>;
-}
-
-impl<P: Ptr, Z> TryGet<P> for Z
-where Z: Get<P>
-{
-    type Error = !;
-
-    unsafe fn try_get_unchecked<'a, T: ?Sized>(&self, ptr: &'a P, metadata: T::Metadata)
-        -> Result<Ref<'a, T>, Self::Error>
-        where T: Load<P>
-    {
-        Ok(self.get_unchecked::<T>(ptr, metadata))
-    }
-
-    unsafe fn try_take_unchecked<'a, T: ?Sized>(&self, ptr: P, metadata: T::Metadata)
-        -> Result<T::Owned, Self::Error>
-        where T: Load<P>
-    {
-        Ok(self.take_unchecked::<T>(ptr, metadata))
-    }
-}
-
-impl<P: Ptr, Z> TryGetMut<P> for Z
-where Z: GetMut<P>
-{
-    unsafe fn try_get_mut_unchecked<'a, T: ?Sized>(&self, ptr: &'a mut P, metadata: T::Metadata)
-        -> Result<&'a mut T, Self::Error>
-        where T: Load<P>
-    {
-        Ok(self.get_mut_unchecked::<T>(ptr, metadata))
-    }
-}
-
-pub trait Alloc {
-    type Zone;
-    type Ptr : Ptr;
-
-    fn zone(&self) -> Self::Zone;
-
-    fn alloc_own<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Own<T, Self::Ptr>;
-
-    fn alloc_ptr<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Self::Ptr {
-        let fat = self.alloc_own(src).into_inner();
-        fat.raw
-    }
-}
-
-impl<A: ?Sized + Alloc> Alloc for &'_ mut A {
-    type Zone = A::Zone;
-    type Ptr = A::Ptr;
-
-    fn zone(&self) -> Self::Zone {
-        (**self).zone()
-    }
-
-    fn alloc_own<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Own<T, Self::Ptr> {
-        (**self).alloc_own(src)
-    }
-}
-
-impl<A: ?Sized + Alloc> Alloc for Box<A> {
-    type Zone = A::Zone;
-    type Ptr = A::Ptr;
-
-    fn zone(&self) -> Self::Zone {
-        (**self).zone()
-    }
-
-    fn alloc_own<T: ?Sized + Pointee, U: Take<T>>(&mut self, src: U) -> Own<T, Self::Ptr> {
-        (**self).alloc_own(src)
-    }
-}
-
-impl Ptr for ! {
-    type Persist = !;
-    type PersistZone = ();
-
-    unsafe fn dealloc<T: ?Sized + Pointee>(&self, _: T::Metadata) {
-        match *self {}
-    }
-    fn duplicate(&self) -> Self { *self }
-
-    unsafe fn clone_unchecked_with<T, U, F>(&self, _: T::Metadata, _: F) -> Own<T, Self>
-        where T: ?Sized + Pointee
-    {
-        match *self {}
-    }
-
-    unsafe fn try_get_dirty_unchecked<T: ?Sized + Pointee>(&self, _: T::Metadata) -> Result<&T, Self::Persist> {
-        match *self {}
-    }
-    unsafe fn try_take_dirty_unchecked<T: ?Sized + Pointee>(self, _: T::Metadata) -> Result<T::Owned, Self::Persist>
-        where T: IntoOwned
-    {
-        match self {}
-    }
-}
-
-
-/// The type of a type when saved in a specific zone.
-pub trait Type<Zone> : Pointee {
-    type Type : ?Sized + Pointee<Metadata = <Self as Pointee>::Metadata>;
-}
-
-macro_rules! impl_type_for_primitives {
-    ($( $t:ty, )* ) => {$(
-        impl<Z> Type<Z> for $t {
-            type Type = $t;
-        }
-    )*}
-}
-
-impl_type_for_primitives! {
-    !, (), bool,
-    u8, u16, u32, u64, u128,
-    i8, i16, i32, i64, i128,
-}
-
-impl<Z, T: Type<Z>> Type<Z> for Option<T>
-where T::Type: Sized,
-{
-    type Type = Option<T::Type>;
-}
-
-impl<Z, T: Type<Z>, const N: usize> Type<Z> for [T; N]
-where T::Type: Sized
-{
-    type Type = [T::Type; N];
-}
-
-impl<Z, T: Type<Z>> Type<Z> for [T]
-where T::Type: Sized
-{
-    type Type = [T::Type];
-}
-
-impl<Z: Zone, T: ?Sized + Pointee, P: Ptr> Type<Z> for Own<T, P>
-where T: Type<Z>
-{
-    type Type = Own<T::Type, Z::Ptr>;
-}
-
-impl<Y: Zone, T: ?Sized + Pointee, Z, P: Ptr, M: 'static> Type<Y> for Bag<T, Z, P, M>
-where T: Type<Y>,
-{
-    type Type = Bag<T::Type, Y, Y::Ptr, M>;
-}
-*/
