@@ -6,7 +6,7 @@ use crate::pointee::Pointee;
 use crate::blob::Blob;
 use crate::load::{Load, LoadRef, MaybeValid};
 use crate::primitive::Primitive;
-use crate::owned::{Take, Ref};
+use crate::owned::{Take, Ref, IntoOwned, Own};
 use crate::bag::Bag;
 
 pub mod heap;
@@ -39,6 +39,15 @@ pub trait Ptr : Sized + FromPtr<Self> + AsPtr<Self> {
     unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata);
     unsafe fn try_get_dirty<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, Self::Clean>;
     unsafe fn try_get_dirty_mut<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) -> Result<&mut T, Self::Clean>;
+
+    unsafe fn try_take_dirty_with<T: ?Sized + Pointee, F, R>(self, metadata: T::Metadata, f: F) -> R
+        where F: FnOnce(Result<Own<T>, Self::Clean>) -> R;
+
+    unsafe fn try_take_dirty<T: ?Sized + Pointee + IntoOwned>(self, metadata: T::Metadata) -> Result<T::Owned, Self::Clean> {
+        self.try_take_dirty_with::<T, _, _>(metadata, |src| {
+            src.map(T::into_owned)
+        })
+    }
 
     fn alloc<T: ?Sized + Pointee>(src: impl Take<T>) -> Bag<T, (), Self>
         where Self: Default
@@ -102,6 +111,12 @@ impl<P: PtrConst> Ptr for P {
 
     unsafe fn try_get_dirty_mut<T: ?Sized + Pointee>(&mut self, _metadata: T::Metadata) -> Result<&mut T, Self> {
         Err(*self)
+    }
+
+    unsafe fn try_take_dirty_with<T: ?Sized + Pointee, F, R>(self, _metadata: T::Metadata, f: F) -> R
+        where F: FnOnce(Result<Own<T>, Self>) -> R
+    {
+        f(Err(self))
     }
 }
 

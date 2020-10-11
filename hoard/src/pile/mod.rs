@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 use std::fmt;
 use std::ptr::NonNull;
 use std::alloc::Layout;
+use std::mem::ManuallyDrop;
 
 use crate::blob::{Bytes, BlobDyn, BytesUninit};
 use crate::zone::*;
@@ -9,7 +10,7 @@ use crate::zone::heap::{Heap, HeapPtr};
 use crate::load::{Load, LoadRef, MaybeValid};
 use crate::pointee::Pointee;
 use crate::bag::Bag;
-use crate::owned::{Ref, Take};
+use crate::owned::{Ref, Take, Own};
 use crate::save::{BlobSaver, SaveDirty, SaveDirtyPoll};
 
 pub mod offset;
@@ -132,6 +133,19 @@ where D::Clean: Into<!>
         match &mut self.kind {
             Kind::Clean(offset) => Err(*offset),
             Kind::Dirty(dirty) => Ok(dirty.try_get_dirty_mut::<T>(metadata).into_ok()),
+        }
+    }
+
+    unsafe fn try_take_dirty_with<T: ?Sized + Pointee, F, R>(self, metadata: T::Metadata, f: F) -> R
+        where F: FnOnce(Result<Own<T>, Self::Clean>) -> R
+    {
+        match self.kind {
+            Kind::Clean(offset) => f(Err(offset)),
+            Kind::Dirty(dirty) => {
+                dirty.try_take_dirty_with(metadata, |src| {
+                    f(Ok(src.into_ok()))
+                })
+            },
         }
     }
 

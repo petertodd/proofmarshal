@@ -1,7 +1,9 @@
 use std::ptr::{self, NonNull};
 use std::alloc::{self, Layout};
+use std::mem::ManuallyDrop;
 
 use crate::load::MaybeValid;
+use crate::owned::Own;
 
 use super::*;
 
@@ -19,16 +21,6 @@ impl Ptr for HeapPtr {
         match never {}
     }
 
-    unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) {
-        let ptr = T::make_fat_ptr_mut(self.0.as_ptr(), metadata);
-
-        let layout = Layout::for_value(&*ptr);
-        ptr::drop_in_place(ptr);
-
-        if layout.size() > 0 {
-            alloc::dealloc(ptr.cast(), layout);
-        };
-    }
 
     unsafe fn try_get_dirty<T: ?Sized + Pointee>(&self, metadata: T::Metadata) -> Result<&T, !> {
         let ptr = T::make_fat_ptr_mut(self.0.as_ptr(), metadata);
@@ -38,6 +30,29 @@ impl Ptr for HeapPtr {
     unsafe fn try_get_dirty_mut<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) -> Result<&mut T, !> {
         let ptr = T::make_fat_ptr_mut(self.0.as_ptr(), metadata);
         Ok(&mut *ptr)
+    }
+
+    unsafe fn try_take_dirty_with<T: ?Sized + Pointee, F, R>(self, metadata: T::Metadata, f: F) -> R
+        where F: FnOnce(Result<Own<T>, Self::Clean>) -> R
+    {
+        let ptr = T::make_fat_ptr_mut(self.0.as_ptr(), metadata);
+
+        let layout = Layout::for_value(&*ptr);
+
+        let src: &mut ManuallyDrop<T> = &mut *(ptr as *mut _);
+        let src: Own<T> = Own::new_unchecked(src);
+        let r = f(Ok(src));
+
+        if layout.size() > 0 {
+            alloc::dealloc(ptr.cast(), layout);
+        };
+
+        r
+    }
+
+    unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) {
+        let this = Self(self.0);
+        this.try_take_dirty_with::<T, _, ()>(metadata, |_| ());
     }
 
     fn alloc_raw_impl(layout: Layout) -> (NonNull<()>, Self) {
@@ -77,7 +92,7 @@ impl Default for HeapPtr {
     }
 }
 
-impl Get<HeapPtr> for Heap {
+impl Get for Heap {
     unsafe fn get_unchecked<'p, T: ?Sized + LoadRef>(&self, ptr: &'p HeapPtr, metadata: T::Metadata)
         -> Result<MaybeValid<Ref<'p, T>>, Self::Error>
     {
@@ -89,6 +104,15 @@ impl Get<HeapPtr> for Heap {
         -> Result<MaybeValid<T::Owned>, Self::Error>
     {
         todo!()
+    }
+}
+
+impl GetMut for Heap {
+    unsafe fn get_unchecked_mut<'p, T: ?Sized + Pointee>(&self, ptr: &'p mut HeapPtr, metadata: T::Metadata)
+        -> Result<MaybeValid<&'p mut T>, Self::Error>
+    {
+        let r = ptr.try_get_dirty_mut::<T>(metadata).into_ok();
+        Ok(r.into())
     }
 }
 

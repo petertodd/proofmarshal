@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::blob::*;
 use crate::load::{Load, LoadRef, MaybeValid};
 use crate::save::*;
-use crate::owned::{Ref, Take};
+use crate::owned::{Ref, Take, IntoOwned, Own};
 
 use crate::zone::{AsPtr, FromPtr, Ptr, PtrConst, PtrBlob, Zone, AsZone, Get, GetMut};
 use crate::pointee::Pointee;
@@ -67,6 +67,22 @@ impl<T: ?Sized + Pointee, Z, P: Ptr> Bag<T, Z, P> {
     pub fn try_get_dirty(&self) -> Result<&T, P::Clean> {
         unsafe {
             self.ptr.try_get_dirty::<T>(self.metadata())
+        }
+    }
+
+    pub fn try_get_dirty_mut(&mut self) -> Result<&mut T, P::Clean> {
+        unsafe {
+            self.ptr.try_get_dirty_mut::<T>(self.metadata())
+        }
+    }
+
+    pub fn try_take_dirty(self) -> Result<T::Owned, P::Clean>
+        where T: IntoOwned
+    {
+        let (ptr, metadata, _zone) = self.into_raw_parts();
+
+        unsafe {
+            ptr.try_take_dirty::<T>(metadata)
         }
     }
 }
