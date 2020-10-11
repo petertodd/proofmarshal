@@ -145,7 +145,7 @@ impl<P: Ptr> AsPtr<P> for ! {
     }
 }
 
-pub trait Get<P> : Zone {
+pub trait Get<P = <Self as Zone>::Ptr> : Zone {
     unsafe fn get_unchecked<'a, T: ?Sized>(
         &'a self,
         ptr: &'a P,
@@ -163,7 +163,7 @@ pub trait Get<P> : Zone {
               Self: AsZone<T::Zone>;
 }
 
-pub trait GetMut<P> : Get<P> {
+pub trait GetMut<P = <Self as Zone>::Ptr> : Get<P> {
     unsafe fn get_unchecked_mut<'a, T: ?Sized>(
         &'a self,
         ptr: &'a mut P,
