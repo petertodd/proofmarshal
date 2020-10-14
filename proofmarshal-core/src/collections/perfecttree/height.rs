@@ -5,6 +5,7 @@ use std::fmt;
 
 use thiserror::Error;
 
+use crate::commit::{Commit, WriteVerbatim};
 
 /// The height of a perfect binary tree.
 ///
@@ -248,5 +249,24 @@ impl Primitive for NonZeroHeight {
 
     fn decode_blob_bytes(_: Bytes<'_, Self>) -> Result<Self, HeightError> {
         todo!()
+    }
+}
+
+// --- Commit impls ----
+impl Commit for Height {
+    const VERBATIM_LEN: usize = 1;
+    type Committed = Self;
+
+    fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
+        dst.write(&self.0)
+    }
+}
+
+impl Commit for NonZeroHeight {
+    const VERBATIM_LEN: usize = 1;
+    type Committed = Self;
+
+    fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
+        dst.write(&self.0.get())
     }
 }

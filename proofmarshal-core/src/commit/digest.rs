@@ -1,3 +1,4 @@
+/*
 //! Cryptographic digests.
 //!
 //! # Variance
@@ -20,6 +21,7 @@
 //!     d
 //! }
 //! ```
+*/
 
 use std::any::type_name;
 use std::cmp;
@@ -28,37 +30,24 @@ use std::hash;
 use std::marker::PhantomData;
 use std::mem;
 
-use hoard::blob::*;
-use hoard::load::*;
-use hoard::save::*;
-use hoard::ptr::Ptr;
-use hoard::primitive::*;
-
 use super::*;
 
 /// Typed 32-byte hash digest.
 #[repr(transparent)]
-pub struct Digest<T: ?Sized = !> {
-    marker: PhantomData<fn(&T) -> Self>,
+pub struct Digest<T = !> {
+    marker: PhantomData<fn(&T)>,
     buf: [u8;32],
 }
 
-impl<T: ?Sized> From<[u8;32]> for Digest<T> {
+impl<T> From<[u8;32]> for Digest<T> {
     fn from(buf: [u8;32]) -> Self {
         Self::new(buf)
     }
 }
 
-impl<T: ?Sized> Verbatim for Digest<T> {
-    const LEN: usize = 32;
+impl<T> Digest<T> {
+    pub const LEN: usize = 32;
 
-    #[inline(always)]
-    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
-        dst.write_bytes(&self.buf)
-    }
-}
-
-impl<T: ?Sized> Digest<T> {
     #[inline(always)]
     pub fn new(buf: [u8;32]) -> Self {
         Self { marker: PhantomData, buf }
@@ -75,10 +64,11 @@ impl<T: ?Sized> Digest<T> {
     }
 
     /// Casts the digest to a different type.
-    pub fn cast<U: ?Sized>(&self) -> Digest<U> {
+    pub fn cast<U>(&self) -> Digest<U> {
         Digest::new(self.buf)
     }
 
+    /*
     pub fn hash_verbatim(value: &T) -> Self
         where T: Verbatim
     {
@@ -112,9 +102,10 @@ impl<T: ?Sized> Digest<T> {
             hasher.finalize().cast()
         }
     }
+    */
 }
 
-impl<T: ?Sized> From<Digest<T>> for [u8;32] {
+impl<T> From<Digest<T>> for [u8;32] {
     #[inline(always)]
     fn from(digest: Digest<T>) -> [u8;32] {
         digest.buf
@@ -122,28 +113,29 @@ impl<T: ?Sized> From<Digest<T>> for [u8;32] {
 }
 
 
-impl<T: ?Sized> Default for Digest<T> {
+impl<T> Default for Digest<T> {
     #[inline(always)]
     fn default() -> Self {
         Self::from([0x00; 32])
     }
 }
 
-impl<T: ?Sized> Clone for Digest<T> {
+impl<T> Clone for Digest<T> {
     #[inline(always)]
     fn clone(&self) -> Self {
         Self::new(self.buf)
     }
 }
-impl<T: ?Sized> Copy for Digest<T> {}
+impl<T> Copy for Digest<T> {}
 
-impl<T: ?Sized> AsRef<[u8;32]> for Digest<T> {
+impl<T> AsRef<[u8;32]> for Digest<T> {
     #[inline(always)]
     fn as_ref(&self) -> &[u8;32] {
         self.as_bytes()
     }
 }
 
+/*
 /// Display representation:
 ///
 /// ```
@@ -151,12 +143,14 @@ impl<T: ?Sized> AsRef<[u8;32]> for Digest<T> {
 /// assert_eq!(format!("{}", Digest::hash_verbatim(&0x1234_abcd_u32)),
 ///            "cdab341200000000000000000000000000000000000000000000000000000000");
 /// ```
-impl<T: ?Sized> fmt::Display for Digest<T> {
+*/
+impl<T> fmt::Display for Digest<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         <Self as fmt::LowerHex>::fmt(self, f)
     }
 }
 
+/*
 /// Upper case hex representation:
 ///
 /// ```
@@ -164,7 +158,8 @@ impl<T: ?Sized> fmt::Display for Digest<T> {
 /// assert_eq!(format!("{:X}", Digest::hash_verbatim(&0x1234_abcd_u32)),
 ///            "CDAB341200000000000000000000000000000000000000000000000000000000");
 /// ```
-impl<T: ?Sized> fmt::UpperHex for Digest<T> {
+*/
+impl<T> fmt::UpperHex for Digest<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for b in self.as_bytes() {
             write!(f, "{:02X}", b)?;
@@ -173,6 +168,7 @@ impl<T: ?Sized> fmt::UpperHex for Digest<T> {
     }
 }
 
+/*
 /// Lower case hex representation:
 ///
 /// ```
@@ -180,7 +176,8 @@ impl<T: ?Sized> fmt::UpperHex for Digest<T> {
 /// assert_eq!(format!("{:x}", Digest::hash_verbatim(&0x1234_abcd_u32)),
 ///            "cdab341200000000000000000000000000000000000000000000000000000000");
 /// ```
-impl<T: ?Sized> fmt::LowerHex for Digest<T> {
+*/
+impl<T> fmt::LowerHex for Digest<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for b in self.as_bytes() {
             write!(f, "{:02x}", b)?;
@@ -189,6 +186,7 @@ impl<T: ?Sized> fmt::LowerHex for Digest<T> {
     }
 }
 
+/*
 /// Debug representation:
 ///
 /// ```
@@ -196,12 +194,14 @@ impl<T: ?Sized> fmt::LowerHex for Digest<T> {
 /// assert_eq!(format!("{:?}", Digest::hash_verbatim(&0x1234_abcd_u32)),
 ///            "Digest<u32>(cdab341200000000000000000000000000000000000000000000000000000000)");
 /// ```
-impl<T: ?Sized> fmt::Debug for Digest<T> {
+*/
+impl<T> fmt::Debug for Digest<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Digest<{}>({})", type_name::<T>(), self)
     }
 }
 
+/*
 impl<T: ?Sized> hash::Hash for Digest<T> {
     #[inline]
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
@@ -288,3 +288,4 @@ mod tests {
         }
     }
 }
+*/

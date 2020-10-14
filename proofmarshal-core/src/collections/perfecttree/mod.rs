@@ -11,13 +11,16 @@ use hoard::pointee::Pointee;
 use hoard::owned::{IntoOwned, Take, Own};
 use hoard::bag::Bag;
 
+use crate::collections::merklesum::MerkleSum;
+use crate::commit::{Commit, WriteVerbatim, Digest};
+
 pub mod height;
 use self::height::*;
 
 #[derive(Debug)]
 pub struct SumPerfectTree<T, S: Copy, Z = (), P: Ptr = <Z as Zone>::Ptr, H: ?Sized + ToHeight = Height> {
     marker: PhantomData<T>,
-    tip_digest: Cell<Option<[u8; 32]>>,
+    tip_digest: Cell<Option<Digest<!>>>,
     sum: Cell<Option<S>>,
     ptr: P,
     zone: Z,
@@ -86,7 +89,7 @@ impl<T, S: Copy, Z: Zone> SumPerfectTree<T, S, Z> {
         where Z: Alloc
     {
         let mut zone = self.zone;
-        Inner::try_join(self, rhs, zone).map(|inner| {
+        Inner::try_join(self, rhs).map(|inner| {
             let inner_bag: Bag<InnerDyn<T, S, Z>, Z> = zone.alloc(inner);
             let (ptr, nonzero_height, _) = inner_bag.into_raw_parts();
 
@@ -124,6 +127,41 @@ impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> SumPerfectTree<T, S, Z, P, H> 
         self.height.to_height()
     }
 
+    pub fn sum(&self) -> S
+        where S: MerkleSum<T>
+    {
+        if let Some(sum) = self.sum.get() {
+            sum
+        } else {
+            let sum = match self.try_get_dirty_tip() {
+                Ok(TipRef::Leaf(leaf)) => S::from_item(leaf),
+                Ok(TipRef::Inner(inner)) => inner.sum(),
+                Err(_clean) => unreachable!(),
+            };
+
+            self.sum.set(Some(sum));
+            sum
+        }
+    }
+
+    pub fn tip_digest(&self) -> Digest
+        where S: MerkleSum<T>,
+              T: Commit
+    {
+        if let Some(tip_digest) = self.tip_digest.get() {
+            tip_digest
+        } else {
+            let tip_digest = match self.try_get_dirty_tip() {
+                Ok(TipRef::Leaf(leaf)) => leaf.commit().cast(),
+                Ok(TipRef::Inner(inner)) => inner.commit().cast(),
+                Err(_clean) => unreachable!(),
+            };
+
+            self.tip_digest.set(Some(tip_digest));
+            tip_digest
+        }
+    }
+
     pub fn try_get_dirty_tip<'a>(&'a self) -> Result<TipRef<'a, T, S, Z, P>, P::Clean> {
         if let Ok(height) = NonZeroHeight::try_from(self.height()) {
             let inner = unsafe { self.ptr.try_get_dirty(height)? };
@@ -135,18 +173,23 @@ impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> SumPerfectTree<T, S, Z, P, H> 
     }
 
     pub fn try_get_dirty_tip_mut<'a>(&'a mut self) -> Result<TipMut<'a, T, S, Z, P>, P::Clean> {
-        if let Ok(height) = NonZeroHeight::try_from(self.height()) {
+        let r = if let Ok(height) = NonZeroHeight::try_from(self.height()) {
             let inner = unsafe { self.ptr.try_get_dirty_mut(height)? };
-            Ok(TipMut::Inner(inner))
+            TipMut::Inner(inner)
         } else {
             let leaf = unsafe { self.ptr.try_get_dirty_mut(())? };
-            Ok(TipMut::Leaf(leaf))
-        }
+            TipMut::Leaf(leaf)
+        };
+
+        self.sum.set(None);
+        self.tip_digest.set(None);
+
+        Ok(r)
     }
 }
 
 impl<T, S: Copy, Z: Zone> Inner<T, S, Z> {
-    pub fn try_join(lhs: SumPerfectTree<T, S, Z>, rhs: SumPerfectTree<T, S, Z>, zone: Z) -> Result<Self, JoinError<T, S, Z>> {
+    pub fn try_join(lhs: SumPerfectTree<T, S, Z>, rhs: SumPerfectTree<T, S, Z>) -> Result<Self, JoinError<T, S, Z>> {
         if lhs.height() != rhs.height() {
             Err(JoinError::HeightMismatch { lhs, rhs })
         } else if let Some(height) = lhs.height().try_increment() {
@@ -200,6 +243,12 @@ impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToNonZeroHeight> Inner<T, S, Z, P, H> {
 
     pub fn height(&self) -> NonZeroHeight {
         self.height.to_nonzero_height()
+    }
+
+    pub fn sum(&self) -> S
+        where S: MerkleSum<T>
+    {
+        S::saturating_sum(self.left().sum(), self.right().sum())
     }
 }
 
@@ -369,6 +418,36 @@ impl<T, S: Copy, Z, P: Ptr> IntoOwned for InnerDyn<T, S, Z, P> {
     }
 }
 
+impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> Commit for SumPerfectTree<T, S, Z, P, H>
+where T: Commit,
+      S: MerkleSum<T>,
+{
+    const VERBATIM_LEN: usize = Digest::<!>::LEN + S::VERBATIM_LEN + 1;
+    type Committed = SumPerfectTree<T::Committed, S>;
+
+    fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
+        dst.write(&self.tip_digest().as_bytes());
+        dst.write(&self.sum());
+        dst.write(&self.height());
+    }
+}
+
+impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToNonZeroHeight> Commit for Inner<T, S, Z, P, H>
+where T: Commit,
+      S: MerkleSum<T>,
+{
+    const VERBATIM_LEN: usize = Digest::<!>::LEN + S::VERBATIM_LEN + 1;
+    type Committed = SumPerfectTree<T::Committed, S>;
+
+    fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
+        dst.write(&self.left().tip_digest().as_bytes());
+        dst.write(&self.left().sum());
+        dst.write(&self.right().tip_digest().as_bytes());
+        dst.write(&self.right().sum());
+        dst.write(&self.height());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,6 +463,10 @@ mod tests {
         assert_eq!(lr.height().get(), 0);
 
         let tip = ll.try_join(lr).unwrap();
-        dbg!(tip.try_get_dirty_tip());
+        let _ = dbg!(tip.try_get_dirty_tip());
+
+        dbg!(tip.commit());
+        let _ = dbg!(tip.try_get_dirty_tip());
+        dbg!(tip);
     }
 }

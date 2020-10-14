@@ -3,71 +3,39 @@ use super::*;
 use std::mem;
 use std::slice;
 
-/*
-macro_rules! impl_commit {
-    ($t:ty) => {
-        impl Commit for $t {
-            type Committed = Self;
-        }
-    }
-}
-*/
-
-impl Verbatim for ! {
+impl Commit for ! {
     const VERBATIM_LEN: usize = 0;
+    type Committed = Self;
 
-    fn encode_verbatim_in(&self, _: &mut impl WriteVerbatim) {
+    fn encode_verbatim(&self, _: &mut impl WriteVerbatim) {
         match *self {}
     }
 }
 
-impl Verbatim for () {
+impl Commit for () {
     const VERBATIM_LEN: usize = 0;
+    type Committed = Self;
 
-    fn encode_verbatim_in(&self, _dst: &mut impl WriteVerbatim) {
+    fn encode_verbatim(&self, _dst: &mut impl WriteVerbatim) {
     }
 }
 
-impl Verbatim for bool {
+impl Commit for bool {
     const VERBATIM_LEN: usize = 1;
+    type Committed = Self;
 
-    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
+    fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
         dst.write_bytes(&[if *self { 1 } else { 0 }]);
     }
 }
 
-/*
-impl_commit!(bool);
-
-macro_rules! impl_commit_for_persist {
-    ($($t:ty,)+) => {$(
-	impl_commit!($t);
-
-        impl Verbatim for $t {
-            const LEN: usize = mem::size_of::<Self>();
-
-            fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
-                let src = unsafe { slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<Self>()) };
-                dst.write_bytes(src);
-            }
-        }
-    )+}
-}
-
-impl_commit_for_persist! {
-    (),
-    u8, Le<u16>, Le<u32>, Le<u64>, Le<u128>,
-    i8, Le<i16>, Le<i32>, Le<i64>, Le<i128>,
-}
-
 macro_rules! impl_commit_for_int {
     ($($t:ty,)+) => {$(
-	impl_commit!($t);
+        impl Commit for $t {
+            type Committed = Self;
+            const VERBATIM_LEN: usize = mem::size_of::<Self>();
 
-        impl Verbatim for $t {
-            const LEN: usize = mem::size_of::<Self>();
-
-            fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
+            fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
                 dst.write_bytes(&self.to_le_bytes());
             }
         }
@@ -75,7 +43,17 @@ macro_rules! impl_commit_for_int {
 }
 
 impl_commit_for_int! {
-    u16, u32, u64, u128,
-    i16, i32, i64, i128,
+    u8, u16, u32, u64, u128,
+    i8, i16, i32, i64, i128,
 }
-*/
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test() {
+        assert_eq!(42u8.to_verbatim(), &[42]);
+        assert_eq!(42u8.commit().as_bytes(), &[42, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+    }
+}

@@ -1,20 +1,15 @@
 use super::*;
 
-impl<T: Verbatim, const N: usize> Verbatim for [T; N] {
+impl<T: Commit, const N: usize> Commit for [T; N] {
     const VERBATIM_LEN: usize = T::VERBATIM_LEN * N;
+    type Committed = [T::Committed; N];
 
-    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
+    fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
         for item in self.iter() {
             dst.write(item);
         }
     }
 }
-
-/*
-impl<T: Commit, const N: usize> Commit for [T; N] {
-    type Committed = [T::Committed; N];
-}
-*/
 
 #[cfg(test)]
 mod tests {
