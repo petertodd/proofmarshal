@@ -15,7 +15,7 @@ use crate::zone::{AsPtr, FromPtr, Ptr, PtrConst, PtrBlob, Zone, AsZone, Get, Get
 use crate::pointee::Pointee;
 use crate::primitive::Primitive;
 
-pub struct Bag<T: ?Sized + Pointee, Z, P: Ptr> {
+pub struct Bag<T: ?Sized + Pointee, Z, P: Ptr = <Z as Zone>::Ptr> {
     ptr: P,
     metadata: *const T,
     zone: Z,
