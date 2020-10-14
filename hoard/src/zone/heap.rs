@@ -14,6 +14,8 @@ pub struct Heap;
 pub struct HeapPtr(NonNull<()>);
 
 impl Ptr for HeapPtr {
+    const NEEDS_DEALLOC: bool = true;
+
     type Clean = !;
     type Blob = !;
 

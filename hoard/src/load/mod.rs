@@ -32,7 +32,7 @@ pub trait Load : Sized {
 }
 
 pub trait LoadRef : Pointee + IntoOwned {
-    type BlobDyn : BlobDyn<Metadata = Self::Metadata>;
+    type BlobDyn : ?Sized + BlobDyn + Pointee<Metadata = <Self as Pointee>::Metadata>;
     type Zone;
 
     fn load_ref_from_bytes<'a>(bytes: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)

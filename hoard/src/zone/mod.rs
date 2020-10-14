@@ -32,6 +32,8 @@ unsafe fn make_bag_from_allocation<T: ?Sized + Pointee, Z, P: Ptr>(
 }
 
 pub trait Ptr : Sized + FromPtr<Self> + AsPtr<Self> {
+    const NEEDS_DEALLOC: bool;
+
     type Clean : PtrConst<Blob = Self::Blob>;
     type Blob : PtrBlob;
 
@@ -96,6 +98,8 @@ impl<P: PtrBlob> PtrConst for P {
 }
 
 impl<P: PtrConst> Ptr for P {
+    const NEEDS_DEALLOC: bool = false;
+
     type Clean = Self;
     type Blob = P::Blob;
 

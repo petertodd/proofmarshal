@@ -106,6 +106,8 @@ impl<'p, 'v, D> AsPtr<Self> for PilePtrMut<'p, 'v, D> {
 impl<'p, 'v, D: Ptr> Ptr for PilePtrMut<'p, 'v, D>
 where D::Clean: Into<!>
 {
+    const NEEDS_DEALLOC: bool = D::NEEDS_DEALLOC;
+
     type Clean = PilePtr<'p, 'v>;
     type Blob = Offset;
 

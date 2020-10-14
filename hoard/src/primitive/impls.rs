@@ -4,6 +4,7 @@ use thiserror::Error;
 
 use std::convert::TryFrom;
 use std::mem;
+use std::num;
 
 impl Primitive for ! {
     const BLOB_SIZE: usize = 0;
@@ -76,26 +77,31 @@ impl_ints! {
     i8, i16, i32, i64, i128,
 }
 
-/*
-macro_rules! impl_validate_for_scalars {
-    ($($t:ty,)+) => {$(
-        impl ValidateImpl for $t {
-            type Ptr = !;
-            type Error = !;
-        }
+#[derive(Error, Debug)]
+#[non_exhaustive]
+#[error("FIXME")]
+pub struct DecodeNonZeroIntError;
 
-        impl ValidateBlob<'_> for $t {
-            type ValidatePoll = ();
+macro_rules! impl_nonzero_ints {
+    ($($n:ty => $t:ty, )+) => {$(
+        impl Primitive for $t {
+            const BLOB_SIZE: usize = mem::size_of::<$t>();
+            type DecodeBytesError = DecodeNonZeroIntError;
 
-            fn init_validate_blob(&self) -> () {
+            fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+                dst.write_bytes(&self.get().to_le_bytes())
+            }
+
+            fn decode_blob_bytes(blob: Bytes<'_, Self>) -> Result<Self, Self::DecodeBytesError> {
+                let buf: [u8; mem::size_of::<$t>()] = TryFrom::try_from(&*blob).unwrap();
+
+                Self::new(<$n>::from_le_bytes(buf)).ok_or(DecodeNonZeroIntError)
             }
         }
     )+}
 }
 
-impl_validate_for_scalars! {
-    (), bool,
-    u8, u16, u32, u64, u128,
-    i8, i16, i32, i64, i128,
+impl_nonzero_ints! {
+    u8 => num::NonZeroU8, u16 => num::NonZeroU16, u32 => num::NonZeroU32, u64 => num::NonZeroU64, u128 => num::NonZeroU128,
+    i8 => num::NonZeroI8, i16 => num::NonZeroI16, i32 => num::NonZeroI32, i64 => num::NonZeroI64, i128 => num::NonZeroI128,
 }
-*/

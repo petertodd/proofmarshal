@@ -213,11 +213,20 @@ impl fmt::Debug for DynNonZeroHeight {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub(super) struct DummyHeight;
 
 impl ToHeight for DummyHeight {
     fn to_height(&self) -> Height {
+        panic!()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub(super) struct DummyNonZeroHeight;
+
+impl ToNonZeroHeight for DummyNonZeroHeight {
+    fn to_nonzero_height(&self) -> NonZeroHeight {
         panic!()
     }
 }
@@ -230,12 +239,17 @@ impl Primitive for Height {
 
     type DecodeBytesError = HeightError;
 
-    fn encode_blob_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
-        todo!()
+    fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        dst.write_struct()
+           .write_field(&self.0)
+           .done()
     }
 
-    fn decode_blob_bytes(_: Bytes<'_, Self>) -> Result<Self, HeightError> {
-        todo!()
+    fn decode_blob_bytes(src: Bytes<'_, Self>) -> Result<Self, HeightError> {
+        let mut fields = src.struct_fields();
+        let height = fields.trust_field().into_ok();
+        fields.assert_done();
+        Self::new(height).ok_or(HeightError)
     }
 }
 
@@ -243,12 +257,43 @@ impl Primitive for NonZeroHeight {
     const BLOB_SIZE: usize = 1;
     type DecodeBytesError = HeightError;
 
-    fn encode_blob_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
-        todo!()
+    fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        dst.write_struct()
+           .write_field(&self.0)
+           .done()
     }
 
-    fn decode_blob_bytes(_: Bytes<'_, Self>) -> Result<Self, HeightError> {
-        todo!()
+    fn decode_blob_bytes(src: Bytes<'_, Self>) -> Result<Self, HeightError> {
+        let mut fields = src.struct_fields();
+        let height = fields.trust_field().ok().ok_or(HeightError)?;
+        fields.assert_done();
+        Self::new(height).ok_or(HeightError)
+    }
+}
+
+impl Primitive for DummyHeight {
+    const BLOB_SIZE: usize = 0;
+    type DecodeBytesError = !;
+
+    fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        dst.write_bytes(&[])
+    }
+
+    fn decode_blob_bytes(_: Bytes<'_, Self>) -> Result<Self, Self::DecodeBytesError> {
+        Ok(Self)
+    }
+}
+
+impl Primitive for DummyNonZeroHeight {
+    const BLOB_SIZE: usize = 0;
+    type DecodeBytesError = !;
+
+    fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        dst.write_bytes(&[])
+    }
+
+    fn decode_blob_bytes(_: Bytes<'_, Self>) -> Result<Self, Self::DecodeBytesError> {
+        Ok(Self)
     }
 }
 

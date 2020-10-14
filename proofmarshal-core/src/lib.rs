@@ -4,6 +4,7 @@
 #![feature(never_type)]
 #![feature(rustc_attrs)]
 #![feature(slice_ptr_len)]
+#![feature(unwrap_infallible)]
 
 #![allow(incomplete_features)]
 #![feature(const_generics)]

@@ -30,6 +30,9 @@ use std::hash;
 use std::marker::PhantomData;
 use std::mem;
 
+use hoard::primitive::Primitive;
+use hoard::blob::{Bytes, BytesUninit};
+
 use super::*;
 
 /// Typed 32-byte hash digest.
@@ -103,6 +106,21 @@ impl<T> Digest<T> {
         }
     }
     */
+}
+
+impl<T: 'static> Primitive for Digest<T> {
+    const BLOB_SIZE: usize = 32;
+    type DecodeBytesError = !;
+
+    fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        dst.write_bytes(self.as_bytes())
+    }
+
+    fn decode_blob_bytes(src: Bytes<'_, Self>) -> Result<Self, Self::DecodeBytesError> {
+        let mut buf = [0; 32];
+        buf.copy_from_slice(&src);
+        Ok(Self::new(buf))
+    }
 }
 
 impl<T> From<Digest<T>> for [u8;32] {
@@ -230,48 +248,6 @@ impl<T: ?Sized> Ord for Digest<T> {
         self.as_bytes().cmp(other.as_bytes())
     }
 }
-
-impl<T: ?Sized> ValidateBlob for Digest<T> {
-    type Error = !;
-    const BLOB_LEN: usize = mem::size_of::<Self>();
-
-    fn validate_blob<'a>(blob: BlobValidator<'a, Self>) -> Result<ValidBlob<'a, Self>, Self::Error> {
-        unsafe { Ok(Blob::from(blob).assume_valid()) }
-    }
-}
-
-impl<Q: Ptr, T: ?Sized> Decode<Q> for Digest<T> {
-    fn decode_blob(blob: hoard::load::BlobDecoder<Q, Self>) -> Self {
-        blob.to_value().clone()
-    }
-}
-
-unsafe impl<T: ?Sized> Persist for Digest<T> {}
-
-impl<Q, R, T: ?Sized> Encode<Q, R> for Digest<T> {
-    type EncodePoll = Self;
-
-    fn init_encode(&self, _: &impl SavePtr) -> Self::EncodePoll {
-        *self
-    }
-}
-
-impl<Q, R, T: ?Sized> SavePoll<Q, R> for Digest<T> {
-    fn save_poll<D: SavePtr>(&mut self, dst: D) -> Result<D, D::Error> {
-        Ok(dst)
-    }
-}
-
-impl<T: ?Sized> EncodeBlob for Digest<T> {
-    const BLOB_LEN: usize = mem::size_of::<Self>();
-
-    fn encode_blob<W: WriteBlob>(&self, dst: W) -> Result<W::Done, W::Error> {
-        dst.write_bytes(&self.buf)?
-           .done()
-    }
-}
-
-impl<T: ?Sized> Primitive for Digest<T> {}
 
 #[cfg(test)]
 mod tests {

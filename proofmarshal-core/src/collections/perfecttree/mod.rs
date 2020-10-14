@@ -6,9 +6,15 @@ use std::ops::DerefMut;
 use std::convert::TryFrom;
 use std::ptr;
 
-use hoard::zone::{Alloc, Zone, Ptr};
+use thiserror::Error;
+
+use hoard::primitive::Primitive;
+use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
+use hoard::load::{MaybeValid, Load, LoadRef};
+use hoard::save::{SaveDirty, SaveDirtyRef};
+use hoard::zone::{Alloc, Zone, Ptr, PtrConst, PtrBlob};
 use hoard::pointee::Pointee;
-use hoard::owned::{IntoOwned, Take, Own};
+use hoard::owned::{IntoOwned, Take, Own, Ref};
 use hoard::bag::Bag;
 
 use crate::collections::merklesum::MerkleSum;
@@ -202,16 +208,26 @@ impl<T, S: Copy, Z: Zone> Inner<T, S, Z> {
     }
 }
 
-impl<T, S: Copy, Z, P: Ptr> Inner<T, S, Z, P> {
+impl<T, S: Copy, Z, P: Ptr, H: ToNonZeroHeight> Inner<T, S, Z, P, H> {
     unsafe fn new_unchecked<HL: ToHeight, HR: ToHeight>(
         left: SumPerfectTree<T, S, Z, P, HL>,
         right: SumPerfectTree<T, S, Z, P, HR>,
-        height: NonZeroHeight,
+        height: H,
     ) -> Self {
         Self {
             left: ManuallyDrop::new(left.strip()),
             right: ManuallyDrop::new(right.strip()),
             height,
+        }
+    }
+
+    fn into_raw_parts(self) -> (SumPerfectTree<T, S, Z, P, DummyHeight>, SumPerfectTree<T, S, Z, P, DummyHeight>, H) {
+        let this = ManuallyDrop::new(self);
+
+        unsafe {
+            (ptr::read(&*this.left),
+             ptr::read(&*this.right),
+             ptr::read(&this.height))
         }
     }
 }
@@ -255,10 +271,12 @@ impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToNonZeroHeight> Inner<T, S, Z, P, H> {
 // ---- drop impls -----
 impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> Drop for SumPerfectTree<T, S, Z, P, H> {
     fn drop(&mut self) {
-        if let Ok(height) = NonZeroHeight::try_from(self.height()) {
-            unsafe { self.ptr.dealloc::<InnerDyn<T, S, Z, P>>(height) }
-        } else {
-            unsafe { self.ptr.dealloc::<T>(()) }
+        if P::NEEDS_DEALLOC {
+            if let Ok(height) = NonZeroHeight::try_from(self.height()) {
+                unsafe { self.ptr.dealloc::<InnerDyn<T, S, Z, P>>(height) }
+            } else {
+                unsafe { self.ptr.dealloc::<T>(()) }
+            }
         }
     }
 }
@@ -447,6 +465,239 @@ where T: Commit,
         dst.write(&self.height());
     }
 }
+
+
+// ------ hoard ------
+
+#[derive(Debug, Error)]
+#[error("FIXME")]
+pub enum DecodeSumPerfectTreeBytesError<
+    S: std::error::Error,
+    Z: std::error::Error,
+    P: std::error::Error,
+    H: std::error::Error,
+> {
+    Sum(S),
+    Zone(Z),
+    Ptr(P),
+    Height(H),
+}
+
+impl<T: 'static, S: Copy, Z, P: PtrBlob, H: ToHeight> Blob for SumPerfectTree<T, S, Z, P, H>
+where Z: Blob,
+      S: Primitive,
+      H: Primitive,
+{
+    const SIZE: usize = <Digest as Primitive>::BLOB_SIZE + S::BLOB_SIZE + P::BLOB_SIZE + Z::SIZE + H::BLOB_SIZE;
+    type DecodeBytesError = DecodeSumPerfectTreeBytesError<S::DecodeBytesError, Z::DecodeBytesError, P::DecodeBytesError, H::DecodeBytesError>;
+
+    fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        dst.write_struct()
+           .write_field(&self.tip_digest.get().unwrap())
+           .write_field(&self.sum.get().unwrap())
+           .write_field(&self.ptr)
+           .write_field(&self.zone)
+           .write_field(&self.height)
+           .done()
+    }
+
+    fn decode_bytes(src: hoard::blob::Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
+        let mut fields = src.struct_fields();
+
+        let tip_digest = fields.trust_field::<Digest>().into_ok();
+        let sum = fields.trust_field::<S>().map_err(DecodeSumPerfectTreeBytesError::Sum)?;
+        let ptr = fields.trust_field::<P>().map_err(DecodeSumPerfectTreeBytesError::Ptr)?;
+        let zone = fields.trust_field::<Z>().map_err(DecodeSumPerfectTreeBytesError::Zone)?;
+        let height = fields.trust_field::<H>().map_err(DecodeSumPerfectTreeBytesError::Height)?;
+        fields.assert_done();
+
+        Ok(Self {
+            marker: PhantomData,
+            tip_digest: Some(tip_digest).into(),
+            sum: Some(sum).into(),
+            ptr,
+            zone,
+            height,
+        }.into())
+    }
+}
+
+unsafe impl<T: 'static, S: Copy, Z, P: PtrBlob> BlobDyn for SumPerfectTreeDyn<T, S, Z, P>
+where S: Primitive,
+      Z: Blob,
+{
+    type DecodeBytesError = DecodeSumPerfectTreeBytesError<S::DecodeBytesError, Z::DecodeBytesError, P::DecodeBytesError, !>;
+
+    fn try_size(_: <Self as Pointee>::Metadata) -> Result<usize, <Self as Pointee>::LayoutError> {
+        Ok(<SumPerfectTree<T, S, Z, P, DummyHeight> as Blob>::SIZE)
+    }
+
+    fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        dst.write_struct()
+           .write_field(&self.tip_digest.get().unwrap())
+           .write_field(&self.sum.get().unwrap())
+           .write_field(&self.ptr)
+           .write_field(&self.zone)
+           .done()
+    }
+
+    fn decode_bytes(_: Bytes<'_, Self>) -> Result<MaybeValid<<Self as IntoOwned>::Owned>, <Self as BlobDyn>::DecodeBytesError> {
+        todo!()
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("FIXME")]
+pub enum DecodeInnerBytesError<
+    S: std::error::Error,
+    Z: std::error::Error,
+    P: std::error::Error,
+    H: std::error::Error,
+> {
+    Left(DecodeSumPerfectTreeBytesError<S, Z, P, !>),
+    Right(DecodeSumPerfectTreeBytesError<S, Z, P, !>),
+    Height(H),
+}
+
+impl<T: 'static, S: Copy, Z, P: PtrBlob, H: ToNonZeroHeight> Blob for Inner<T, S, Z, P, H>
+where Z: Blob,
+      S: Primitive,
+      H: Primitive,
+{
+    const SIZE: usize = <SumPerfectTree<T, S, Z, P, DummyHeight> as Blob>::SIZE * 2 + H::SIZE;
+    type DecodeBytesError = DecodeInnerBytesError<S::DecodeBytesError, Z::DecodeBytesError, P::DecodeBytesError, H::DecodeBytesError>;
+
+    fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        dst.write_struct()
+           .write_field(&*self.left)
+           .write_field(&*self.right)
+           .write_field(&self.height)
+           .done()
+    }
+
+    fn decode_bytes(src: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
+        let mut fields = src.struct_fields();
+
+        let left = fields.trust_field().map_err(DecodeInnerBytesError::Left)?;
+        let right = fields.trust_field().map_err(DecodeInnerBytesError::Right)?;
+        let height = fields.trust_field().map_err(DecodeInnerBytesError::Height)?;
+        fields.assert_done();
+
+        unsafe {
+            Ok(Inner::new_unchecked::<DummyHeight, DummyHeight>(left, right, height).into())
+        }
+    }
+}
+
+unsafe impl<T: 'static, S: Copy, Z, P: PtrBlob> BlobDyn for InnerDyn<T, S, Z, P>
+where S: Primitive,
+      Z: Blob,
+{
+    type DecodeBytesError = DecodeInnerBytesError<S::DecodeBytesError, Z::DecodeBytesError, P::DecodeBytesError, !>;
+
+    fn try_size(_: <Self as Pointee>::Metadata) -> Result<usize, <Self as Pointee>::LayoutError> {
+        Ok(<Inner<T, S, Z, P, DummyNonZeroHeight> as Blob>::SIZE)
+    }
+
+    fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        dst.write_struct()
+           .write_field(&*self.left)
+           .write_field(&*self.right)
+           .done()
+    }
+
+    fn decode_bytes(_: Bytes<'_, Self>) -> Result<MaybeValid<<Self as IntoOwned>::Owned>, <Self as BlobDyn>::DecodeBytesError> {
+        todo!()
+    }
+}
+
+impl<T:, S: Copy, Z, P: Ptr, H: ToHeight> Load for SumPerfectTree<T, S, Z, P, H>
+where T: Load,
+      S: MerkleSum<T>,
+      Z: Zone,
+      H: Primitive,
+{
+    type Blob = SumPerfectTree<T::Blob, S, (), P::Blob, H>;
+    type Zone = Z;
+
+    fn load(blob: Self::Blob, zone: &Z) -> Self {
+        Self {
+            marker: PhantomData,
+            tip_digest: blob.tip_digest.clone(),
+            sum: blob.sum.clone(),
+            ptr: P::from_clean(P::Clean::from_blob(blob.ptr)),
+            zone: *zone,
+            height: blob.height,
+        }
+    }
+}
+
+impl<T:, S: Copy, Z, P: Ptr, H: ToNonZeroHeight> Load for Inner<T, S, Z, P, H>
+where T: Load,
+      S: MerkleSum<T>,
+      Z: Zone,
+      H: Primitive,
+{
+    type Blob = Inner<T::Blob, S, (), P::Blob, H>;
+    type Zone = Z;
+
+    fn load(blob: Self::Blob, zone: &Z) -> Self {
+        let (left, right, height) = blob.into_raw_parts();
+        unsafe {
+            Self::new_unchecked(Load::load(left, zone), Load::load(right, zone), height)
+        }
+    }
+}
+
+impl<T, S: Copy, Z, P: Ptr> LoadRef for SumPerfectTreeDyn<T, S, Z, P>
+where T: Load,
+      Z: Zone,
+      S: Primitive,
+{
+    type BlobDyn = SumPerfectTreeDyn<T::Blob, S, (), P::Blob>;
+    type Zone = Z;
+
+    fn load_ref_from_bytes<'a>(blob: Bytes<'a, Self::BlobDyn>, zone: &Z)
+        -> Result<MaybeValid<Ref<'a, Self>>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    {
+        let blob = BlobDyn::decode_bytes(blob)?.trust();
+
+        Ok(MaybeValid::from(Ref::Owned(
+            SumPerfectTree {
+                marker: PhantomData,
+                tip_digest: blob.tip_digest.clone(),
+                sum: blob.sum.clone(),
+                ptr: P::from_clean(P::Clean::from_blob(blob.ptr)),
+                zone: *zone,
+                height: blob.height,
+            }
+        )))
+    }
+}
+
+impl<T, S: Copy, Z, P: Ptr> LoadRef for InnerDyn<T, S, Z, P>
+where T: Load,
+      S: MerkleSum<T>,
+      Z: Zone,
+{
+    type BlobDyn = InnerDyn<T::Blob, S, (), P::Blob>;
+    type Zone = Z;
+
+    fn load_ref_from_bytes<'a>(blob: Bytes<'a, Self::BlobDyn>, zone: &Z)
+        -> Result<MaybeValid<Ref<'a, Self>>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    {
+        let blob = BlobDyn::decode_bytes(blob)?.trust();
+        let (left, right, height) = blob.into_raw_parts();
+
+        let this = unsafe {
+            Inner::new_unchecked(Load::load(left, zone), Load::load(right, zone), height)
+        };
+
+        Ok(MaybeValid::from(Ref::Owned(this)))
+    }
+}
+
+
 
 #[cfg(test)]
 mod tests {
