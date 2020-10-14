@@ -1,11 +1,12 @@
 //! Marshalling of merkelized cryptographic proofs - what the cool kids call "blockchain".
 
+#![feature(arbitrary_self_types)]
 #![feature(never_type)]
 #![feature(rustc_attrs)]
+#![feature(slice_ptr_len)]
 
 #![allow(incomplete_features)]
 #![feature(const_generics)]
-#![feature(const_if_match)]
 #![feature(try_trait)]
 
 #![allow(unused_imports)]
@@ -13,12 +14,4 @@
 
 pub mod commit;
 
-pub mod validate;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod collections;

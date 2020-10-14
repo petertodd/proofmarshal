@@ -3,8 +3,7 @@ use super::*;
 use std::mem;
 use std::slice;
 
-use hoard::Le;
-
+/*
 macro_rules! impl_commit {
     ($t:ty) => {
         impl Commit for $t {
@@ -12,25 +11,32 @@ macro_rules! impl_commit {
         }
     }
 }
+*/
 
 impl Verbatim for ! {
-    const LEN: usize = 0;
+    const VERBATIM_LEN: usize = 0;
 
     fn encode_verbatim_in(&self, _: &mut impl WriteVerbatim) {
         match *self {}
     }
 }
 
-impl_commit!(!);
+impl Verbatim for () {
+    const VERBATIM_LEN: usize = 0;
+
+    fn encode_verbatim_in(&self, _dst: &mut impl WriteVerbatim) {
+    }
+}
 
 impl Verbatim for bool {
-    const LEN: usize = 1;
+    const VERBATIM_LEN: usize = 1;
 
     fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
         dst.write_bytes(&[if *self { 1 } else { 0 }]);
     }
 }
 
+/*
 impl_commit!(bool);
 
 macro_rules! impl_commit_for_persist {
@@ -72,3 +78,4 @@ impl_commit_for_int! {
     u16, u32, u64, u128,
     i16, i32, i64, i128,
 }
+*/
