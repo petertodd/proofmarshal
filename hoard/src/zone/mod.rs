@@ -12,13 +12,14 @@ use crate::bag::Bag;
 pub mod heap;
 
 unsafe fn make_bag_from_allocation<T: ?Sized + Pointee, Z, P: Ptr>(
-    src: &mut ManuallyDrop<T>,
+    src: Own<T>,
     dst: NonNull<()>,
     zone_ptr: P,
     zone: Z,
 ) -> Bag<T, Z, P>
 {
-    let metadata = T::metadata(&**src);
+    let src: &mut T = Own::leak(src);
+    let metadata = T::metadata(src);
     let size = mem::size_of_val(src);
 
     ptr::copy_nonoverlapping(
@@ -53,7 +54,7 @@ pub trait Ptr : Sized + FromPtr<Self> + AsPtr<Self> {
         where Self: Default
     {
         src.take_unsized(|src| {
-            let (dst, zone_ptr) = Self::alloc_raw(Layout::for_value(src));
+            let (dst, zone_ptr) = Self::alloc_raw(Layout::for_value::<T>(&src));
 
             unsafe {
                 make_bag_from_allocation(src, dst, zone_ptr, ())
@@ -213,7 +214,7 @@ pub trait Alloc : Zone {
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Bag<T, Self, Self::Ptr> {
         src.take_unsized(|src| {
-            let (dst, zone_ptr, zone) = self.alloc_raw(Layout::for_value(src));
+            let (dst, zone_ptr, zone) = self.alloc_raw(Layout::for_value::<T>(&src));
 
             unsafe {
                 make_bag_from_allocation(src, dst, zone_ptr, zone)

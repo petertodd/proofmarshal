@@ -12,10 +12,17 @@ pub struct Own<'a, T: 'a + ?Sized> {
 }
 
 impl<'a, T: 'a + ?Sized> Own<'a, T> {
-    pub unsafe fn new_unchecked(owned: &'a mut ManuallyDrop<T>) -> Self {
+    pub unsafe fn new_unchecked(owned: &'a mut T) -> Self {
         Self {
             marker: PhantomData,
-            ptr: NonNull::new_unchecked(owned.deref_mut()),
+            ptr: NonNull::from(owned),
+        }
+    }
+
+    pub fn leak(this: Self) -> &'a mut T {
+        let this = ManuallyDrop::new(this);
+        unsafe {
+            &mut *this.ptr.as_ptr()
         }
     }
 }
