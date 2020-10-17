@@ -28,6 +28,12 @@ pub trait BlobSaver {
         metadata: T::Metadata,
         f: impl FnOnce(BytesUninit<T>) -> Bytes<T>,
     ) -> Result<<Self::CleanPtr as PtrConst>::Blob, Self::Error>;
+
+    fn save_blob<T: Blob>(&mut self, blob: &T) -> Result<<Self::CleanPtr as PtrConst>::Blob, Self::Error> {
+        self.save_bytes((), |dst| {
+            blob.encode_bytes(dst)
+        })
+    }
 }
 
 #[repr(transparent)]
@@ -121,7 +127,7 @@ impl<T: SaveDirty> SaveDirtyRef for T {
 
 pub trait SaveDirtyRefPoll {
     type CleanPtr : PtrConst;
-    type SavedBlobDyn : BlobDyn;
+    type SavedBlobDyn : ?Sized + BlobDyn;
 
     fn blob_metadata(&self) -> <Self::SavedBlobDyn as Pointee>::Metadata;
 

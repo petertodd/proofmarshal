@@ -11,8 +11,8 @@ use thiserror::Error;
 use hoard::primitive::Primitive;
 use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
 use hoard::load::{MaybeValid, Load, LoadRef};
-use hoard::save::{SaveDirty, SaveDirtyRef};
-use hoard::zone::{Alloc, Zone, Ptr, PtrConst, PtrBlob};
+use hoard::save::{SaveDirty, SaveDirtyPoll, SaveDirtyRef, SaveDirtyRefPoll, BlobSaver};
+use hoard::zone::{Alloc, Zone, Ptr, PtrConst, PtrBlob, FromPtr};
 use hoard::pointee::Pointee;
 use hoard::owned::{IntoOwned, Take, Own, Ref};
 use hoard::bag::Bag;
@@ -81,13 +81,8 @@ impl<T, S: Copy, Z: Zone> SumPerfectTree<T, S, Z> {
     {
         let (ptr, (), zone) = zone.borrow_mut().alloc(value).into_raw_parts();
 
-        Self {
-            marker: PhantomData,
-            tip_digest: None.into(),
-            sum: None.into(),
-            zone,
-            ptr,
-            height: Height::new(0).unwrap(),
+        unsafe {
+            Self::from_raw_parts(None, None, zone, ptr, Height::new(0).unwrap())
         }
     }
 
@@ -99,21 +94,51 @@ impl<T, S: Copy, Z: Zone> SumPerfectTree<T, S, Z> {
             let inner_bag: Bag<InnerDyn<T, S, Z>, Z> = zone.alloc(inner);
             let (ptr, nonzero_height, _) = inner_bag.into_raw_parts();
 
-            Self {
-                marker: PhantomData,
-                tip_digest: None.into(),
-                sum: None.into(),
-                ptr,
-                zone,
-                height: nonzero_height.to_height(),
+            unsafe {
+                Self::from_raw_parts(None, None, zone, ptr, nonzero_height.to_height())
             }
         })
     }
 }
 
 impl<T, S: Copy, Z, P: Ptr, H: ToHeight> SumPerfectTree<T, S, Z, P, H> {
+    pub unsafe fn from_raw_parts(
+        tip_digest: Option<Digest>,
+        sum: Option<S>,
+        zone: Z,
+        ptr: P,
+        height: H,
+    ) -> Self
+    {
+        Self {
+            marker: PhantomData,
+            tip_digest: tip_digest.into(),
+            sum: sum.into(),
+            zone,
+            ptr,
+            height,
+        }
+    }
+
+    pub fn blob_from_raw_parts(
+        tip_digest: Option<Digest>,
+        sum: Option<S>,
+        zone: Z,
+        ptr: P,
+        height: H,
+    ) -> Self
+        where S: Blob,
+              Z: Blob,
+              P: PtrBlob,
+    {
+        unsafe {
+            Self::from_raw_parts(tip_digest, sum, zone, ptr, height)
+        }
+    }
+
     fn strip(self) -> SumPerfectTree<T, S, Z, P, DummyHeight> {
         let this = ManuallyDrop::new(self);
+
         unsafe {
             SumPerfectTree {
                 marker: PhantomData,
@@ -221,6 +246,20 @@ impl<T, S: Copy, Z, P: Ptr, H: ToNonZeroHeight> Inner<T, S, Z, P, H> {
         }
     }
 
+    fn new_blob(
+        left: SumPerfectTree<T, S, Z, P, DummyHeight>,
+        right: SumPerfectTree<T, S, Z, P, DummyHeight>,
+        height: H,
+    ) -> Self
+        where Z: Blob,
+              P: PtrBlob,
+    {
+        unsafe {
+            Self::new_unchecked(left, right, height)
+        }
+    }
+
+
     fn into_raw_parts(self) -> (SumPerfectTree<T, S, Z, P, DummyHeight>, SumPerfectTree<T, S, Z, P, DummyHeight>, H) {
         let this = ManuallyDrop::new(self);
 
@@ -283,9 +322,11 @@ impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> Drop for SumPerfectTree<T, S, 
 
 impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToNonZeroHeight> Drop for Inner<T, S, Z, P, H> {
     fn drop(&mut self) {
-        unsafe {
-            ptr::drop_in_place(self.left_mut());
-            ptr::drop_in_place(self.right_mut());
+        if P::NEEDS_DEALLOC {
+            unsafe {
+                ptr::drop_in_place(self.left_mut());
+                ptr::drop_in_place(self.right_mut());
+            }
         }
     }
 }
@@ -697,13 +738,260 @@ where T: Load,
     }
 }
 
+// ------ Save impl -----------
 
+// The actual save machinery:
+struct TreeSaveDirtyImpl<T: SaveDirty, S, P: PtrConst> {
+    tip_digest: Digest,
+    sum: S,
+    state: TreeSaveDirtyState<T, S, P>,
+}
+
+enum TreeSaveDirtyState<T: SaveDirty, S, P: PtrConst> {
+    DirtyLeaf(Box<T::SaveDirtyPoll>),
+    DirtyInner(Box<InnerSaveDirtyImpl<T, S, P>>),
+    Done(P::Blob),
+}
+
+struct InnerSaveDirtyImpl<T: SaveDirty, S, P: PtrConst> {
+    left: TreeSaveDirtyImpl<T, S, P>,
+    right: TreeSaveDirtyImpl<T, S, P>,
+}
+
+impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> SumPerfectTree<T, S, Z, P, H>
+where T: Commit + SaveDirty,
+      T::CleanPtr: FromPtr<P::Clean>,
+      S: MerkleSum<T>,
+{
+    fn make_tree_save_dirty_impl(&self) -> TreeSaveDirtyImpl<T, S, P::Clean> {
+        TreeSaveDirtyImpl {
+            tip_digest: self.tip_digest(),
+            sum: self.sum(),
+            state: match self.try_get_dirty_tip() {
+                Ok(TipRef::Leaf(leaf)) => {
+                    TreeSaveDirtyState::DirtyLeaf(Box::new(leaf.init_save_dirty()))
+                },
+                Ok(TipRef::Inner(inner)) => {
+                    TreeSaveDirtyState::DirtyInner(Box::new(inner.make_inner_save_dirty_impl()))
+                },
+                Err(clean_ptr) => TreeSaveDirtyState::Done(clean_ptr.to_blob()),
+            }
+        }
+    }
+}
+
+impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToNonZeroHeight> Inner<T, S, Z, P, H>
+where T: Commit + SaveDirty,
+      T::CleanPtr: FromPtr<P::Clean>,
+      S: MerkleSum<T>,
+{
+    fn make_inner_save_dirty_impl(&self) -> InnerSaveDirtyImpl<T, S, P::Clean> {
+        InnerSaveDirtyImpl {
+            left: self.left().make_tree_save_dirty_impl(),
+            right: self.right().make_tree_save_dirty_impl(),
+        }
+    }
+}
+
+impl<T: SaveDirty, S, P: PtrConst> TreeSaveDirtyImpl<T, S, P>
+where S: Primitive,
+      T::CleanPtr: FromPtr<P>,
+{
+    fn poll<B>(&mut self, saver: &mut B, height: Height) -> Result<(), B::Error>
+        where B: BlobSaver<CleanPtr = P>
+    {
+        let blob_ptr = match &mut self.state {
+            TreeSaveDirtyState::DirtyLeaf(leaf) => {
+                leaf.save_dirty_poll(saver)?;
+                saver.save_blob(&leaf.encode_blob())?
+            },
+            TreeSaveDirtyState::DirtyInner(inner) => {
+                let height = NonZeroHeight::try_from(height).expect("invalid height");
+                inner.poll(saver, height)?;
+
+                let inner_blob = inner.encode_blob(DummyNonZeroHeight);
+                saver.save_blob(&inner_blob)?
+            },
+            TreeSaveDirtyState::Done(_) => {
+                return Ok(())
+            }
+        };
+        self.state = TreeSaveDirtyState::Done(blob_ptr);
+        Ok(())
+    }
+
+    fn encode_blob<H: ToHeight>(&self, height: H) -> SumPerfectTree<T::Blob, S, (), P::Blob, H> {
+        if let TreeSaveDirtyState::Done(ptr_blob) = self.state {
+            SumPerfectTree::blob_from_raw_parts(
+                Some(self.tip_digest),
+                Some(self.sum),
+                (),
+                ptr_blob,
+                height,
+            )
+        } else {
+            panic!()
+        }
+    }
+}
+
+impl<T: SaveDirty, S, P: PtrConst> InnerSaveDirtyImpl<T, S, P>
+where S: Primitive,
+      T::CleanPtr: FromPtr<P>,
+{
+    fn poll<B>(&mut self, saver: &mut B, height: NonZeroHeight) -> Result<(), B::Error>
+        where B: BlobSaver<CleanPtr = P>
+    {
+        let child_height = height.decrement();
+        self.left.poll(saver, child_height)?;
+        self.right.poll(saver, child_height)
+    }
+
+    fn encode_blob<H: ToNonZeroHeight>(&self, height: H) -> Inner<T::Blob, S, (), P::Blob, H> {
+        Inner::new_blob(
+            self.left.encode_blob(DummyHeight),
+            self.right.encode_blob(DummyHeight),
+            height,
+        )
+    }
+}
+
+pub struct SumPerfectTreeSaveDirty<T: SaveDirty, S, P: PtrConst, H> {
+    height: H,
+    inner: TreeSaveDirtyImpl<T, S, P>,
+}
+
+impl<T: SaveDirty, S: Copy, P: PtrConst, H: ToHeight> SaveDirtyPoll for SumPerfectTreeSaveDirty<T, S, P, H>
+where S: MerkleSum<T>,
+      H: Primitive,
+      T::CleanPtr: FromPtr<P>
+{
+    type CleanPtr = P;
+    type SavedBlob = SumPerfectTree<T::Blob, S, (), P::Blob, H>;
+
+    fn save_dirty_poll_impl<B>(&mut self, saver: &mut B) -> Result<(), B::Error>
+        where B: BlobSaver<CleanPtr = P>
+    {
+        self.inner.poll(saver, self.height.to_height())
+    }
+
+    fn encode_blob(&self) -> Self::SavedBlob {
+        self.inner.encode_blob(self.height)
+    }
+}
+
+impl<T:, S: Copy, Z, P: Ptr, H: ToHeight> SaveDirty for SumPerfectTree<T, S, Z, P, H>
+where T: Commit + SaveDirty,
+      S: MerkleSum<T>,
+      Z: Zone,
+      H: Primitive,
+      T::CleanPtr: FromPtr<P::Clean>
+{
+    type CleanPtr = P::Clean;
+    type SaveDirtyPoll = SumPerfectTreeSaveDirty<T, S, P::Clean, H>;
+
+    fn init_save_dirty(&self) -> <Self as SaveDirty>::SaveDirtyPoll {
+        SumPerfectTreeSaveDirty {
+            height: self.height,
+            inner: self.make_tree_save_dirty_impl(),
+        }
+    }
+}
+
+pub struct SumPerfectTreeDynSaveDirty<T: SaveDirty, S, P: PtrConst> {
+    height: Height,
+    inner: TreeSaveDirtyImpl<T, S, P>,
+}
+
+impl<T: SaveDirty, S: Copy, P: PtrConst> SaveDirtyRefPoll for SumPerfectTreeDynSaveDirty<T, S, P>
+where S: MerkleSum<T>,
+      T::CleanPtr: FromPtr<P>
+{
+    type CleanPtr = P;
+    type SavedBlobDyn = SumPerfectTreeDyn<T::Blob, S, (), P::Blob>;
+
+    fn blob_metadata(&self) -> Height {
+        self.height
+    }
+
+    fn save_dirty_ref_poll_impl<B>(&mut self, saver: &mut B) -> Result<(), B::Error>
+        where B: BlobSaver<CleanPtr = P>
+    {
+        self.inner.poll(saver, self.height)
+    }
+
+    fn encode_blob_dyn_bytes<'a>(&self, _dst: BytesUninit<'a, Self::SavedBlobDyn>) -> Bytes<'a, Self::SavedBlobDyn> {
+        todo!()
+    }
+}
+
+impl<T:, S: Copy, Z, P: Ptr> SaveDirtyRef for SumPerfectTreeDyn<T, S, Z, P>
+where T: Commit + SaveDirty,
+      S: MerkleSum<T>,
+      Z: Zone,
+      T::CleanPtr: FromPtr<P::Clean>
+{
+    type CleanPtr = P::Clean;
+    type SaveDirtyRefPoll = SumPerfectTreeDynSaveDirty<T, S, P::Clean>;
+
+    fn init_save_dirty_ref(&self) -> Self::SaveDirtyRefPoll {
+        SumPerfectTreeDynSaveDirty {
+            height: self.height.to_height(),
+            inner: self.make_tree_save_dirty_impl(),
+        }
+    }
+}
+
+pub struct InnerDynSaveDirty<T: SaveDirty, S, P: PtrConst> {
+    height: NonZeroHeight,
+    inner: InnerSaveDirtyImpl<T, S, P>,
+}
+
+impl<T: SaveDirty, S: Copy, P: PtrConst> SaveDirtyRefPoll for InnerDynSaveDirty<T, S, P>
+where S: MerkleSum<T>,
+      T::CleanPtr: FromPtr<P>
+{
+    type CleanPtr = P;
+    type SavedBlobDyn = InnerDyn<T::Blob, S, (), P::Blob>;
+
+    fn blob_metadata(&self) -> NonZeroHeight {
+        self.height
+    }
+
+    fn save_dirty_ref_poll_impl<B>(&mut self, saver: &mut B) -> Result<(), B::Error>
+        where B: BlobSaver<CleanPtr = P>
+    {
+        self.inner.poll(saver, self.height)
+    }
+
+    fn encode_blob_dyn_bytes<'a>(&self, _dst: BytesUninit<'a, Self::SavedBlobDyn>) -> Bytes<'a, Self::SavedBlobDyn> {
+        todo!()
+    }
+}
+
+impl<T, S: Copy, Z, P: Ptr> SaveDirtyRef for InnerDyn<T, S, Z, P>
+where T: Commit + SaveDirty,
+      Z: Zone,
+      S: MerkleSum<T>,
+      T::CleanPtr: FromPtr<P::Clean>
+{
+    type CleanPtr = P::Clean;
+    type SaveDirtyRefPoll = InnerDynSaveDirty<T, S, P::Clean>;
+
+    fn init_save_dirty_ref(&self) -> Self::SaveDirtyRefPoll {
+        InnerDynSaveDirty {
+            height: self.height(),
+            inner: self.make_inner_save_dirty_impl(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use hoard::zone::heap::Heap;
+    use hoard::pile::{PileMut, VecSaver, Offset};
 
     #[test]
     fn test() {
@@ -719,5 +1007,39 @@ mod tests {
         dbg!(tip.commit());
         let _ = dbg!(tip.try_get_dirty_tip());
         dbg!(tip);
+    }
+
+    #[test]
+    fn test_save() {
+        let pile = PileMut::<[u8]>::default();
+
+        let ll = PerfectTree::new_leaf_in(42u8, pile);
+        assert_eq!(ll.height().get(), 0);
+
+        assert_eq!(VecSaver::new(pile.into()).save_dirty(&ll),
+            (vec![
+                 42,
+                 42,0,0,0,0,0,0,0,0,0,0,0,0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+             ],
+             Offset::new(1)),
+        );
+
+        let lr = PerfectTree::new_leaf_in(43u8, pile);
+
+        let tip = ll.try_join(lr).unwrap();
+        assert_eq!(VecSaver::new(pile.into()).save_dirty(&tip),
+            (vec![
+                 42,
+                 43,
+                 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                  0, 0, 0, 0, 0, 0, 0, 0,
+                 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                  1, 0, 0, 0, 0, 0, 0, 0,
+                 144, 166, 31, 71, 11, 60, 188, 148, 181, 232, 180, 157, 94, 143, 94, 219, 159, 97, 255, 207, 94, 51, 109, 15, 214, 181, 46, 53, 44, 173, 99, 39,
+                 2, 0, 0, 0, 0, 0, 0, 0,
+                 1
+             ],
+             Offset::new(82)),
+        );
     }
 }
