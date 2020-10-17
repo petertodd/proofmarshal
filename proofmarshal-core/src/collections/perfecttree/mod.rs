@@ -12,7 +12,7 @@ use hoard::primitive::Primitive;
 use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
 use hoard::load::{MaybeValid, Load, LoadRef};
 use hoard::save::{SaveDirty, SaveDirtyPoll, SaveDirtyRef, SaveDirtyRefPoll, BlobSaver};
-use hoard::zone::{Alloc, Zone, Ptr, PtrConst, PtrBlob, FromPtr};
+use hoard::zone::{Alloc, AsZone, Zone, Get, GetMut, Ptr, PtrConst, PtrBlob, FromPtr};
 use hoard::pointee::Pointee;
 use hoard::owned::{IntoOwned, Take, Own, Ref};
 use hoard::bag::Bag;
@@ -46,6 +46,12 @@ pub struct Inner<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr, H: ?Sized + ToNonZero
 }
 
 pub type InnerDyn<T, S, Z, P = <Z as Zone>::Ptr> = Inner<T, S, Z, P, DynNonZeroHeight>;
+
+#[derive(Debug)]
+pub enum Tip<Leaf, Inner> {
+    Leaf(Leaf),
+    Inner(Inner),
+}
 
 #[derive(Debug)]
 pub enum TipRef<'a, T, S: Copy, Z, P: Ptr> {
@@ -101,6 +107,162 @@ impl<T, S: Copy, Z: Zone> SumPerfectTree<T, S, Z> {
     }
 }
 
+impl<T, S: MerkleSum<T>, Z, P: Ptr, H: ?Sized + ToHeight> SumPerfectTree<T, S, Z, P, H>
+where T: Load,
+      Z: Get<P> + AsZone<T::Zone>
+{
+    pub fn get<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, T>>, Z::Error> {
+        if idx <= self.len() {
+            match self.get_tip()? {
+                Tip::Leaf(leaf) => {
+                    assert_eq!(self.len(), 0);
+                    Ok(Some(leaf))
+                },
+                Tip::Inner(Ref::Borrowed(inner)) => {
+                    inner.get(idx)
+                },
+                Tip::Inner(Ref::Owned(inner)) => {
+                    inner.take(idx)
+                         .map(|option_t| option_t.map(Ref::Owned))
+                }
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_mut(&mut self, idx: usize) -> Result<Option<&mut T>, Z::Error>
+        where Z: GetMut<P>
+    {
+        let len = self.len();
+        if idx <= len {
+            match self.get_tip_mut()? {
+                Tip::Leaf(leaf) => {
+                    assert_eq!(len, 0);
+                    Ok(Some(leaf))
+                },
+                Tip::Inner(inner) => inner.get_mut(idx),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn take(self, idx: usize) -> Result<Option<T>, Z::Error>
+        where H: Sized,
+    {
+        let len = self.len();
+        if idx <= len {
+            match self.take_tip()? {
+                Tip::Leaf(leaf) => {
+                    assert_eq!(len, 0);
+                    Ok(Some(leaf))
+                },
+                Tip::Inner(inner) => inner.take(idx),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_tip<'a>(&'a self) -> Result<Tip<Ref<'a, T>, Ref<'a, InnerDyn<T, S, Z, P>>>, Z::Error> {
+        if let Ok(height) = NonZeroHeight::try_from(self.height()) {
+            let inner = unsafe {
+                self.zone.get_unchecked(&self.ptr, height)?
+            };
+            let inner = inner.trust();
+            Ok(Tip::Inner(inner))
+        } else {
+            let leaf = unsafe {
+                self.zone.get_unchecked(&self.ptr, ())?
+            };
+            let leaf = leaf.trust();
+            Ok(Tip::Leaf(leaf))
+        }
+    }
+
+    pub fn get_tip_mut(&mut self) -> Result<Tip<&mut T, &mut InnerDyn<T, S, Z, P>>, Z::Error>
+        where Z: GetMut<P>
+    {
+        if let Ok(height) = NonZeroHeight::try_from(self.height()) {
+            let inner = unsafe {
+                self.zone.get_unchecked_mut(&mut self.ptr, height)?
+            };
+            let inner = inner.trust();
+            Ok(Tip::Inner(inner))
+        } else {
+            let leaf = unsafe {
+                self.zone.get_unchecked_mut(&mut self.ptr, ())?
+            };
+            let leaf = leaf.trust();
+            Ok(Tip::Leaf(leaf))
+        }
+    }
+
+    pub fn take_tip(self) -> Result<Tip<T, Inner<T, S, Z, P>>, Z::Error>
+        where H: Sized,
+    {
+        let (_tip_digest, _sum, zone, ptr, height) = self.into_raw_parts();
+
+        if let Ok(height) = NonZeroHeight::try_from(height.to_height()) {
+            let inner = unsafe {
+                zone.take_unchecked::<InnerDyn<T, S, Z, P>>(ptr, height)?
+            };
+            let inner = inner.trust();
+            Ok(Tip::Inner(inner))
+        } else {
+            let leaf = unsafe {
+                zone.take_unchecked::<T>(ptr, ())?
+            };
+            let leaf = leaf.trust();
+            Ok(Tip::Leaf(leaf))
+        }
+    }
+}
+
+impl<T, S: MerkleSum<T>, Z, P: Ptr, H: ?Sized + ToNonZeroHeight> Inner<T, S, Z, P, H>
+where T: Load,
+      Z: Get<P> + AsZone<T::Zone>
+{
+    fn get<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, T>>, Z::Error> {
+        let len = self.height().to_height().len();
+        if idx < len / 2 {
+            self.left.get(idx)
+        } else if idx < len {
+            self.right.get(idx - (len / 2))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_mut(&mut self, idx: usize) -> Result<Option<&mut T>, Z::Error>
+        where Z: GetMut<P>
+    {
+        let len = self.height().to_height().len();
+        if idx < len / 2 {
+            self.left.get_mut(idx)
+        } else if idx < len {
+            self.right.get_mut(idx - (len / 2))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn take(self, idx: usize) -> Result<Option<T>, Z::Error>
+        where H: Sized
+    {
+        let (left, right, height) = self.into_raw_parts();
+        let len = height.to_height().len();
+        if idx < len / 2 {
+            left.take(idx)
+        } else if idx < len {
+            right.take(idx - (len / 2))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 impl<T, S: Copy, Z, P: Ptr, H: ToHeight> SumPerfectTree<T, S, Z, P, H> {
     pub unsafe fn from_raw_parts(
         tip_digest: Option<Digest>,
@@ -136,6 +298,18 @@ impl<T, S: Copy, Z, P: Ptr, H: ToHeight> SumPerfectTree<T, S, Z, P, H> {
         }
     }
 
+    pub fn into_raw_parts(self) -> (Option<Digest>, Option<S>, Z, P, H) {
+        let this = ManuallyDrop::new(self);
+
+        unsafe {
+            (ptr::read(&this.tip_digest).into_inner(),
+             ptr::read(&this.sum).into_inner(),
+             ptr::read(&this.zone),
+             ptr::read(&this.ptr),
+             ptr::read(&this.height))
+        }
+    }
+
     fn strip(self) -> SumPerfectTree<T, S, Z, P, DummyHeight> {
         let this = ManuallyDrop::new(self);
 
@@ -156,6 +330,10 @@ impl<T, S: Copy, Z, P: Ptr, H: ToHeight> SumPerfectTree<T, S, Z, P, H> {
 impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> SumPerfectTree<T, S, Z, P, H> {
     pub fn height(&self) -> Height {
         self.height.to_height()
+    }
+
+    pub fn len(&self) -> usize {
+        self.height().len()
     }
 
     pub fn sum(&self) -> S
