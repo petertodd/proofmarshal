@@ -486,7 +486,7 @@ impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToNonZeroHeight> Inner<T, S, Z, P, H> {
     pub fn sum(&self) -> S
         where S: MerkleSum<T>
     {
-        S::saturating_sum(self.left().sum(), self.right().sum())
+        S::sum(self.left().sum(), self.right().sum())
     }
 }
 

@@ -1,11 +1,12 @@
 use super::*;
 
-impl<T: Verbatim> Verbatim for Option<T> {
-    const LEN: usize = 1 + T::LEN;
+impl<T: Commit> Commit for Option<T> {
+    const VERBATIM_LEN: usize = 1 + T::VERBATIM_LEN;
+    type Committed = Option<T::Committed>;
 
-    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
+    fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
         match self {
-            None => dst.write_zeros(Self::LEN),
+            None => dst.write_zeros(Self::VERBATIM_LEN),
             Some(value) => {
                 dst.write_bytes(&[1]);
                 dst.write(value);
@@ -14,10 +15,7 @@ impl<T: Verbatim> Verbatim for Option<T> {
     }
 }
 
-impl<T: Commit> Commit for Option<T> {
-    type Committed = Option<T::Committed>;
-}
-
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -36,3 +34,4 @@ mod tests {
         assert_eq!(Some(Some(())).encode_verbatim(), &[1, 1]);
     }
 }
+*/
