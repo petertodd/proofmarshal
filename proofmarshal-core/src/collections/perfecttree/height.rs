@@ -2,6 +2,7 @@ use std::convert::TryFrom;
 use std::ops::Range;
 use std::num::NonZeroU8;
 use std::fmt;
+use std::cmp;
 
 use thiserror::Error;
 
@@ -62,6 +63,12 @@ impl From<NonZeroHeight> for NonZeroU8 {
     }
 }
 
+impl From<NonZeroHeight> for u8 {
+    fn from(height: NonZeroHeight) -> Self {
+        height.0.get()
+    }
+}
+
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 #[error("out of range")]
 #[non_exhaustive]
@@ -75,6 +82,13 @@ impl TryFrom<Height> for NonZeroHeight {
             0 => Err(HeightError),
             n => Ok(unsafe { NonZeroHeight::new_unchecked(NonZeroU8::new_unchecked(n)) }),
         }
+    }
+}
+
+impl TryFrom<u8> for Height {
+    type Error = HeightError;
+    fn try_from(n: u8) -> Result<Self, Self::Error> {
+        Self::new(n).ok_or(HeightError)
     }
 }
 
@@ -214,7 +228,7 @@ impl fmt::Debug for DynNonZeroHeight {
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub(super) struct DummyHeight;
+pub(crate) struct DummyHeight;
 
 impl ToHeight for DummyHeight {
     fn to_height(&self) -> Height {
@@ -223,7 +237,7 @@ impl ToHeight for DummyHeight {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub(super) struct DummyNonZeroHeight;
+pub(crate) struct DummyNonZeroHeight;
 
 impl ToNonZeroHeight for DummyNonZeroHeight {
     fn to_nonzero_height(&self) -> NonZeroHeight {
@@ -314,4 +328,51 @@ impl Commit for NonZeroHeight {
     fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
         dst.write(&self.0.get())
     }
+}
+
+
+macro_rules! impl_cmp_ops {
+    ($( $t:ty = $u:ty, )+) => {$(
+        impl cmp::PartialEq<$u> for $t {
+            #[inline(always)]
+            fn eq(&self, other: &$u) -> bool {
+                let this: u8 = (*self).into();
+                let other: u8 = (*other).into();
+                this == other
+            }
+        }
+
+        impl cmp::PartialEq<$t> for $u {
+            #[inline(always)]
+            fn eq(&self, other: &$t) -> bool {
+                let this: u8 = (*self).into();
+                let other: u8 = (*other).into();
+                this == other
+            }
+        }
+
+        impl cmp::PartialOrd<$u> for $t {
+            #[inline(always)]
+            fn partial_cmp(&self, other: &$u) -> Option<cmp::Ordering> {
+                let this: u8 = (*self).into();
+                let other: u8 = (*other).into();
+                this.partial_cmp(&other)
+            }
+        }
+
+        impl cmp::PartialOrd<$t> for $u {
+            #[inline(always)]
+            fn partial_cmp(&self, other: &$t) -> Option<cmp::Ordering> {
+                let this: u8 = (*self).into();
+                let other: u8 = (*other).into();
+                this.partial_cmp(&other)
+            }
+        }
+    )+}
+}
+
+impl_cmp_ops! {
+    Height = NonZeroHeight,
+    Height = u8,
+    NonZeroHeight = u8,
 }

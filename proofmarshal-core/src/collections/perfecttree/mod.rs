@@ -33,10 +33,10 @@ pub struct SumPerfectTree<T, S: Copy, Z = (), P: Ptr = <Z as Zone>::Ptr, H: ?Siz
     height: H,
 }
 
-pub type SumPerfectTreeDyn<T, S, Z, P> = SumPerfectTree<T, S, Z, P, DynHeight>;
+pub type SumPerfectTreeDyn<T, S, Z, P = <Z as Zone>::Ptr> = SumPerfectTree<T, S, Z, P, DynHeight>;
 
-pub type PerfectTree<T, Z, P> = SumPerfectTree<T, (), Z, P>;
-pub type PerfectTreeDyn<T, Z, P> = SumPerfectTreeDyn<T, (), Z, P>;
+pub type PerfectTree<T, Z, P = <Z as Zone>::Ptr> = SumPerfectTree<T, (), Z, P>;
+pub type PerfectTreeDyn<T, Z, P = <Z as Zone>::Ptr> = SumPerfectTreeDyn<T, (), Z, P>;
 
 #[derive(Debug)]
 pub struct Inner<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr, H: ?Sized + ToNonZeroHeight = NonZeroHeight> {
@@ -184,19 +184,24 @@ where T: Load,
     pub fn get_tip_mut(&mut self) -> Result<Tip<&mut T, &mut InnerDyn<T, S, Z, P>>, Z::Error>
         where Z: GetMut<P>
     {
-        if let Ok(height) = NonZeroHeight::try_from(self.height()) {
+        let r = if let Ok(height) = NonZeroHeight::try_from(self.height()) {
             let inner = unsafe {
                 self.zone.get_unchecked_mut(&mut self.ptr, height)?
             };
             let inner = inner.trust();
-            Ok(Tip::Inner(inner))
+            Tip::Inner(inner)
         } else {
             let leaf = unsafe {
                 self.zone.get_unchecked_mut(&mut self.ptr, ())?
             };
             let leaf = leaf.trust();
-            Ok(Tip::Leaf(leaf))
-        }
+            Tip::Leaf(leaf)
+        };
+
+        self.sum = None.into();
+        self.tip_digest = None.into();
+
+        Ok(r)
     }
 
     pub fn take_tip(self) -> Result<Tip<T, Inner<T, S, Z, P>>, Z::Error>
@@ -390,8 +395,8 @@ impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> SumPerfectTree<T, S, Z, P, H> 
             TipMut::Leaf(leaf)
         };
 
-        self.sum.set(None);
-        self.tip_digest.set(None);
+        self.sum = None.into();
+        self.tip_digest = None.into();
 
         Ok(r)
     }
@@ -704,10 +709,10 @@ pub enum DecodeSumPerfectTreeBytesError<
 
 impl<T: 'static, S: Copy, Z, P: PtrBlob, H: ToHeight> Blob for SumPerfectTree<T, S, Z, P, H>
 where Z: Blob,
-      S: Primitive,
-      H: Primitive,
+      S: Blob,
+      H: Blob,
 {
-    const SIZE: usize = <Digest as Primitive>::BLOB_SIZE + S::BLOB_SIZE + P::BLOB_SIZE + Z::SIZE + H::BLOB_SIZE;
+    const SIZE: usize = <Digest as Blob>::SIZE + S::SIZE + P::SIZE + Z::SIZE + H::SIZE;
     type DecodeBytesError = DecodeSumPerfectTreeBytesError<S::DecodeBytesError, Z::DecodeBytesError, P::DecodeBytesError, H::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -742,7 +747,7 @@ where Z: Blob,
 }
 
 unsafe impl<T: 'static, S: Copy, Z, P: PtrBlob> BlobDyn for SumPerfectTreeDyn<T, S, Z, P>
-where S: Primitive,
+where S: Blob,
       Z: Blob,
 {
     type DecodeBytesError = DecodeSumPerfectTreeBytesError<S::DecodeBytesError, Z::DecodeBytesError, P::DecodeBytesError, !>;
@@ -780,8 +785,8 @@ pub enum DecodeInnerBytesError<
 
 impl<T: 'static, S: Copy, Z, P: PtrBlob, H: ToNonZeroHeight> Blob for Inner<T, S, Z, P, H>
 where Z: Blob,
-      S: Primitive,
-      H: Primitive,
+      S: Blob,
+      H: Blob,
 {
     const SIZE: usize = <SumPerfectTree<T, S, Z, P, DummyHeight> as Blob>::SIZE * 2 + H::SIZE;
     type DecodeBytesError = DecodeInnerBytesError<S::DecodeBytesError, Z::DecodeBytesError, P::DecodeBytesError, H::DecodeBytesError>;
@@ -809,7 +814,7 @@ where Z: Blob,
 }
 
 unsafe impl<T: 'static, S: Copy, Z, P: PtrBlob> BlobDyn for InnerDyn<T, S, Z, P>
-where S: Primitive,
+where S: Blob,
       Z: Blob,
 {
     type DecodeBytesError = DecodeInnerBytesError<S::DecodeBytesError, Z::DecodeBytesError, P::DecodeBytesError, !>;
@@ -832,30 +837,31 @@ where S: Primitive,
 
 impl<T:, S: Copy, Z, P: Ptr, H: ToHeight> Load for SumPerfectTree<T, S, Z, P, H>
 where T: Load,
-      S: MerkleSum<T>,
+      S: Blob,
       Z: Zone,
-      H: Primitive,
+      H: Blob,
 {
     type Blob = SumPerfectTree<T::Blob, S, (), P::Blob, H>;
     type Zone = Z;
 
     fn load(blob: Self::Blob, zone: &Z) -> Self {
+        let (tip_digest, sum, (), ptr, height) = blob.into_raw_parts();
         Self {
             marker: PhantomData,
-            tip_digest: blob.tip_digest.clone(),
-            sum: blob.sum.clone(),
-            ptr: P::from_clean(P::Clean::from_blob(blob.ptr)),
+            tip_digest: tip_digest.into(),
+            sum: sum.into(),
+            ptr: P::from_clean(P::Clean::from_blob(ptr)),
             zone: *zone,
-            height: blob.height,
+            height,
         }
     }
 }
 
 impl<T:, S: Copy, Z, P: Ptr, H: ToNonZeroHeight> Load for Inner<T, S, Z, P, H>
 where T: Load,
-      S: MerkleSum<T>,
+      S: Blob,
       Z: Zone,
-      H: Primitive,
+      H: Blob,
 {
     type Blob = Inner<T::Blob, S, (), P::Blob, H>;
     type Zone = Z;
@@ -871,7 +877,7 @@ where T: Load,
 impl<T, S: Copy, Z, P: Ptr> LoadRef for SumPerfectTreeDyn<T, S, Z, P>
 where T: Load,
       Z: Zone,
-      S: Primitive,
+      S: Blob,
 {
     type BlobDyn = SumPerfectTreeDyn<T::Blob, S, (), P::Blob>;
     type Zone = Z;
@@ -896,7 +902,7 @@ where T: Load,
 
 impl<T, S: Copy, Z, P: Ptr> LoadRef for InnerDyn<T, S, Z, P>
 where T: Load,
-      S: MerkleSum<T>,
+      S: Blob,
       Z: Zone,
 {
     type BlobDyn = InnerDyn<T::Blob, S, (), P::Blob>;
