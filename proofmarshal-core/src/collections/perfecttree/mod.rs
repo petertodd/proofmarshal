@@ -978,7 +978,7 @@ where T: Commit + SaveDirty,
 }
 
 impl<T: SaveDirty, S, P: PtrConst> TreeSaveDirtyImpl<T, S, P>
-where S: Primitive,
+where S: Copy + Blob,
       T::CleanPtr: FromPtr<P>,
 {
     fn poll<B>(&mut self, saver: &mut B, height: Height) -> Result<(), B::Error>
@@ -1020,7 +1020,7 @@ where S: Primitive,
 }
 
 impl<T: SaveDirty, S, P: PtrConst> InnerSaveDirtyImpl<T, S, P>
-where S: Primitive,
+where S: Copy + Blob,
       T::CleanPtr: FromPtr<P>,
 {
     fn poll<B>(&mut self, saver: &mut B, height: NonZeroHeight) -> Result<(), B::Error>

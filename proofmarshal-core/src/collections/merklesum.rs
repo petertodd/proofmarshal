@@ -1,7 +1,7 @@
 use crate::commit::Commit;
-use hoard::primitive::Primitive;
+use hoard::blob::Blob;
 
-pub trait MerkleSum<T: ?Sized> : 'static + Primitive + Commit<Committed=Self> {
+pub trait MerkleSum<T: ?Sized> : 'static + Copy + Blob + Commit<Committed=Self> {
     const MAX: Self;
     type Error : std::error::Error;
 
