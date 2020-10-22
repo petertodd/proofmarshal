@@ -356,7 +356,15 @@ where <A::Ptr as Ptr>::Clean: Into<!>,
         ptr: PilePtrMut<'p, 'v, D>,
         metadata: T::Metadata,
     ) -> Result<MaybeValid<T::Owned>, Self::Error> {
-        todo!()
+        match ptr.kind {
+            Kind::Clean(_clean) => {
+                todo!()
+            }
+            Kind::Dirty(dirty) => {
+                let r = dirty.try_take_dirty::<T>(metadata).into_ok();
+                Ok(MaybeValid::from(r))
+            },
+        }
     }
 }
 
