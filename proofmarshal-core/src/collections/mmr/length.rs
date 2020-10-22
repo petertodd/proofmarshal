@@ -46,9 +46,43 @@ impl<T: ?Sized + ToInnerLength> ToNonZeroLength for T {
     }
 }
 
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Length(pub usize);
+
+impl Length {
+    /// The largest possible value.
+    pub const MAX: Self = Length(usize::MAX);
+
+    /// The smallest possible value.
+    pub const MIN: Self = Length(0);
+
+    pub fn from_height(height: impl Into<Height>) -> Self {
+        let height = height.into();
+        Self(1 << height.get())
+    }
+
+    /// Returns the value as a primitive type.
+    pub const fn get(self) -> usize {
+        self.0
+    }
+
+    /// Checked addition.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::mmr::length::Length;
+    /// assert_eq!(Length(0).checked_add(0),
+    ///            Some(Length(0)));
+    ///
+    /// assert_eq!(Length::MAX.checked_add(1),
+    ///            None);
+    /// ```
+    pub fn checked_add(self, other: impl Into<Self>) -> Option<Self> {
+        self.0.checked_add(other.into().get())
+              .map(Self)
+    }
+}
 
 impl ToLength for Length {
     fn to_length(&self) -> Self {
@@ -75,6 +109,12 @@ impl ToInnerLength for InnerLength {
 }
 
 impl NonZeroLength {
+    /// The largest possible value.
+    pub const MAX: Self = Self(unsafe { NonZeroUsize::new_unchecked(usize::MAX) });
+
+    /// The smallest possible value.
+    pub const MIN: Self = Self(unsafe { NonZeroUsize::new_unchecked(1) });
+
     pub const fn new(len: usize) -> Option<Self> {
         match NonZeroUsize::new(len) {
             None => None,
@@ -86,8 +126,30 @@ impl NonZeroLength {
         Self(NonZeroUsize::new_unchecked(len))
     }
 
+    pub fn from_height(height: impl Into<Height>) -> Self {
+        let height = height.into();
+        Self::new(1 << height.get()).unwrap()
+    }
+
     pub const fn get(self) -> usize {
         self.0.get()
+    }
+
+    /// Checked addition.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::mmr::length::NonZeroLength;
+    /// assert_eq!(NonZeroLength::MIN.checked_add(0),
+    ///            Some(NonZeroLength::MIN));
+    ///
+    /// assert_eq!(NonZeroLength::MAX.checked_add(1),
+    ///            None);
+    /// ```
+    pub fn checked_add(self, other: impl Into<Length>) -> Option<Self> {
+        self.get().checked_add(other.into().get())
+                  .and_then(Self::new)
     }
 
     /// Tries to converts a `NonZeroLength` into an `InnerLength`.
@@ -140,6 +202,29 @@ impl InnerLength {
 
     pub const fn get(self) -> usize {
         self.0.get()
+    }
+
+    /// Checked addition.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::mmr::length::{InnerLength, NonZeroLength};
+    /// assert_eq!(InnerLength::new(0b11).unwrap()
+    ///                        .checked_add(0b100),
+    ///            Ok(InnerLength::new(0b111).unwrap()));
+    ///
+    /// assert_eq!(InnerLength::new(0b11).unwrap()
+    ///                        .checked_add(0b1),
+    ///            Err(Some(NonZeroLength::new(0b100).unwrap())));
+    /// ```
+    pub fn checked_add(self, other: impl Into<Length>) -> Result<Self, Option<NonZeroLength>> {
+        if let Some(len) = self.get().checked_add(other.into().get()) {
+            Self::new(len)
+                 .ok_or(NonZeroLength::new(len))
+        } else {
+            Err(None)
+        }
     }
 
     /// Split the `InnerLength` into the height of the smallest tree, and the remaining length.

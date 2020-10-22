@@ -75,10 +75,6 @@ pub enum JoinError<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr> {
         lhs: SumPerfectTree<T, S, Z, P>,
         rhs: SumPerfectTree<T, S, Z, P>,
     },
-    SumOverflow {
-        lhs: SumPerfectTree<T, S, Z, P>,
-        rhs: SumPerfectTree<T, S, Z, P>,
-    },
 }
 
 impl<T, S: Copy, Z: Zone> SumPerfectTree<T, S, Z> {

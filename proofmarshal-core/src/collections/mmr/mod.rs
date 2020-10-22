@@ -36,6 +36,8 @@ pub struct SumMMR<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr, L: ?Sized + ToLength
 
 pub type SumMMRDyn<T, S, Z, P = <Z as Zone>::Ptr> = SumMMR<T, S, Z, P, LengthDyn>;
 
+pub type MMR<T, Z, P = <Z as Zone>::Ptr> = SumMMR<T, (), Z, P>;
+
 #[derive(Debug)]
 pub struct Inner<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr, L: ?Sized + ToInnerLength = InnerLength> {
     peak: SumPerfectTree<T, S, Z, P, DummyHeight>,
@@ -65,17 +67,40 @@ impl<T, S: Copy, Z, P: Ptr> SumMMR<T, S, Z, P> {
             )
         }
     }
+
+    pub fn from_value_in(value: T, zone: impl BorrowMut<Z>) -> Self
+        where Z: Alloc<Ptr = P>,
+    {
+        Self::from_peak(SumPerfectTree::new_leaf_in(value, zone))
+    }
+
+    pub fn from_peak(peak: SumPerfectTree<T, S, Z, P>) -> Self {
+        let (tip_digest, sum, zone, ptr, height) = peak.into_raw_parts();
+        unsafe {
+            Self::from_raw_parts(
+                zone,
+                Some(ptr),
+                tip_digest,
+                sum,
+                Length::from_height(height),
+            )
+        }
+    }
+
+    pub fn from_inner(inner: Inner<T, S, Z, P>) -> Self
+        where Z: Alloc<Ptr = P>
+    {
+        todo!()
+    }
 }
 
-#[derive(Debug, Error)]
-#[error("FIXME")]
-pub enum PushError<SumError: error::Error, ZoneError: error::Error> {
-    HeightOverflow,
-    SumOverflow(SumError),
+#[derive(Debug)]
+pub enum PushError<T, ZoneError> {
+    LengthOverflow(T),
     Zone(ZoneError),
 }
 
-impl<S: error::Error, Z: error::Error> From<Z> for PushError<S, Z> {
+impl<T, Z> From<Z> for PushError<T, Z> {
     fn from(err: Z) -> Self {
         PushError::Zone(err)
     }
@@ -85,23 +110,53 @@ impl<T, S: Copy, Z: Zone> SumMMR<T, S, Z>
 where T: Load,
       S: Blob + Default
 {
-    pub fn push(&mut self, value: T) -> Result<(), Z::Error>
+    pub fn try_push(&mut self, value: T) -> Result<(), PushError<T, Z::Error>>
         where Z: Alloc + GetMut
     {
-        match self.take_tip()? {
-            Tip::Empty => {
-                let (ptr, (), _zone) = self.zone.alloc(value).into_raw_parts();
-                self.tip_ptr = MaybeUninit::new(ptr);
-                self.len = Length(1);
-            },
-            Tip::Peak(peak) => {
-                todo!()
-            },
-            Tip::Inner(inner) => {
-                todo!()
-            },
-        };
-        Ok(())
+        if self.len() == usize::MAX {
+            Err(PushError::LengthOverflow(value))
+        } else {
+            let peak = SumPerfectTree::new_leaf_in(value, self.zone);
+            match self.try_push_peak(peak) {
+                Ok(()) => Ok(()),
+                Err(PushError::Zone(z)) => Err(PushError::Zone(z)),
+                Err(PushError::LengthOverflow(_)) => {
+                    unreachable!("overflow already checked")
+                },
+            }
+        }
+    }
+
+    pub fn try_push_peak(&mut self, peak: SumPerfectTree<T, S, Z>)
+        -> Result<(), PushError<SumPerfectTree<T, S, Z>, Z::Error>>
+        where Z: Alloc + GetMut
+    {
+        if let Some(new_len) = self.len.checked_add(peak.len()) {
+            match self.take_tip()? {
+                Tip::Empty => {
+                    *self = Self::from_peak(peak);
+                },
+                Tip::Peak(next_peak) => {
+                    match Inner::try_join_peaks(peak, next_peak) {
+                        Ok(inner) => {
+                            *self = Self::from_inner(inner);
+                        },
+                        Err(InnerJoinPeaksError::PerfectTree(peak)) => {
+                            *self = Self::from_peak(peak);
+                        },
+                        Err(InnerJoinPeaksError::HeightOverflow) => {
+                            unreachable!("overflow already checked")
+                        }
+                    }
+                },
+                Tip::Inner(inner) => {
+                    todo!()
+                },
+            };
+            Ok(())
+        } else {
+            Err(PushError::LengthOverflow(peak))
+        }
     }
 
     pub fn take_tip(&mut self) -> Result<Tip<SumPerfectTree<T, S, Z>, Inner<T, S, Z>>, Z::Error>
@@ -233,40 +288,66 @@ impl<T, S: Copy, Z, P: Ptr, L: ?Sized + ToLength> SumMMR<T, S, Z, P, L> {
     }
 }
 
-
-pub enum InnerJoinError<ZoneError> {
-    Zone(ZoneError),
+pub enum InnerJoinPeaksError<T, S: Copy, Z: Zone> {
     HeightOverflow,
-    SumOverflow,
+    PerfectTree(SumPerfectTree<T, S, Z>),
 }
 
-impl<ZoneError> From<ZoneError> for InnerJoinError<ZoneError> {
-    fn from(err: ZoneError) -> Self {
-        InnerJoinError::Zone(err)
-    }
+pub enum InnerPushPeakError<T, S: Copy, Z: Zone> {
+    LengthOverflow,
+    PerfectTree(SumPerfectTree<T, S, Z>),
+    Zone(Z::Error),
 }
 
 impl<T, S: Copy, Z: Zone> Inner<T, S, Z>
 where T: Load,
       S: Blob + Default
 {
-    pub fn try_join_in(
-        peak: SumPerfectTree<T, S, Z>,
-        mut next: SumMMR<T, S, Z>,
-    ) -> Result<Self, InnerJoinError<Z::Error>>
-        where Z: Alloc + GetMut
+    pub fn try_join_peaks(lhs: SumPerfectTree<T, S, Z>, rhs: SumPerfectTree<T, S, Z>)
+        -> Result<Self, InnerJoinPeaksError<T, S, Z>>
+        where Z: Alloc
     {
-        let zone: Z = next.zone;
-        if peak.len() == next.len() {
-            assert!(peak.len().is_power_of_two());
-            if let Tip::Peak(next_peak) = next.take_tip()? {
-                next_peak.try_join(peak);
-                todo!()
-            } else {
-                unreachable!()
+        if lhs.height() == rhs.height() {
+            match lhs.try_join(rhs) {
+                Ok(peak) => Err(InnerJoinPeaksError::PerfectTree(peak)),
+                Err(_) => todo!(),
             }
         } else {
-            todo!()
+            let len = InnerLength::new(lhs.len() + rhs.len()).unwrap();
+
+            let (peak, next) = if lhs.height() > rhs.height() {
+                (lhs, rhs)
+            } else {
+                (rhs, lhs)
+            };
+
+            let next = SumMMR::from_peak(next);
+            unsafe {
+                Ok(Self::new_unchecked(peak, next, len))
+            }
+        }
+    }
+
+    pub fn push_peak(
+        self,
+        peak: SumPerfectTree<T, S, Z>,
+    ) -> Result<Self, InnerPushPeakError<T, S, Z>>
+        where Z: Alloc + GetMut
+    {
+        match self.len.checked_add(peak.len()) {
+            Ok(new_len) if self.peak.height() > peak.height() => {
+                todo!()
+            },
+            Ok(new_len) => {
+                assert!(peak.height() > self.peak.height());
+                todo!()
+            },
+            Err(Some(new_height)) => {
+                todo!()
+            },
+            Err(None) => {
+                Err(InnerPushPeakError::LengthOverflow)
+            }
         }
     }
 }
@@ -586,4 +667,24 @@ where T: Load,
     type Zone = Z;
 
     fn load_ref_from_bytes<'a>(_: hoard::blob::Bytes<'a, <Self as LoadRef>::BlobDyn>, _: &<Self as LoadRef>::Zone) -> std::result::Result<MaybeValid<hoard::owned::Ref<'a, Self>>, <<Self as LoadRef>::BlobDyn as BlobDyn>::DecodeBytesError> { todo!() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use hoard::pile::PileMut;
+
+    #[test]
+    fn mmr_push() {
+        let pile = PileMut::<[u8]>::default();
+
+        let mut mmr = MMR::new_in(pile);
+
+        dbg!(&mmr);
+        dbg!(mmr.try_push(1u8));
+        dbg!(&mmr);
+        dbg!(mmr.try_push(1u8));
+        dbg!(&mmr);
+    }
 }
