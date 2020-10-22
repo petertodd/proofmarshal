@@ -4,6 +4,8 @@ use std::ptr::NonNull;
 use std::alloc::Layout;
 use std::mem::ManuallyDrop;
 
+use thiserror::Error;
+
 use crate::blob::{Bytes, BlobDyn, BytesUninit};
 use crate::zone::*;
 use crate::zone::heap::{Heap, HeapPtr};
@@ -195,8 +197,18 @@ impl<'p, 'v, M: ?Sized> AsZone<Pile<'p, 'v, M>> for Pile<'p, 'v, M> {
     }
 }
 
+#[derive(Debug, Error)]
+#[error("FIXME")]
+pub struct Error(Box<dyn std::error::Error + 'static>);
+
+impl Error {
+    fn new(err: impl std::error::Error + 'static) -> Self {
+        Error(Box::new(err))
+    }
+}
+
 impl<'p, 'v, M: ?Sized> Zone for Pile<'p, 'v, M> {
-    type Error = Box<dyn std::error::Error>;
+    type Error = Error;
     type Ptr = PilePtr<'p, 'v>;
 }
 
@@ -211,9 +223,9 @@ where M: Mapping,
         where T: LoadRef,
               Self: AsZone<T::Zone>,
     {
-        let bytes = self.mapping.deref_bytes::<T::BlobDyn>(ptr.offset, metadata)?;
+        let bytes = self.mapping.deref_bytes::<T::BlobDyn>(ptr.offset, metadata).map_err(Error::new)?;
         T::load_ref_from_bytes(bytes, self.as_zone())
-            .map_err(Into::into)
+            .map_err(Error::new)
     }
 
     unsafe fn take_unchecked<T: ?Sized>(
@@ -224,10 +236,10 @@ where M: Mapping,
         where T: LoadRef,
               Self: AsZone<T::Zone>,
     {
-        let bytes = self.mapping.deref_bytes::<T::BlobDyn>(ptr.offset, metadata)?;
+        let bytes = self.mapping.deref_bytes::<T::BlobDyn>(ptr.offset, metadata).map_err(Error::new)?;
 
         T::load_owned_from_bytes(bytes, self.as_zone())
-            .map_err(Into::into)
+            .map_err(Error::new)
     }
 }
 
@@ -286,7 +298,7 @@ impl<'p, 'v, M: ?Sized, A> From<PileMut<'p, 'v, M, A>> for Pile<'p, 'v, M> {
 impl<'p, 'v, M: ?Sized + Mapping, A: Zone> Zone for PileMut<'p, 'v, M, A>
 where <A::Ptr as Ptr>::Clean: Into<!>
 {
-    type Error = Box<dyn std::error::Error>;
+    type Error = Error;
     type Ptr = PilePtrMut<'p, 'v, A::Ptr>;
 }
 
@@ -301,9 +313,9 @@ where <A::Ptr as Ptr>::Clean: Into<!>
         where T: LoadRef,
               Self: AsZone<T::Zone>,
     {
-        let bytes = self.pile.mapping.deref_bytes::<T::BlobDyn>(ptr.offset, metadata)?;
+        let bytes = self.pile.mapping.deref_bytes::<T::BlobDyn>(ptr.offset, metadata).map_err(Error::new)?;
         T::load_ref_from_bytes(bytes, self.as_zone())
-            .map_err(Into::into)
+            .map_err(Error::new)
     }
 
     unsafe fn take_unchecked<T: ?Sized + LoadRef>(
@@ -328,9 +340,9 @@ where <A::Ptr as Ptr>::Clean: Into<!>,
     {
         match &ptr.kind {
             Kind::Clean(clean) => {
-                let bytes = self.pile.mapping.deref_bytes::<T::BlobDyn>(clean.offset, metadata)?;
+                let bytes = self.pile.mapping.deref_bytes::<T::BlobDyn>(clean.offset, metadata).map_err(Error::new)?;
                 T::load_ref_from_bytes(bytes, self.as_zone())
-                    .map_err(Into::into)
+                    .map_err(Error::new)
             }
             Kind::Dirty(dirty) => {
                 let r = dirty.try_get_dirty::<T>(metadata).into_ok();

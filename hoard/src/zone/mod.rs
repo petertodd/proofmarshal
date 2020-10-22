@@ -194,7 +194,7 @@ pub trait GetMut<P = <Self as Zone>::Ptr> : Get<P> {
 }
 
 pub trait Zone : Copy + AsZone<Self> {
-    type Error : 'static;
+    type Error : 'static + std::error::Error;
     type Ptr : Ptr;
 }
 
