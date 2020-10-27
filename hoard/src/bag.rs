@@ -64,6 +64,10 @@ impl<T: ?Sized + Pointee, Z, P: Ptr> Bag<T, Z, P> {
         T::metadata(self.metadata)
     }
 
+    pub fn zone(&self) -> &Z {
+        &self.zone
+    }
+
     pub fn try_get_dirty(&self) -> Result<&T, P::Clean> {
         unsafe {
             self.ptr.try_get_dirty::<T>(self.metadata())
