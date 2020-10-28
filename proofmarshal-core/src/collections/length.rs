@@ -11,7 +11,7 @@ use hoard::blob::{Bytes, BytesUninit};
 use hoard::primitive::Primitive;
 
 use crate::unreachable_unchecked;
-use crate::collections::mmr::{Height, NonZeroHeight};
+use crate::collections::height::{Height, NonZeroHeight};
 
 pub trait ToLength {
     fn to_length(&self) -> Length;
@@ -80,7 +80,7 @@ impl Length {
     /// # Examples
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::Length;
+    /// # use proofmarshal_core::collections::length::Length;
     /// assert_eq!(Length(0).checked_add(0),
     ///            Some(Length(0)));
     ///
@@ -95,8 +95,8 @@ impl Length {
     /// Splits the `Length` into left and right, if possible.
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::{InnerLength, NonZeroLength};
-    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// # use proofmarshal_core::collections::length::{InnerLength, NonZeroLength};
+    /// # use proofmarshal_core::collections::height::Height;
     /// assert_eq!(InnerLength::new(0b11).unwrap()
     ///                        .split(),
     ///            (NonZeroLength::new(0b10).unwrap(),
@@ -153,7 +153,8 @@ impl NonZeroLength {
 
     pub fn from_height(height: impl Into<Height>) -> Self {
         let height = height.into();
-        Self::new(1 << height.get()).unwrap()
+        Self::new(1 << height.get())
+             .unwrap_or_else(|| unsafe { unreachable_unchecked!() })
     }
 
     pub const fn get(self) -> usize {
@@ -165,7 +166,7 @@ impl NonZeroLength {
     /// # Examples
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::NonZeroLength;
+    /// # use proofmarshal_core::collections::length::NonZeroLength;
     /// assert_eq!(NonZeroLength::MIN.checked_add(0),
     ///            Some(NonZeroLength::MIN));
     ///
@@ -182,8 +183,8 @@ impl NonZeroLength {
     /// If this is *not* possible, returns the `Height` of the remaining tree.
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::{NonZeroLength, InnerLength};
-    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// # use proofmarshal_core::collections::length::{NonZeroLength, InnerLength};
+    /// # use proofmarshal_core::collections::height::Height;
     /// assert_eq!(NonZeroLength::new(0b11).unwrap()
     ///                          .try_into_inner_length(),
     ///            Ok(InnerLength::new(0b11).unwrap()));
@@ -199,7 +200,8 @@ impl NonZeroLength {
     pub fn try_into_inner_length(self) -> Result<InnerLength, Height> {
         let lsb = self.get().trailing_zeros() as u8;
         InnerLength::new(self.get())
-            .ok_or(Height::new(lsb).unwrap())
+            .ok_or(Height::new(lsb)
+                          .unwrap_or_else(|| unsafe { unreachable_unchecked!() }))
     }
 
     /// Returns the minimum height tree within this length.
@@ -207,8 +209,8 @@ impl NonZeroLength {
     /// # Examples
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::InnerLength;
-    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// # use proofmarshal_core::collections::length::InnerLength;
+    /// # use proofmarshal_core::collections::height::Height;
     /// assert_eq!(InnerLength::new(0b11).unwrap()
     ///                        .min_height(),
     ///            Height::new(0).unwrap());
@@ -219,7 +221,8 @@ impl NonZeroLength {
     /// ```
     pub fn min_height(self) -> Height {
         let r = self.get().trailing_zeros() as u8;
-        r.try_into().unwrap()
+        r.try_into()
+         .unwrap_or_else(|_| unsafe { unreachable_unchecked!() })
     }
 
     /// Returns the maximum height tree within this length.
@@ -227,8 +230,8 @@ impl NonZeroLength {
     /// # Examples
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::InnerLength;
-    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// # use proofmarshal_core::collections::length::InnerLength;
+    /// # use proofmarshal_core::collections::height::Height;
     /// assert_eq!(InnerLength::new(0b11).unwrap()
     ///                        .max_height(),
     ///            Height::new(1).unwrap());
@@ -239,7 +242,8 @@ impl NonZeroLength {
     /// ```
     pub fn max_height(self) -> Height {
         let r = (usize::MAX.count_ones() - 1 - self.get().leading_zeros()) as u8;
-        r.try_into().unwrap()
+        r.try_into()
+         .unwrap_or_else(|_| unsafe { unreachable_unchecked!() })
     }
 }
 
@@ -253,7 +257,7 @@ impl InnerLength {
     /// Creates a new `InnerLength`.
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::InnerLength;
+    /// # use proofmarshal_core::collections::length::InnerLength;
     /// assert_eq!(InnerLength::new(0), None);
     /// assert_eq!(InnerLength::new(0b1), None);
     /// assert_eq!(InnerLength::new(0b10), None);
@@ -280,7 +284,7 @@ impl InnerLength {
     /// # Examples
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::{InnerLength, NonZeroLength};
+    /// # use proofmarshal_core::collections::length::{InnerLength, NonZeroLength};
     /// assert_eq!(InnerLength::new(0b11).unwrap()
     ///                        .checked_add(0b100),
     ///            Ok(InnerLength::new(0b111).unwrap()));
@@ -301,8 +305,8 @@ impl InnerLength {
     /// Splits the `InnerLength` into left and right.
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::{InnerLength, NonZeroLength};
-    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// # use proofmarshal_core::collections::length::{InnerLength, NonZeroLength};
+    /// # use proofmarshal_core::collections::height::Height;
     /// assert_eq!(InnerLength::new(0b11).unwrap()
     ///                        .split(),
     ///            (NonZeroLength::new(0b10).unwrap(),
@@ -332,8 +336,8 @@ impl InnerLength {
     /// # Examples
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::InnerLength;
-    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// # use proofmarshal_core::collections::length::InnerLength;
+    /// # use proofmarshal_core::collections::height::Height;
     /// assert_eq!(InnerLength::new(0b11).unwrap()
     ///                        .min_height(),
     ///            Height::new(0).unwrap());
@@ -344,7 +348,8 @@ impl InnerLength {
     /// ```
     pub fn min_height(self) -> Height {
         let r = self.get().trailing_zeros() as u8;
-        r.try_into().unwrap()
+        r.try_into()
+         .unwrap_or_else(|_| unsafe { unreachable_unchecked!() })
     }
 
     /// Returns the maximum height tree within this length.
@@ -352,8 +357,8 @@ impl InnerLength {
     /// # Examples
     ///
     /// ```
-    /// # use proofmarshal_core::collections::mmr::length::InnerLength;
-    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// # use proofmarshal_core::collections::length::InnerLength;
+    /// # use proofmarshal_core::collections::height::Height;
     /// assert_eq!(InnerLength::new(0b11).unwrap()
     ///                        .max_height(),
     ///            Height::new(1).unwrap());
@@ -364,7 +369,8 @@ impl InnerLength {
     /// ```
     pub fn max_height(self) -> Height {
         let r = (usize::MAX.count_ones() - 1 - self.get().leading_zeros()) as u8;
-        r.try_into().unwrap()
+        r.try_into()
+         .unwrap_or_else(|_| unsafe { unreachable_unchecked!() })
     }
 }
 

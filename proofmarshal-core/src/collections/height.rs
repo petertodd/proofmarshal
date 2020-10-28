@@ -7,6 +7,7 @@ use std::cmp;
 use thiserror::Error;
 
 use crate::commit::{Commit, WriteVerbatim};
+use crate::unreachable_unchecked;
 
 /// The height of a perfect binary tree.
 ///
@@ -46,24 +47,28 @@ impl<T: ?Sized + ToNonZeroHeight> ToHeight for T {
 // ----- conversions ------
 
 impl From<NonZeroHeight> for Height {
+    #[inline(always)]
     fn from(height: NonZeroHeight) -> Height {
         Self(height.0.get())
     }
 }
 
 impl From<Height> for u8 {
+    #[inline(always)]
     fn from(height: Height) -> u8 {
         height.0
     }
 }
 
 impl From<NonZeroHeight> for NonZeroU8 {
+    #[inline(always)]
     fn from(height: NonZeroHeight) -> Self {
         height.0
     }
 }
 
 impl From<NonZeroHeight> for u8 {
+    #[inline(always)]
     fn from(height: NonZeroHeight) -> Self {
         height.0.get()
     }
@@ -76,6 +81,7 @@ pub struct HeightError;
 
 impl TryFrom<Height> for NonZeroHeight {
     type Error = HeightError;
+    #[inline(always)]
     fn try_from(n: Height) -> Result<Self, Self::Error> {
         n.assert_valid();
         match n.0 {
@@ -87,6 +93,7 @@ impl TryFrom<Height> for NonZeroHeight {
 
 impl TryFrom<u8> for Height {
     type Error = HeightError;
+    #[inline(always)]
     fn try_from(n: u8) -> Result<Self, Self::Error> {
         Self::new(n).ok_or(HeightError)
     }
@@ -94,6 +101,7 @@ impl TryFrom<u8> for Height {
 
 impl TryFrom<usize> for Height {
     type Error = HeightError;
+    #[inline(always)]
     fn try_from(n: usize) -> Result<Self, Self::Error> {
         u8::try_from(n).ok()
            .and_then(Height::new)
@@ -103,6 +111,7 @@ impl TryFrom<usize> for Height {
 
 impl TryFrom<usize> for NonZeroHeight {
     type Error = HeightError;
+    #[inline(always)]
     fn try_from(n: usize) -> Result<Self, Self::Error> {
         u8::try_from(n).ok()
            .and_then(NonZeroU8::new)
@@ -113,10 +122,11 @@ impl TryFrom<usize> for NonZeroHeight {
 
 impl Height {
     pub const MAX: u8 = 63;
+    pub const ZERO: Self = unsafe { Self::new_unchecked(0) };
 
     #[inline(always)]
     fn assert_valid(&self) {
-        assert!(self.0 <= Self::MAX);
+        debug_assert!(self.0 <= Self::MAX);
     }
 
     #[inline(always)]
@@ -146,7 +156,9 @@ impl Height {
     #[inline]
     pub fn try_increment(self) -> Option<NonZeroHeight> {
         if self.0 < Self::MAX {
-            Some(NonZeroHeight::new(NonZeroU8::new(self.0 + 1).unwrap()).unwrap())
+            let n = unsafe { NonZeroU8::new_unchecked(self.0 + 1) };
+            let n = unsafe { NonZeroHeight::new_unchecked(n) };
+            Some(n)
         } else {
             assert!(self.0 == Self::MAX);
             None
@@ -169,12 +181,18 @@ impl NonZeroHeight {
         }
     }
 
+    #[inline(always)]
+    pub fn get(self) -> NonZeroU8 {
+        self.0
+    }
+
     pub const unsafe fn new_unchecked(n: NonZeroU8) -> Self {
         Self(n)
     }
 
     pub fn decrement(self) -> Height {
-        Height::new(self.0.get() - 1).unwrap()
+        Height::new(self.0.get() - 1)
+               .unwrap_or_else(|| unsafe { unreachable_unchecked!() })
     }
 }
 

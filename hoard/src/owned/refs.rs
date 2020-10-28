@@ -19,3 +19,27 @@ impl<T: ?Sized + IntoOwned> Deref for Ref<'_, T> {
         }
     }
 }
+
+impl<A: ?Sized + IntoOwned, B: ?Sized + IntoOwned> PartialEq<Ref<'_, B>> for Ref<'_, A>
+where A: PartialEq<B>
+{
+    fn eq(&self, other: &Ref<'_, B>) -> bool {
+        self.deref() == other.deref()
+    }
+
+    fn ne(&self, other: &Ref<'_, B>) -> bool {
+        self.deref() != other.deref()
+    }
+}
+
+impl<A: ?Sized + IntoOwned, B: ?Sized + IntoOwned> PartialEq<&'_ B> for Ref<'_, A>
+where A: PartialEq<B>
+{
+    fn eq(&self, other: &&B) -> bool {
+        self.deref() == *other
+    }
+
+    fn ne(&self, other: &&B) -> bool {
+        self.deref() != *other
+    }
+}

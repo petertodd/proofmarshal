@@ -130,7 +130,7 @@ where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.debug_struct(any::type_name::<Self>())
-            .field("ptr", &self.ptr)
+            .field("ptr", &self.try_get_dirty().map_err(P::from_clean))
             .field("metadata", &self.metadata())
             .field("zone", &self.zone)
             .finish()

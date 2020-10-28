@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::borrow::{Borrow, BorrowMut};
 use std::fmt;
 use std::mem::{self, ManuallyDrop};
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 use std::convert::TryFrom;
 use std::ptr;
 
@@ -19,327 +19,784 @@ use hoard::bag::Bag;
 
 use crate::collections::merklesum::MerkleSum;
 use crate::commit::{Commit, WriteVerbatim, Digest};
+use crate::unreachable_unchecked;
 
-pub mod height;
-use self::height::*;
+use super::height::*;
+use super::length::*;
 
 mod leaf;
 pub use self::leaf::*;
 
-mod tip;
-pub use self::tip::*;
+mod raw;
+use self::raw::*;
+pub use self::raw::Kind;
 
-pub struct SumPerfectTree<T, S, Z = (), P: Ptr = <Z as Zone>::Ptr, H: ?Sized + ToHeight = Height> {
-    state: State<T, S, Z, P>,
-    height: H,
+#[repr(C)]
+pub struct InnerNode<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    raw: InnerNodeRaw<T, Z, P>,
+    height: NonZeroHeight,
 }
 
-pub type SumPerfectTreeDyn<T, S, Z = (), P = <Z as Zone>::Ptr> = SumPerfectTree<T, S, Z, P, HeightDyn>;
-
-pub type PerfectTree<T, Z = (), P = <Z as Zone>::Ptr> = SumPerfectTree<T, (), Z, P>;
-pub type PerfectTreeDyn<T, Z = (), P = <Z as Zone>::Ptr> = SumPerfectTree<T, (), Z, P, HeightDyn>;
-
-
-#[derive(Debug)]
-pub enum Kind<Leaf, Tip> {
-    Leaf(Leaf),
-    Tip(Tip),
+#[repr(C)]
+pub struct InnerNodeDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    raw: InnerNodeRaw<T, Z, P>,
+    height: NonZeroHeightDyn,
 }
 
-union State<T, S, Z = (), P: Ptr = <Z as Zone>::Ptr> {
-    leaf: ManuallyDrop<Leaf<T, S, Z, P>>,
-    tip: ManuallyDrop<Tip<T, S, Z, P, DummyNonZeroHeight>>,
+#[repr(C)]
+pub struct InnerTip<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    raw: InnerTipRaw<T, Z, P>,
+    height: NonZeroHeight,
 }
 
-#[derive(Debug)]
-pub enum JoinError<Left, Right = Left> {
-    HeightMismatch {
-        left: Left,
-        right: Right,
-    },
-    HeightOverflow {
-        left: Left,
-        right: Right,
-    },
+#[repr(C)]
+pub struct InnerTipDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    raw: InnerTipRaw<T, Z, P>,
+    height: NonZeroHeightDyn,
 }
 
-impl<T, S, Z: Zone> SumPerfectTree<T, S, Z> {
-    pub fn new_leaf_in(value: T, zone: impl BorrowMut<Z>) -> Self
-        where Z: Alloc
-    {
-        Leaf::new_in(value, zone).into()
+#[repr(C)]
+pub struct PerfectTree<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    raw: PerfectTreeRaw<T, Z, P>,
+    height: Height,
+}
+
+#[repr(C)]
+pub struct PerfectTreeDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    raw: PerfectTreeRaw<T, Z, P>,
+    height: HeightDyn,
+}
+
+impl<T, Z, P: Ptr> PerfectTree<T, Z, P> {
+    pub fn from_leaf(leaf: Leaf<T, Z, P>) -> Self {
+        unsafe {
+            Self::from_raw_parts(
+                PerfectTreeRaw::from_leaf(leaf),
+                Height::ZERO,
+            )
+        }
     }
 
-    pub fn try_join(self, right: Self) -> Result<Self, JoinError<Self, Self>>
-        where Z: Alloc
+    pub fn from_tip(tip: InnerTip<T, Z, P>) -> Self {
+        let (tip, height) = tip.into_raw_parts();
+        let tip = PerfectTreeRaw::from_tip(tip);
+        let height = Height::from(height);
+        unsafe {
+            Self::from_raw_parts(tip, height)
+        }
+    }
+
+    pub unsafe fn from_raw_parts(raw: PerfectTreeRaw<T, Z, P>, height: Height) -> Self {
+        Self {
+            raw,
+            height,
+        }
+    }
+
+    pub fn into_raw_parts(self) -> (PerfectTreeRaw<T, Z, P>, Height) {
+        let this = ManuallyDrop::new(self);
+
+        unsafe {
+            (ptr::read(&this.raw),
+             ptr::read(&this.height))
+        }
+    }
+
+    pub fn into_kind(self) -> Kind<Leaf<T, Z, P>, InnerTip<T, Z, P>> {
+        todo!()
+    }
+}
+
+impl<T, Z: Zone> PerfectTreeDyn<T, Z>
+where T: Load
+{
+    pub fn get<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, T>>, Z::Error>
+        where Z: Get + AsZone<T::Zone>
     {
-        if self.height() != right.height() {
-            Err(JoinError::HeightMismatch { left: self, right })
-        } else if let Some(_new_height) = self.height().try_increment() {
-            let zone = self.zone().clone();
-            let node = InnerNode::try_join(self, right)
-                                 .ok().expect("error conditions already checked");
-            let tip = Tip::new_in(node, zone);
-            Ok(Self::from(tip))
-        } else {
-            Err(JoinError::HeightOverflow { left: self, right })
+        match self.get_leaf(idx)? {
+            None => Ok(None),
+            Some(Ref::Borrowed(leaf)) => Ok(Some(leaf.get()?)),
+            Some(Ref::Owned(_leaf)) => todo!(),
+        }
+    }
+
+    pub fn get_mut(&mut self, idx: usize) -> Result<Option<&mut T>, Z::Error>
+        where Z: GetMut + AsZone<T::Zone>
+    {
+        match self.get_leaf_mut(idx)? {
+            None => Ok(None),
+            Some(leaf) => Ok(Some(leaf.get_mut()?)),
+        }
+    }
+
+    pub fn get_leaf<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, Leaf<T, Z>>>, Z::Error>
+        where Z: Get
+    {
+        match self.kind() {
+            Kind::Leaf(leaf) if idx == 0 => {
+                Ok(Some(Ref::Borrowed(leaf)))
+            },
+            Kind::Leaf(_) => Ok(None),
+            Kind::Tip(tip) => tip.get_leaf(idx),
+        }
+    }
+
+    pub fn get_leaf_mut(&mut self, idx: usize) -> Result<Option<&mut Leaf<T, Z>>, Z::Error>
+        where Z: GetMut
+    {
+        match self.kind_mut() {
+            Kind::Leaf(leaf) if idx == 0 => {
+                Ok(Some(leaf))
+            },
+            Kind::Leaf(_) => Ok(None),
+            Kind::Tip(tip) => tip.get_leaf_mut(idx),
         }
     }
 }
 
-impl<T, S, Z, P: Ptr, H: ?Sized + ToHeight> SumPerfectTree<T, S, Z, P, H> {
+use hoard::zone::heap::Heap;
+pub fn test_get<'a>(tree: &'a PerfectTreeDyn<u8, Heap>, idx: usize) -> Result<Option<Ref<'a, u8>>, !> {
+    tree.get(idx)
+}
+
+pub fn test_get_leaf<'a>(tree: &'a PerfectTreeDyn<u8, Heap>, idx: usize) -> Option<Ref<'a, Leaf<u8, Heap>>> {
+    tree.get_leaf(idx).into_ok()
+}
+
+pub fn test_get_leaf_mut<'a>(tree: &mut PerfectTreeDyn<u8, Heap>, idx: usize) -> Option<&mut Leaf<u8, Heap>> {
+    tree.get_leaf_mut(idx).into_ok()
+}
+
+pub fn test_drop(tree: PerfectTree<u8, Heap>) {
+    let _ = tree;
+}
+
+impl<T, Z, P: Ptr> PerfectTreeDyn<T, Z, P> {
     pub fn height(&self) -> Height {
         self.height.to_height()
     }
 
-    fn zone(&self) -> &Z {
-        match self.kind() {
-            Kind::Tip(tip) => &tip.zone,
-            Kind::Leaf(leaf) => leaf.bag.zone(),
-        }
+    pub fn kind(&self) -> Kind<&Leaf<T, Z, P>, &InnerTipDyn<T, Z, P>> {
+        unsafe { self.raw.kind(self.height()) }
     }
 
-    pub fn kind(&self) -> Kind<&Leaf<T, S, Z, P>, &TipDyn<T, S, Z, P>> {
-        if let Ok(height) = NonZeroHeight::try_from(self.height()) {
-            unsafe {
-                let tip = &*self.state.tip;
-                Kind::Tip(
-                    &*TipDyn::make_fat_ptr(tip as *const _ as *const _, height)
-                )
-            }
-        } else {
-            unsafe {
-                Kind::Leaf(&self.state.leaf)
-            }
-        }
+    pub fn kind_mut(&mut self) -> Kind<&mut Leaf<T, Z, P>, &mut InnerTipDyn<T, Z, P>> {
+        unsafe { self.raw.kind_mut(self.height()) }
+    }
+}
+
+pub enum InnerJoinError<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    HeightOverflow {
+        left: PerfectTree<T, Z, P>,
+        right: PerfectTree<T, Z, P>,
+    },
+    HeightMismatch {
+        left: PerfectTree<T, Z, P>,
+        right: PerfectTree<T, Z, P>,
+    },
+}
+
+impl<T, Z: Zone> InnerTip<T, Z> {
+    pub fn try_join_in(
+        left: PerfectTree<T, Z>,
+        right: PerfectTree<T, Z>,
+        mut zone: impl BorrowMut<Z>,
+    ) -> Result<Self, InnerJoinError<T, Z>>
+        where Z: Alloc
+    {
+        let node = InnerNode::try_join(left, right)?;
+
+        Ok(Self::new_unchecked(None, zone.borrow_mut().alloc(node)))
     }
 
-    pub fn kind_mut(&mut self) -> Kind<&mut Leaf<T, S, Z, P>, &mut TipDyn<T, S, Z, P>> {
-        if let Ok(height) = NonZeroHeight::try_from(self.height()) {
-            unsafe {
-                let tip = &mut *self.state.tip;
-                Kind::Tip(
-                    &mut *TipDyn::make_fat_ptr_mut(tip as *mut _ as *mut _, height)
-                )
-            }
-        } else {
-            unsafe {
-                Kind::Leaf(&mut self.state.leaf)
-            }
+    pub fn new_unchecked(digest: Option<Digest>, bag: Bag<InnerNodeDyn<T, Z>, Z>) -> Self {
+        let (ptr, height, zone) = bag.into_raw_parts();
+
+        let raw = InnerTipRaw::from_raw_parts(digest, zone, ptr);
+        unsafe {
+            Self::from_raw_parts(raw, height)
         }
     }
 }
 
-impl<T, S, Z, P: Ptr, H: ToHeight> SumPerfectTree<T, S, Z, P, H> {
-    pub(crate) fn strip_height(self) -> SumPerfectTree<T, S, Z, P, DummyHeight> {
+impl<T, Z, P: Ptr> InnerTip<T, Z, P> {
+    pub unsafe fn from_raw_parts(raw: InnerTipRaw<T, Z, P>, height: NonZeroHeight) -> Self {
+        Self {
+            raw,
+            height,
+        }
+    }
+
+    pub fn into_raw_parts(self) -> (InnerTipRaw<T, Z, P>, NonZeroHeight) {
         let this = ManuallyDrop::new(self);
-        SumPerfectTree {
-            state: unsafe { ptr::read(&this.state) },
-            height: DummyHeight,
+
+        unsafe {
+            (ptr::read(&this.raw),
+             ptr::read(&this.height))
         }
     }
 }
 
-impl<T, S, Z, P: Ptr> SumPerfectTree<T, S, Z, P> {
-    pub fn into_kind(self) -> Kind<Leaf<T, S, Z, P>, Tip<T, S, Z, P>> {
-        let mut this = ManuallyDrop::new(self);
-        match this.kind_mut() {
-            Kind::Leaf(leaf) => Kind::Leaf(unsafe { ptr::read(leaf) }),
-            Kind::Tip(_) => {
-                todo!()
+impl<T, Z: Zone> InnerTipDyn<T, Z>
+where T: Load
+{
+    pub fn get_leaf<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, Leaf<T, Z>>>, Z::Error>
+        where Z: Get
+    {
+        if idx < self.len() {
+            match self.get_node()? {
+                Ref::Borrowed(node) => node.get_leaf(idx),
+                Ref::Owned(_node) => todo!(),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_leaf_mut(&mut self, idx: usize) -> Result<Option<&mut Leaf<T, Z>>, Z::Error>
+        where Z: GetMut
+    {
+        if idx < self.len() {
+            self.get_node_mut()?
+                .get_leaf_mut(idx)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_node<'a>(&'a self) -> Result<Ref<'a, InnerNodeDyn<T, Z>>, Z::Error>
+        where Z: Get
+    {
+        let r = unsafe {
+            self.raw.zone.get_unchecked(&self.raw.ptr, self.height())?
+        };
+        Ok(r.trust())
+    }
+
+    pub fn get_node_mut(&mut self) -> Result<&mut InnerNodeDyn<T, Z>, Z::Error>
+        where Z: GetMut
+    {
+        let height = self.height();
+        let r = unsafe {
+            self.raw.zone.get_unchecked_mut(&mut self.raw.ptr, height)?
+        };
+        Ok(r.trust())
+    }
+}
+
+impl<T, Z, P: Ptr> InnerTipDyn<T, Z, P> {
+    pub fn height(&self) -> NonZeroHeight {
+        self.height.to_nonzero_height()
+    }
+
+    pub fn len(&self) -> NonZeroLength {
+        NonZeroLength::from_height(self.height())
+    }
+
+    pub fn digest(&self) -> &Digest {
+        match self.try_digest() {
+            Some(digest) => digest,
+            None => self.calc_digest(),
+        }
+    }
+
+    #[inline(never)]
+    fn calc_digest(&self) -> &Digest {
+        self.raw.digest.get_or_init(move || {
+            todo!()
+        })
+    }
+
+    pub fn try_digest(&self) -> Option<&Digest> {
+        self.raw.digest.get()
+    }
+
+    pub fn try_get_dirty_node(&self) -> Result<&InnerNodeDyn<T, Z, P>, P::Clean> {
+        unsafe {
+            self.raw.ptr.try_get_dirty(self.height())
+        }
+    }
+}
+
+impl<T, Z: Zone> InnerNode<T, Z> {
+    pub fn try_join(
+        left: PerfectTree<T, Z>,
+        right: PerfectTree<T, Z>
+    ) -> Result<Self, InnerJoinError<T, Z>>
+    {
+        if left.height() != right.height() {
+            Err(InnerJoinError::HeightMismatch { left, right })
+        } else if let Some(height) = left.height().try_increment() {
+            let (left, _) = left.into_raw_parts();
+            let (right, _) = right.into_raw_parts();
+
+            Ok(unsafe {
+                Self::from_raw_parts(InnerNodeRaw::new(left, right), height)
+            })
+        } else {
+            Err(InnerJoinError::HeightOverflow { left, right })
+        }
+    }
+}
+
+impl<T, Z, P: Ptr> InnerNode<T, Z, P> {
+    pub unsafe fn from_raw_parts(raw: InnerNodeRaw<T, Z, P>, height: NonZeroHeight) -> Self {
+        Self {
+            raw,
+            height,
+        }
+    }
+
+    pub fn into_raw_parts(self) -> (InnerNodeRaw<T, Z, P>, NonZeroHeight) {
+        let this = ManuallyDrop::new(self);
+
+        unsafe {
+            (ptr::read(&this.raw),
+             ptr::read(&this.height))
+        }
+    }
+}
+
+impl<T, Z: Zone> InnerNodeDyn<T, Z>
+where T: Load
+{
+    pub fn get_leaf<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, Leaf<T, Z>>>, Z::Error>
+        where Z: Get
+    {
+        let len = usize::from(self.len());
+        if idx < len / 2 {
+            self.left().get_leaf(idx)
+        } else if idx < len {
+            self.right().get_leaf(idx - (len / 2))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_leaf_mut(&mut self, idx: usize) -> Result<Option<&mut Leaf<T, Z>>, Z::Error>
+        where Z: GetMut
+    {
+        let len = usize::from(self.len());
+        if idx < len / 2 {
+            self.left_mut().get_leaf_mut(idx)
+        } else if idx < len {
+            self.right_mut().get_leaf_mut(idx - (len / 2))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl<T, Z, P: Ptr> InnerNodeDyn<T, Z, P> {
+    pub fn height(&self) -> NonZeroHeight {
+        self.height.to_nonzero_height()
+    }
+
+    pub fn len(&self) -> NonZeroLength {
+        NonZeroLength::from_height(self.height())
+    }
+
+    pub fn left(&self) -> &PerfectTreeDyn<T, Z, P> {
+        unsafe { self.raw.left(self.height()) }
+    }
+
+    pub fn left_mut(&mut self) -> &mut PerfectTreeDyn<T, Z, P> {
+        unsafe { self.raw.left_mut(self.height()) }
+    }
+
+    pub fn right(&self) -> &PerfectTreeDyn<T, Z, P> {
+        unsafe { self.raw.right(self.height()) }
+    }
+
+    pub fn right_mut(&mut self) -> &mut PerfectTreeDyn<T, Z, P> {
+        unsafe { self.raw.right_mut(self.height()) }
+    }
+}
+
+
+// ------- pointee stuff ----------
+
+macro_rules! impl_pointee {
+    ($t:ident, $meta_ty:ty) => {
+        impl<T, Z, P: Ptr> Pointee for $t<T, Z, P> {
+            type Metadata = $meta_ty;
+            type LayoutError = !;
+
+            fn metadata(ptr: *const Self) -> Self::Metadata {
+                unsafe {
+                    let ptr: *const [()] = mem::transmute(ptr);
+                    let len: usize = ptr.len();
+
+                    <$meta_ty>::try_from(len)
+                               .unwrap_or_else(|_|
+                                   unreachable_unchecked!("invalid metadata")
+                               )
+                }
+            }
+
+            fn make_fat_ptr(thin: *const (), height: Self::Metadata) -> *const Self {
+                let height = height.get();
+                let height: u8 = height.into();
+                let ptr = ptr::slice_from_raw_parts(thin, height.into());
+                unsafe { mem::transmute(ptr) }
+            }
+
+            fn make_fat_ptr_mut(thin: *mut (), height: Self::Metadata) -> *mut Self {
+                let height = height.get();
+                let height: u8 = height.into();
+                let ptr = ptr::slice_from_raw_parts_mut(thin, height.into());
+                unsafe { mem::transmute(ptr) }
             }
         }
     }
 }
 
-impl<T, S, Z, P: Ptr, H: ?Sized + ToHeight> fmt::Debug for SumPerfectTree<T, S, Z, P, H>
+impl_pointee!(PerfectTreeDyn, Height);
+impl_pointee!(InnerTipDyn, NonZeroHeight);
+impl_pointee!(InnerNodeDyn, NonZeroHeight);
+
+// --------- deref impls ----------
+
+macro_rules! impl_deref {
+    ($t:ident => $u:ident) => {
+        impl<T, Z, P: Ptr> Borrow<$u<T, Z, P>> for $t<T, Z, P> {
+            fn borrow(&self) -> &$u<T, Z, P> {
+                unsafe {
+                    &*$u::make_fat_ptr(self as *const _ as *const (), self.height)
+                }
+            }
+        }
+
+        impl<T, Z, P: Ptr> BorrowMut<$u<T, Z, P>> for $t<T, Z, P> {
+            fn borrow_mut(&mut self) -> &mut $u<T, Z, P> {
+                unsafe {
+                    &mut *$u::make_fat_ptr_mut(self as *mut _ as *mut (), self.height)
+                }
+            }
+        }
+
+        unsafe impl<T, Z, P: Ptr> Take<$u<T, Z, P>> for $t<T, Z, P> {
+            fn take_unsized<F, R>(self, f: F) -> R
+                where F: FnOnce(Own<$u<T, Z, P>>) -> R
+            {
+                let mut this = ManuallyDrop::new(self);
+                let this_dyn: &mut $u<T, Z, P> = this.deref_mut().borrow_mut();
+
+                unsafe {
+                    f(Own::new_unchecked(this_dyn))
+                }
+            }
+        }
+
+        impl<T, Z, P: Ptr> IntoOwned for $u<T, Z, P> {
+            type Owned = $t<T, Z, P>;
+
+            fn into_owned(self: Own<'_, Self>) -> Self::Owned {
+                let this = Own::leak(self);
+                unsafe {
+                    $t {
+                        height: this.height(),
+                        raw: ptr::read(&this.raw),
+                    }
+                }
+            }
+        }
+
+        impl<T, Z, P: Ptr> Deref for $t<T, Z, P> {
+            type Target = $u<T, Z, P>;
+
+            fn deref(&self) -> &Self::Target {
+                self.borrow()
+            }
+        }
+
+        impl<T, Z, P: Ptr> DerefMut for $t<T, Z, P> {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                self.borrow_mut()
+            }
+        }
+    }
+}
+
+impl_deref!(PerfectTree => PerfectTreeDyn);
+impl_deref!(InnerTip => InnerTipDyn);
+impl_deref!(InnerNode => InnerNodeDyn);
+
+// -------- drop impls ------------
+impl<T, Z, P: Ptr> Drop for InnerNode<T, Z, P> {
+    fn drop(&mut self) {
+        unsafe { self.raw.dealloc(self.height()) }
+    }
+}
+
+impl<T, Z, P: Ptr> Drop for InnerNodeDyn<T, Z, P> {
+    fn drop(&mut self) {
+        unsafe { self.raw.dealloc(self.height()) }
+    }
+}
+
+impl<T, Z, P: Ptr> Drop for InnerTip<T, Z, P> {
+    fn drop(&mut self) {
+        unsafe { self.raw.dealloc(self.height()) }
+    }
+}
+
+impl<T, Z, P: Ptr> Drop for InnerTipDyn<T, Z, P> {
+    fn drop(&mut self) {
+        unsafe { self.raw.dealloc(self.height()) }
+    }
+}
+
+impl<T, Z, P: Ptr> Drop for PerfectTree<T, Z, P> {
+    fn drop(&mut self) {
+        unsafe { self.raw.dealloc(self.height()) }
+    }
+}
+
+impl<T, Z, P: Ptr> Drop for PerfectTreeDyn<T, Z, P> {
+    fn drop(&mut self) {
+        unsafe { self.raw.dealloc(self.height()) }
+    }
+}
+
+// ---------- Debug impls ----------
+impl<T, Z, P: Ptr> fmt::Debug for PerfectTreeDyn<T, Z, P>
 where T: fmt::Debug,
-      S: fmt::Debug,
       Z: fmt::Debug,
       P: fmt::Debug,
-      H: fmt::Debug,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.kind().fmt(f)
-    }
-}
-
-// ------ drop impls ------------
-
-impl<T, S, Z, P: Ptr, H: ?Sized + ToHeight> Drop for SumPerfectTree<T, S, Z, P, H> {
-    fn drop(&mut self) {
-        match self.kind_mut() {
-            Kind::Leaf(leaf) => unsafe { ptr::drop_in_place(leaf) },
-            Kind::Tip(tip) => unsafe { ptr::drop_in_place(tip) },
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind() {
+            Kind::Leaf(leaf) => f.debug_tuple("Leaf")
+                                 .field(leaf)
+                                 .finish(),
+            Kind::Tip(tip) => f.debug_tuple("Tip")
+                               .field(&tip)
+                               .finish(),
         }
     }
 }
 
-impl<T, S, Z, P: Ptr> From<Leaf<T, S, Z, P>> for SumPerfectTree<T, S, Z, P> {
-    fn from(leaf: Leaf<T, S, Z, P>) -> Self {
-        Self {
-            state: State { leaf: ManuallyDrop::new(leaf) },
-            height: Height::new(0).unwrap(),
-        }
+impl<T, Z, P: Ptr> fmt::Debug for PerfectTree<T, Z, P>
+where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.deref().fmt(f)
     }
 }
 
-impl<T, S, Z, P: Ptr> From<Tip<T, S, Z, P>> for SumPerfectTree<T, S, Z, P> {
-    fn from(tip: Tip<T, S, Z, P>) -> Self {
-        Self {
-            height: tip.height().into(),
-            state: State {
-                tip: ManuallyDrop::new(tip.strip_height())
-            },
-        }
+impl<T, Z, P: Ptr> InnerTipDyn<T, Z, P>
+where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+{
+    fn fmt_debug_impl(&self, name: &'static str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(name)
+            .field("digest", &self.raw.digest)
+            .field("zone", &self.raw.zone)
+            .field("ptr", &self.try_get_dirty_node()
+                               .map_err(P::from_clean))
+            .field("height", &self.height())
+            .finish()
     }
 }
 
-impl<T, S, Z, P: Ptr> Pointee for SumPerfectTreeDyn<T, S, Z, P> {
-    type Metadata = Height;
-    type LayoutError = !;
-
-    fn metadata(ptr: *const Self) -> Self::Metadata {
-        unsafe {
-            let ptr: *const [()] = mem::transmute(ptr);
-            let len: usize = ptr.len();
-
-            Height::try_from(len)
-                   .expect("valid metadata")
-        }
-    }
-
-    fn make_fat_ptr(thin: *const (), height: Self::Metadata) -> *const Self {
-        let ptr = ptr::slice_from_raw_parts(thin, height.get().into());
-        unsafe { mem::transmute(ptr) }
-    }
-
-    fn make_fat_ptr_mut(thin: *mut (), height: Self::Metadata) -> *mut Self {
-        let ptr = ptr::slice_from_raw_parts_mut(thin, height.get().into());
-        unsafe { mem::transmute(ptr) }
+impl<T, Z, P: Ptr> fmt::Debug for InnerTipDyn<T, Z, P>
+where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_debug_impl("InnerTipDyn", f)
     }
 }
 
-impl<T, S, Z, P: Ptr> Borrow<SumPerfectTreeDyn<T, S, Z, P>> for SumPerfectTree<T, S, Z, P> {
-    fn borrow(&self) -> &SumPerfectTreeDyn<T, S, Z, P> {
-        unsafe {
-            &*SumPerfectTreeDyn::make_fat_ptr(self as *const _ as *const (), self.height)
-        }
+impl<T, Z, P: Ptr> fmt::Debug for InnerTip<T, Z, P>
+where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_debug_impl("InnerTip", f)
     }
 }
 
-impl<T, S, Z, P: Ptr> BorrowMut<SumPerfectTreeDyn<T, S, Z, P>> for SumPerfectTree<T, S, Z, P> {
-    fn borrow_mut(&mut self) -> &mut SumPerfectTreeDyn<T, S, Z, P> {
-        unsafe {
-            &mut *SumPerfectTreeDyn::make_fat_ptr_mut(self as *mut _ as *mut (), self.height)
-        }
+impl<T, Z, P: Ptr> InnerNodeDyn<T, Z, P>
+where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+{
+    fn fmt_debug_impl(&self, name: &'static str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(name)
+            .field("left", &self.left())
+            .field("right", &self.right())
+            .field("height", &self.height())
+            .finish()
     }
 }
 
-unsafe impl<T, S, Z, P: Ptr> Take<SumPerfectTreeDyn<T, S, Z, P>> for SumPerfectTree<T, S, Z, P> {
-    fn take_unsized<F, R>(self, f: F) -> R
-        where F: FnOnce(Own<SumPerfectTreeDyn<T, S, Z, P>>) -> R
-    {
-        let mut this = ManuallyDrop::new(self);
-        let this_dyn: &mut SumPerfectTreeDyn<T, S, Z, P> = this.deref_mut().borrow_mut();
-
-        unsafe {
-            f(Own::new_unchecked(this_dyn))
-        }
+impl<T, Z, P: Ptr> fmt::Debug for InnerNodeDyn<T, Z, P>
+where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_debug_impl("InnerNodeDyn", f)
     }
 }
 
-impl<T, S, Z, P: Ptr> IntoOwned for SumPerfectTreeDyn<T, S, Z, P> {
-    type Owned = SumPerfectTree<T, S, Z, P>;
-
-    fn into_owned(self: Own<'_, Self>) -> Self::Owned {
-        let this = Own::leak(self);
-
-        unsafe {
-            SumPerfectTree {
-                height: this.height(),
-                state: ptr::read(&this.state),
-            }
-        }
+impl<T, Z, P: Ptr> fmt::Debug for InnerNode<T, Z, P>
+where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_debug_impl("InnerNode", f)
     }
 }
 
-// ----- hoard impls ----
+
+// -------- hoard blob impls --------------
 
 #[derive(Debug, Error)]
 #[error("FIXME")]
-#[doc(hidden)]
-pub enum DecodeSumPerfectTreeBytesError<
-    Leaf: std::error::Error,
-    Tip: std::error::Error,
-    H: std::error::Error,
-> {
-    Leaf(Leaf),
-    Tip(Tip),
-    Height(H),
+pub enum DecodeInnerTipDynBytesError<Zone: fmt::Debug, Ptr: fmt::Debug> {
+    Zone(Zone),
+    Ptr(Ptr),
 }
 
-impl<T, S, Z, P: PtrBlob, H: ToHeight> Blob for SumPerfectTree<T, S, Z, P, H>
+unsafe impl<T, Z, P: PtrBlob> BlobDyn for InnerTipDyn<T, Z, P>
 where T: Blob,
       Z: Blob,
-      S: Blob,
-      H: Blob,
 {
-    const SIZE: usize = H::SIZE + <Tip<T, S, Z, P, DummyNonZeroHeight> as Blob>::SIZE;
-    type DecodeBytesError = DecodeSumPerfectTreeBytesError<
-        <Leaf<T, S, Z, P> as Blob>::DecodeBytesError,
-        <Tip<T, S, Z, P, DummyNonZeroHeight> as Blob>::DecodeBytesError,
-        H::DecodeBytesError,
-    >;
-
-    fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
-        /*
-        dst.write_struct()
-           .write_field(&self.tip_digest.get().unwrap())
-           .write_field(&self.sum.get().unwrap())
-           .write_field(&self.ptr)
-           .write_field(&self.zone)
-           .write_field(&self.height)
-           .done()
-        */ todo!()
+    type DecodeBytesError = DecodeInnerTipDynBytesError<Z::DecodeBytesError, P::DecodeBytesError>;
+    fn try_size(_: Self::Metadata) -> Result<usize, !> {
+        todo!()
     }
 
-    fn decode_bytes(src: hoard::blob::Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
-        /*
-        let mut fields = src.struct_fields();
+    fn encode_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> hoard::blob::Bytes<'a, Self> { todo!() }
 
-        let tip_digest = fields.trust_field::<Digest>().into_ok();
-        let sum = fields.trust_field::<S>().map_err(DecodeSumPerfectTreeBytesError::Sum)?;
-        let ptr = fields.trust_field::<P>().map_err(DecodeSumPerfectTreeBytesError::Ptr)?;
-        let zone = fields.trust_field::<Z>().map_err(DecodeSumPerfectTreeBytesError::Zone)?;
-        let height = fields.trust_field::<H>().map_err(DecodeSumPerfectTreeBytesError::Height)?;
-        fields.assert_done();
+    fn decode_bytes(_: hoard::blob::Bytes<'_, Self>) -> std::result::Result<MaybeValid<<Self as IntoOwned>::Owned>, <Self as BlobDyn>::DecodeBytesError> { todo!() }
+}
 
-        Ok(Self {
-            marker: PhantomData,
-            tip_digest: Some(tip_digest).into(),
-            sum: Some(sum).into(),
-            ptr,
-            zone,
-            height,
-        }.into())
-        */ todo!()
+#[derive(Debug, Error)]
+#[error("FIXME")]
+pub enum DecodeInnerTipBytesError<Zone: fmt::Debug, Ptr: fmt::Debug> {
+    Height(<NonZeroHeight as Blob>::DecodeBytesError),
+    Inner(DecodeInnerTipDynBytesError<Zone, Ptr>),
+}
+
+impl<T, Z, P: PtrBlob> Blob for InnerTip<T, Z, P>
+where T: Blob,
+      Z: Blob,
+{
+    const SIZE: usize = <NonZeroHeight as Blob>::SIZE + <Digest as Blob>::SIZE + <Z as Blob>::SIZE + <P as Blob>::SIZE;
+    type DecodeBytesError = DecodeInnerTipBytesError<Z::DecodeBytesError, P::DecodeBytesError>;
+
+    fn encode_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> hoard::blob::Bytes<'a, Self> { todo!() }
+
+    fn decode_bytes(_: hoard::blob::Bytes<'_, Self>) -> std::result::Result<MaybeValid<<Self as IntoOwned>::Owned>, <Self as BlobDyn>::DecodeBytesError> { todo!() }
+}
+
+#[derive(Debug, Error)]
+#[error("FIXME")]
+pub enum DecodeInnerNodeDynBytesError<Left: fmt::Debug, Right: fmt::Debug> {
+    Left(Left),
+    Right(Right),
+}
+
+unsafe impl<T, Z, P: PtrBlob> BlobDyn for InnerNodeDyn<T, Z, P>
+where T: Blob,
+      Z: Blob,
+{
+    type DecodeBytesError = DecodeInnerNodeDynBytesError<!, !>;
+    fn try_size(_: Self::Metadata) -> Result<usize, !> {
+        todo!()
+    }
+
+    fn encode_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> hoard::blob::Bytes<'a, Self> { todo!() }
+
+    fn decode_bytes(_: hoard::blob::Bytes<'_, Self>) -> std::result::Result<MaybeValid<<Self as IntoOwned>::Owned>, <Self as BlobDyn>::DecodeBytesError> { todo!() }
+}
+
+#[derive(Debug, Error)]
+#[error("FIXME")]
+pub enum PerfectTreeDynBytesError<Leaf: fmt::Debug, Tip: fmt::Debug> {
+    Leaf(Leaf),
+    Tip(Tip),
+}
+
+unsafe impl<T, Z, P: PtrBlob> BlobDyn for PerfectTreeDyn<T, Z, P>
+where T: Blob,
+      Z: Blob,
+{
+    type DecodeBytesError = PerfectTreeDynBytesError<
+        <Leaf<T, Z, P> as Blob>::DecodeBytesError,
+        <InnerTipDyn<T, Z, P> as BlobDyn>::DecodeBytesError,
+    >;
+
+    fn try_size(_: Self::Metadata) -> Result<usize, !> {
+        todo!()
+    }
+
+    fn encode_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> hoard::blob::Bytes<'a, Self> { todo!() }
+
+    fn decode_bytes(_: hoard::blob::Bytes<'_, Self>) -> std::result::Result<MaybeValid<<Self as IntoOwned>::Owned>, <Self as BlobDyn>::DecodeBytesError> { todo!() }
+}
+
+#[derive(Debug, Error)]
+#[error("FIXME")]
+pub enum PerfectTreeBytesError<Leaf: fmt::Debug, Tip: fmt::Debug> {
+    Height(<Height as Blob>::DecodeBytesError),
+    Inner(PerfectTreeDynBytesError<Leaf, Tip>),
+}
+
+impl<T, Z, P: PtrBlob> Blob for PerfectTree<T, Z, P>
+where T: Blob,
+      Z: Blob,
+{
+    const SIZE: usize = <Height as Blob>::SIZE + <Leaf<T, Z, P> as Blob>::SIZE;
+    type DecodeBytesError = PerfectTreeBytesError<
+        <Leaf<T, Z, P> as Blob>::DecodeBytesError,
+        <InnerTipDyn<T, Z, P> as BlobDyn>::DecodeBytesError,
+    >;
+
+    fn encode_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> Bytes<'a, Self> { todo!() }
+
+    fn decode_bytes(_: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> { todo!() }
+}
+
+// -------- hoard load impls --------------
+impl<T, Z, P: Ptr> Load for PerfectTree<T, Z, P>
+where T: Load,
+      Z: Zone,
+{
+    type Blob = PerfectTree<T::Blob, (), P::Blob>;
+    type Zone = Z;
+
+    fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
+        match blob.into_kind() {
+            Kind::Leaf(leaf) => Self::from_leaf(Load::load(leaf, zone)),
+            Kind::Tip(_tip) => todo!(), //Self::from_tip(tip.load(zone)),
+        }
     }
 }
 
-impl<T, S, Z, P: Ptr, H: ToHeight> Load for SumPerfectTree<T, S, Z, P, H>
+impl<T, Z, P: Ptr> Load for InnerTip<T, Z, P>
 where T: Load,
-      S: Blob,
       Z: Zone,
-      H: Blob,
 {
-    type Blob = SumPerfectTree<T::Blob, S, (), P::Blob, H>;
+    type Blob = InnerTip<T::Blob, (), P::Blob>;
     type Zone = Z;
 
-    fn load(_: <Self as Load>::Blob, _: &<Self as Load>::Zone) -> Self {
+    fn load(_blob: Self::Blob, _zone: &Self::Zone) -> Self {
         todo!()
     }
 }
+
+impl<T, Z, P: Ptr> LoadRef for InnerNodeDyn<T, Z, P>
+where T: Load,
+      Z: Zone,
+{
+    type BlobDyn = InnerTipDyn<T::Blob, (), P::Blob>;
+    type Zone = Z;
+
+    fn load_ref_from_bytes<'a>(_: Bytes<'a, Self::BlobDyn>, _: &Z)
+        -> Result<MaybeValid<Ref<'a, Self>>,
+                 <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    {
+        todo!()
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -349,613 +806,25 @@ mod tests {
 
     #[test]
     fn test() {
-        let l = PerfectTree::new_leaf_in(1u8, Heap);
-        let r = PerfectTree::new_leaf_in(2u8, Heap);
-        let ll = l.try_join(r).unwrap();
+        let leaf1 = PerfectTree::from_leaf(Leaf::new_in(1u8, Heap));
+        assert_eq!(leaf1.height(), 0);
 
-        let l = PerfectTree::new_leaf_in(1u8, Heap);
-        let r = PerfectTree::new_leaf_in(2u8, Heap);
-        let lr = l.try_join(r).unwrap();
+        let leaf2 = PerfectTree::from_leaf(Leaf::new_in(2u8, Heap));
+        assert_eq!(leaf1.height(), 0);
 
-        let tip = ll.try_join(lr).unwrap();
-        dbg!(tip);
+        let tip = InnerTip::try_join_in(leaf1, leaf2, Heap).ok().unwrap();
+        assert_eq!(tip.height(), 1);
+
+        let tip = PerfectTree::from_tip(tip);
+        assert_eq!(tip.get(0).into_ok(),
+                   Some(Ref::Owned(1)));
+        assert_eq!(tip.get(1).into_ok(),
+                   Some(Ref::Owned(2)));
+        assert_eq!(tip.get(2).into_ok(), None);
     }
 }
 
 /*
-#[derive(Debug)]
-pub struct SumPerfectTree<T, S: Copy, Z = (), P: Ptr = <Z as Zone>::Ptr, H: ?Sized + ToHeight = Height> {
-    marker: PhantomData<T>,
-    tip_digest: Cell<Option<Digest<!>>>,
-    sum: Cell<Option<S>>,
-    ptr: P,
-    zone: Z,
-    height: H,
-}
-
-pub type SumPerfectTreeDyn<T, S, Z, P = <Z as Zone>::Ptr> = SumPerfectTree<T, S, Z, P, DynHeight>;
-
-pub type PerfectTree<T, Z, P = <Z as Zone>::Ptr> = SumPerfectTree<T, (), Z, P>;
-pub type PerfectTreeDyn<T, Z, P = <Z as Zone>::Ptr> = SumPerfectTreeDyn<T, (), Z, P>;
-
-#[derive(Debug)]
-pub struct Inner<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr, H: ?Sized + ToNonZeroHeight = NonZeroHeight> {
-    left:  ManuallyDrop<SumPerfectTree<T, S, Z, P, DummyHeight>>,
-    right: ManuallyDrop<SumPerfectTree<T, S, Z, P, DummyHeight>>,
-    height: H,
-}
-
-pub type InnerDyn<T, S, Z, P = <Z as Zone>::Ptr> = Inner<T, S, Z, P, DynNonZeroHeight>;
-
-#[derive(Debug)]
-pub enum Tip<Leaf, Inner> {
-    Leaf(Leaf),
-    Inner(Inner),
-}
-
-#[derive(Debug)]
-pub enum TipRef<'a, T, S: Copy, Z, P: Ptr> {
-    Leaf(&'a T),
-    Inner(&'a InnerDyn<T, S, Z, P>),
-}
-
-#[derive(Debug)]
-pub enum TipMut<'a, T, S: Copy, Z, P: Ptr> {
-    Leaf(&'a mut T),
-    Inner(&'a mut InnerDyn<T, S, Z, P>),
-}
-
-#[derive(Debug)]
-pub enum JoinError<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr> {
-    HeightMismatch {
-        lhs: SumPerfectTree<T, S, Z, P>,
-        rhs: SumPerfectTree<T, S, Z, P>,
-    },
-    HeightOverflow {
-        lhs: SumPerfectTree<T, S, Z, P>,
-        rhs: SumPerfectTree<T, S, Z, P>,
-    },
-}
-
-impl<T, S: Copy, Z: Zone> SumPerfectTree<T, S, Z> {
-    pub fn new_leaf_in(value: T, mut zone: impl BorrowMut<Z>) -> Self
-        where Z: Alloc
-    {
-        let (ptr, (), zone) = zone.borrow_mut().alloc(value).into_raw_parts();
-
-        unsafe {
-            Self::from_raw_parts(None, None, zone, ptr, Height::new(0).unwrap())
-        }
-    }
-
-    pub fn try_join(self, rhs: Self) -> Result<Self, JoinError<T, S, Z>>
-        where Z: Alloc
-    {
-        let mut zone = self.zone;
-        Inner::try_join(self, rhs).map(|inner| {
-            let inner_bag: Bag<InnerDyn<T, S, Z>, Z> = zone.alloc(inner);
-            let (ptr, nonzero_height, _) = inner_bag.into_raw_parts();
-
-            unsafe {
-                Self::from_raw_parts(None, None, zone, ptr, nonzero_height.to_height())
-            }
-        })
-    }
-}
-
-impl<T, S: MerkleSum<T>, Z, P: Ptr, H: ?Sized + ToHeight> SumPerfectTree<T, S, Z, P, H>
-where T: Load,
-      Z: Get<P> + AsZone<T::Zone>
-{
-    pub fn get<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, T>>, Z::Error> {
-        if idx <= self.len() {
-            match self.get_tip()? {
-                Tip::Leaf(leaf) => {
-                    assert_eq!(self.len(), 0);
-                    Ok(Some(leaf))
-                },
-                Tip::Inner(Ref::Borrowed(inner)) => {
-                    inner.get(idx)
-                },
-                Tip::Inner(Ref::Owned(inner)) => {
-                    inner.take(idx)
-                         .map(|option_t| option_t.map(Ref::Owned))
-                }
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn get_mut(&mut self, idx: usize) -> Result<Option<&mut T>, Z::Error>
-        where Z: GetMut<P>
-    {
-        let len = self.len();
-        if idx <= len {
-            match self.get_tip_mut()? {
-                Tip::Leaf(leaf) => {
-                    assert_eq!(len, 0);
-                    Ok(Some(leaf))
-                },
-                Tip::Inner(inner) => inner.get_mut(idx),
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn take(self, idx: usize) -> Result<Option<T>, Z::Error>
-        where H: Sized,
-    {
-        let len = self.len();
-        if idx <= len {
-            match self.take_tip()? {
-                Tip::Leaf(leaf) => {
-                    assert_eq!(len, 0);
-                    Ok(Some(leaf))
-                },
-                Tip::Inner(inner) => inner.take(idx),
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn get_tip<'a>(&'a self) -> Result<Tip<Ref<'a, T>, Ref<'a, InnerDyn<T, S, Z, P>>>, Z::Error> {
-        if let Ok(height) = NonZeroHeight::try_from(self.height()) {
-            let inner = unsafe {
-                self.zone.get_unchecked(&self.ptr, height)?
-            };
-            let inner = inner.trust();
-            Ok(Tip::Inner(inner))
-        } else {
-            let leaf = unsafe {
-                self.zone.get_unchecked(&self.ptr, ())?
-            };
-            let leaf = leaf.trust();
-            Ok(Tip::Leaf(leaf))
-        }
-    }
-
-    pub fn get_tip_mut(&mut self) -> Result<Tip<&mut T, &mut InnerDyn<T, S, Z, P>>, Z::Error>
-        where Z: GetMut<P>
-    {
-        let r = if let Ok(height) = NonZeroHeight::try_from(self.height()) {
-            let inner = unsafe {
-                self.zone.get_unchecked_mut(&mut self.ptr, height)?
-            };
-            let inner = inner.trust();
-            Tip::Inner(inner)
-        } else {
-            let leaf = unsafe {
-                self.zone.get_unchecked_mut(&mut self.ptr, ())?
-            };
-            let leaf = leaf.trust();
-            Tip::Leaf(leaf)
-        };
-
-        self.sum = None.into();
-        self.tip_digest = None.into();
-
-        Ok(r)
-    }
-
-    pub fn take_tip(self) -> Result<Tip<T, Inner<T, S, Z, P>>, Z::Error>
-        where H: Sized,
-    {
-        let (_tip_digest, _sum, zone, ptr, height) = self.into_raw_parts();
-
-        if let Ok(height) = NonZeroHeight::try_from(height.to_height()) {
-            let inner = unsafe {
-                zone.take_unchecked::<InnerDyn<T, S, Z, P>>(ptr, height)?
-            };
-            let inner = inner.trust();
-            Ok(Tip::Inner(inner))
-        } else {
-            let leaf = unsafe {
-                zone.take_unchecked::<T>(ptr, ())?
-            };
-            let leaf = leaf.trust();
-            Ok(Tip::Leaf(leaf))
-        }
-    }
-}
-
-impl<T, S: MerkleSum<T>, Z, P: Ptr, H: ?Sized + ToNonZeroHeight> Inner<T, S, Z, P, H>
-where T: Load,
-      Z: Get<P> + AsZone<T::Zone>
-{
-    fn get<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, T>>, Z::Error> {
-        let len = self.height().to_height().len();
-        if idx < len / 2 {
-            self.left.get(idx)
-        } else if idx < len {
-            self.right.get(idx - (len / 2))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn get_mut(&mut self, idx: usize) -> Result<Option<&mut T>, Z::Error>
-        where Z: GetMut<P>
-    {
-        let len = self.height().to_height().len();
-        if idx < len / 2 {
-            self.left.get_mut(idx)
-        } else if idx < len {
-            self.right.get_mut(idx - (len / 2))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn take(self, idx: usize) -> Result<Option<T>, Z::Error>
-        where H: Sized
-    {
-        let (left, right, height) = self.into_raw_parts();
-        let len = height.to_height().len();
-        if idx < len / 2 {
-            left.take(idx)
-        } else if idx < len {
-            right.take(idx - (len / 2))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-impl<T, S: Copy, Z, P: Ptr, H: ToHeight> SumPerfectTree<T, S, Z, P, H> {
-    pub unsafe fn from_raw_parts(
-        tip_digest: Option<Digest>,
-        sum: Option<S>,
-        zone: Z,
-        ptr: P,
-        height: H,
-    ) -> Self
-    {
-        Self {
-            marker: PhantomData,
-            tip_digest: tip_digest.into(),
-            sum: sum.into(),
-            zone,
-            ptr,
-            height,
-        }
-    }
-
-    pub fn blob_from_raw_parts(
-        tip_digest: Option<Digest>,
-        sum: Option<S>,
-        zone: Z,
-        ptr: P,
-        height: H,
-    ) -> Self
-        where S: Blob,
-              Z: Blob,
-              P: PtrBlob,
-    {
-        unsafe {
-            Self::from_raw_parts(tip_digest, sum, zone, ptr, height)
-        }
-    }
-
-    pub fn into_raw_parts(self) -> (Option<Digest>, Option<S>, Z, P, H) {
-        let this = ManuallyDrop::new(self);
-
-        unsafe {
-            (ptr::read(&this.tip_digest).into_inner(),
-             ptr::read(&this.sum).into_inner(),
-             ptr::read(&this.zone),
-             ptr::read(&this.ptr),
-             ptr::read(&this.height))
-        }
-    }
-
-    fn strip(self) -> SumPerfectTree<T, S, Z, P, DummyHeight> {
-        let this = ManuallyDrop::new(self);
-
-        unsafe {
-            SumPerfectTree {
-                marker: PhantomData,
-                tip_digest: ptr::read(&this.tip_digest),
-                sum: ptr::read(&this.sum),
-                ptr: ptr::read(&this.ptr),
-                zone: ptr::read(&this.zone),
-                height: DummyHeight,
-             }
-        }
-    }
-}
-
-
-impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> SumPerfectTree<T, S, Z, P, H> {
-    pub fn height(&self) -> Height {
-        self.height.to_height()
-    }
-
-    pub fn len(&self) -> usize {
-        self.height().len()
-    }
-
-    pub fn sum(&self) -> S
-        where S: MerkleSum<T>
-    {
-        if let Some(sum) = self.sum.get() {
-            sum
-        } else {
-            let sum = match self.try_get_dirty_tip() {
-                Ok(TipRef::Leaf(leaf)) => S::from_item(leaf),
-                Ok(TipRef::Inner(inner)) => inner.sum(),
-                Err(_clean) => unreachable!(),
-            };
-
-            self.sum.set(Some(sum));
-            sum
-        }
-    }
-
-    pub fn tip_digest(&self) -> Digest
-        where S: MerkleSum<T>,
-              T: Commit
-    {
-        if let Some(tip_digest) = self.tip_digest.get() {
-            tip_digest
-        } else {
-            let tip_digest = match self.try_get_dirty_tip() {
-                Ok(TipRef::Leaf(leaf)) => leaf.commit().cast(),
-                Ok(TipRef::Inner(inner)) => inner.commit().cast(),
-                Err(_clean) => unreachable!(),
-            };
-
-            self.tip_digest.set(Some(tip_digest));
-            tip_digest
-        }
-    }
-
-    pub fn try_get_dirty_tip<'a>(&'a self) -> Result<TipRef<'a, T, S, Z, P>, P::Clean> {
-        if let Ok(height) = NonZeroHeight::try_from(self.height()) {
-            let inner = unsafe { self.ptr.try_get_dirty(height)? };
-            Ok(TipRef::Inner(inner))
-        } else {
-            let leaf = unsafe { self.ptr.try_get_dirty(())? };
-            Ok(TipRef::Leaf(leaf))
-        }
-    }
-
-    pub fn try_get_dirty_tip_mut<'a>(&'a mut self) -> Result<TipMut<'a, T, S, Z, P>, P::Clean> {
-        let r = if let Ok(height) = NonZeroHeight::try_from(self.height()) {
-            let inner = unsafe { self.ptr.try_get_dirty_mut(height)? };
-            TipMut::Inner(inner)
-        } else {
-            let leaf = unsafe { self.ptr.try_get_dirty_mut(())? };
-            TipMut::Leaf(leaf)
-        };
-
-        self.sum = None.into();
-        self.tip_digest = None.into();
-
-        Ok(r)
-    }
-}
-
-impl<T, S: Copy, Z: Zone> Inner<T, S, Z> {
-    pub fn try_join(lhs: SumPerfectTree<T, S, Z>, rhs: SumPerfectTree<T, S, Z>) -> Result<Self, JoinError<T, S, Z>> {
-        if lhs.height() != rhs.height() {
-            Err(JoinError::HeightMismatch { lhs, rhs })
-        } else if let Some(height) = lhs.height().try_increment() {
-            unsafe {
-                Ok(Self::new_unchecked(lhs, rhs, height))
-            }
-        } else {
-            Err(JoinError::HeightOverflow { lhs, rhs })
-        }
-    }
-}
-
-impl<T, S: Copy, Z, P: Ptr, H: ToNonZeroHeight> Inner<T, S, Z, P, H> {
-    unsafe fn new_unchecked<HL: ToHeight, HR: ToHeight>(
-        left: SumPerfectTree<T, S, Z, P, HL>,
-        right: SumPerfectTree<T, S, Z, P, HR>,
-        height: H,
-    ) -> Self {
-        Self {
-            left: ManuallyDrop::new(left.strip()),
-            right: ManuallyDrop::new(right.strip()),
-            height,
-        }
-    }
-
-    fn new_blob(
-        left: SumPerfectTree<T, S, Z, P, DummyHeight>,
-        right: SumPerfectTree<T, S, Z, P, DummyHeight>,
-        height: H,
-    ) -> Self
-        where Z: Blob,
-              P: PtrBlob,
-    {
-        unsafe {
-            Self::new_unchecked(left, right, height)
-        }
-    }
-
-
-    fn into_raw_parts(self) -> (SumPerfectTree<T, S, Z, P, DummyHeight>, SumPerfectTree<T, S, Z, P, DummyHeight>, H) {
-        let this = ManuallyDrop::new(self);
-
-        unsafe {
-            (ptr::read(&*this.left),
-             ptr::read(&*this.right),
-             ptr::read(&this.height))
-        }
-    }
-}
-
-impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToNonZeroHeight> Inner<T, S, Z, P, H> {
-    pub fn left(&self) -> &SumPerfectTreeDyn<T, S, Z, P> {
-        unsafe {
-            &*SumPerfectTreeDyn::make_fat_ptr(&self.left as *const _ as *const _, self.height().decrement())
-        }
-    }
-
-    pub fn left_mut(&mut self) -> &mut SumPerfectTreeDyn<T, S, Z, P> {
-        unsafe {
-            &mut *SumPerfectTreeDyn::make_fat_ptr_mut(&mut self.left as *mut _ as *mut _, self.height().decrement())
-        }
-    }
-
-    pub fn right(&self) -> &SumPerfectTreeDyn<T, S, Z, P> {
-        unsafe {
-            &*SumPerfectTreeDyn::make_fat_ptr(&self.right as *const _ as *const _, self.height().decrement())
-        }
-    }
-
-    pub fn right_mut(&mut self) -> &mut SumPerfectTreeDyn<T, S, Z, P> {
-        unsafe {
-            &mut *SumPerfectTreeDyn::make_fat_ptr_mut(&mut self.right as *mut _ as *mut _, self.height().decrement())
-        }
-    }
-
-    pub fn height(&self) -> NonZeroHeight {
-        self.height.to_nonzero_height()
-    }
-
-    pub fn sum(&self) -> S
-        where S: MerkleSum<T>
-    {
-        S::sum(self.left().sum(), self.right().sum())
-    }
-}
-
-// ---- drop impls -----
-impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> Drop for SumPerfectTree<T, S, Z, P, H> {
-    fn drop(&mut self) {
-        if P::NEEDS_DEALLOC {
-            if let Ok(height) = NonZeroHeight::try_from(self.height()) {
-                unsafe { self.ptr.dealloc::<InnerDyn<T, S, Z, P>>(height) }
-            } else {
-                unsafe { self.ptr.dealloc::<T>(()) }
-            }
-        }
-    }
-}
-
-impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToNonZeroHeight> Drop for Inner<T, S, Z, P, H> {
-    fn drop(&mut self) {
-        if P::NEEDS_DEALLOC {
-            unsafe {
-                ptr::drop_in_place(self.left_mut());
-                ptr::drop_in_place(self.right_mut());
-            }
-        }
-    }
-}
-
-
-// ------ unsized type stuff ------
-
-
-unsafe impl<T, S: Copy, Z, P: Ptr> Take<SumPerfectTreeDyn<T, S, Z, P>> for SumPerfectTree<T, S, Z, P> {
-    fn take_unsized<F, R>(self, f: F) -> R
-        where F: FnOnce(Own<SumPerfectTreeDyn<T, S, Z, P>>) -> R
-    {
-        let mut this = ManuallyDrop::new(self);
-        let this_dyn: &mut SumPerfectTreeDyn<T, S, Z, P> = this.deref_mut().borrow_mut();
-
-        unsafe {
-            f(Own::new_unchecked(this_dyn))
-        }
-    }
-}
-
-impl<T, S: Copy, Z, P: Ptr> IntoOwned for SumPerfectTreeDyn<T, S, Z, P> {
-    type Owned = SumPerfectTree<T, S, Z, P>;
-
-    fn into_owned(self: Own<'_, Self>) -> Self::Owned {
-        let this = Own::leak(self);
-
-        unsafe {
-            SumPerfectTree {
-                height: this.height.to_height(),
-                marker: PhantomData,
-                tip_digest: ptr::read(&this.tip_digest),
-                sum: ptr::read(&this.sum),
-                zone: ptr::read(&this.zone),
-                ptr: ptr::read(&this.ptr),
-            }
-        }
-    }
-}
-
-impl<T, S: Copy, Z, P: Ptr> Pointee for InnerDyn<T, S, Z, P> {
-    type Metadata = NonZeroHeight;
-    type LayoutError = !;
-
-    fn metadata(ptr: *const Self) -> Self::Metadata {
-        unsafe {
-            let ptr: *const [()] = mem::transmute(ptr);
-            let len: usize = ptr.len();
-
-            NonZeroHeight::try_from(len)
-                          .expect("valid metadata")
-        }
-    }
-
-    fn make_fat_ptr(thin: *const (), height: Self::Metadata) -> *const Self {
-        let ptr = ptr::slice_from_raw_parts(thin, height.to_height().get().into());
-        unsafe { mem::transmute(ptr) }
-    }
-
-    fn make_fat_ptr_mut(thin: *mut (), height: Self::Metadata) -> *mut Self {
-        let ptr = ptr::slice_from_raw_parts_mut(thin, height.to_height().get().into());
-        unsafe { mem::transmute(ptr) }
-    }
-}
-
-impl<T, S: Copy, Z, P: Ptr> Borrow<InnerDyn<T, S, Z, P>> for Inner<T, S, Z, P> {
-    fn borrow(&self) -> &InnerDyn<T, S, Z, P> {
-        unsafe {
-            &*InnerDyn::make_fat_ptr(self as *const _ as *const (), self.height)
-        }
-    }
-}
-
-impl<T, S: Copy, Z, P: Ptr> BorrowMut<InnerDyn<T, S, Z, P>> for Inner<T, S, Z, P> {
-    fn borrow_mut(&mut self) -> &mut InnerDyn<T, S, Z, P> {
-        unsafe {
-            &mut *InnerDyn::make_fat_ptr_mut(self as *mut _ as *mut (), self.height)
-        }
-    }
-}
-
-unsafe impl<T, S: Copy, Z, P: Ptr> Take<InnerDyn<T, S, Z, P>> for Inner<T, S, Z, P> {
-    fn take_unsized<F, R>(self, f: F) -> R
-        where F: FnOnce(Own<InnerDyn<T, S, Z, P>>) -> R
-    {
-        let mut this = ManuallyDrop::new(self);
-        let this_dyn: &mut InnerDyn<T, S, Z, P> = this.deref_mut().borrow_mut();
-
-        unsafe {
-            f(Own::new_unchecked(this_dyn))
-        }
-    }
-}
-
-impl<T, S: Copy, Z, P: Ptr> IntoOwned for InnerDyn<T, S, Z, P> {
-    type Owned = Inner<T, S, Z, P>;
-
-    fn into_owned(self: Own<'_, Self>) -> Self::Owned {
-        let this = Own::leak(self);
-
-        unsafe {
-            Inner {
-                height: this.height.to_nonzero_height(),
-                left: ptr::read(&this.left),
-                right: ptr::read(&this.right),
-            }
-        }
-    }
-}
-
 impl<T, S: Copy, Z, P: Ptr, H: ?Sized + ToHeight> Commit for SumPerfectTree<T, S, Z, P, H>
 where T: Commit,
       S: MerkleSum<T>,

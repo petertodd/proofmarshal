@@ -63,7 +63,10 @@ impl Ptr for HeapPtr {
             NonNull::new(ptr as *mut ())
                     .unwrap_or_else(|| alloc::handle_alloc_error(layout))
         } else {
-            NonNull::new(layout.align() as *mut ()).unwrap()
+            let ptr = layout.align() as *mut ();
+
+            // SAFETY: alignment guaranteed to be non-zero
+            unsafe { NonNull::new_unchecked(ptr) }
         };
 
         (ptr, HeapPtr(ptr))
