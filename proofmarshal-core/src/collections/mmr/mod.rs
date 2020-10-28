@@ -10,6 +10,7 @@ use std::ptr;
 use thiserror::Error;
 
 use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
+use hoard::bag::Bag;
 use hoard::primitive::Primitive;
 use hoard::owned::{IntoOwned, Take, Ref, Own};
 use hoard::pointee::Pointee;
@@ -18,12 +19,15 @@ use hoard::load::{Load, LoadRef, MaybeValid};
 
 use crate::commit::Digest;
 use crate::collections::perfecttree::height::*;
-use crate::collections::perfecttree::{SumPerfectTree, SumPerfectTreeDyn};
+use crate::collections::perfecttree::{SumPerfectTree, SumPerfectTreeDyn, JoinError};
 use crate::collections::merklesum::MerkleSum;
 
 pub mod length;
 use self::length::*;
 
+pub mod peaktree;
+
+/*
 #[derive(Debug)]
 pub struct SumMMR<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr, L: ?Sized + ToLength = Length> {
     marker: PhantomData<T>,
@@ -34,19 +38,51 @@ pub struct SumMMR<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr, L: ?Sized + ToLength
     len: L,
 }
 
-pub type SumMMRDyn<T, S, Z, P = <Z as Zone>::Ptr> = SumMMR<T, S, Z, P, LengthDyn>;
-
 pub type MMR<T, Z, P = <Z as Zone>::Ptr> = SumMMR<T, (), Z, P>;
 
-#[derive(Debug)]
+/*
+*/
+*/
+
+/*
+pub struct SumMMR<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr, L: ?Sized + ToLength = Length> {
+    state: State<T, S, Z, P>,
+    len: L,
+}
+
+union State<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr> {
+    empty: ManuallyDrop<Z>,
+    peak: ManuallyDrop<SumPerfectTree<T, S, Z, P, DummyHeight>>,
+    peaks: ManuallyDrop<PeakTree<T, S, Z, P, DummyInnerLength>>,
+}
+*/
+
+/*
 pub struct Inner<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr, L: ?Sized + ToInnerLength = InnerLength> {
-    peak: SumPerfectTree<T, S, Z, P, DummyHeight>,
-    next: SumMMR<T, S, Z, P, DummyNonZeroLength>,
+    left: SumMMR<T, S, Z, P, DummyLength>,
+    right: SumMMR<T, S, Z, P, DummyLength>,
     len: L,
 }
 
 pub type InnerDyn<T, S, Z, P = <Z as Zone>::Ptr> = Inner<T, S, Z, P, InnerLengthDyn>;
+*/
 
+
+
+/*
+union SumMMRDynUnion<T, S: Copy, Z, P: Ptr> {
+    empty: (),
+    peak: ManuallyDrop<SumPerfectTree<T, S, Z, P, DummyHeight>>,
+    peaks: ManuallyDrop<Peaks<T, S, Z, P, DummyInnerLength>>,
+}
+
+pub struct SumMMRDyn<T, S: Copy, Z, P: Ptr = <Z as Zone>::Ptr> {
+    payload: SumMMRDynUnion<T, S, Z, P>,
+    len: LengthDyn,
+}
+*/
+
+/*
 pub enum Tip<Peak, Inner> {
     Empty,
     Peak(Peak),
@@ -87,10 +123,21 @@ impl<T, S: Copy, Z, P: Ptr> SumMMR<T, S, Z, P> {
         }
     }
 
-    pub fn from_inner(inner: Inner<T, S, Z, P>) -> Self
+    pub fn from_inner_in(inner: Inner<T, S, Z, P>, mut zone: impl BorrowMut<Z>) -> Self
         where Z: Alloc<Ptr = P>
     {
-        todo!()
+        let inner_bag: Bag<InnerDyn<T, S, Z, P>, Z, P> = zone.borrow_mut().alloc(inner);
+        let (tip_ptr, len, zone) = inner_bag.into_raw_parts();
+
+        unsafe {
+            Self::from_raw_parts(
+                zone,
+                Some(tip_ptr),
+                Some(Digest::default()),
+                None,
+                len.into(),
+            )
+        }
     }
 }
 
@@ -106,7 +153,7 @@ impl<T, Z> From<Z> for PushError<T, Z> {
     }
 }
 
-impl<T, S: Copy, Z: Zone> SumMMR<T, S, Z>
+impl<T, S: MerkleSum<T>, Z: Zone> SumMMR<T, S, Z>
 where T: Load,
       S: Blob + Default
 {
@@ -131,38 +178,92 @@ where T: Load,
         -> Result<(), PushError<SumPerfectTree<T, S, Z>, Z::Error>>
         where Z: Alloc + GetMut
     {
+        match self.len.checked_add(peak.len()) {
+            None => Err(PushError::LengthOverflow(peak)),
+            Some(_new_len) if self.len() == 0 => {
+                *self = Self::from_peak(peak);
+                Ok(())
+            },
+            Some(_new_len) if self.len() == peak.len() => {
+                if let Tip::Peak(old_peak) = self.take_tip()? {
+                    todo!("same height")
+                } else {
+                    unreachable!()
+                }
+            },
+            Some(new_len) => {
+                todo!()
+            },
+        }
+
+        /*
         if let Some(new_len) = self.len.checked_add(peak.len()) {
-            match self.take_tip()? {
-                Tip::Empty => {
-                    *self = Self::from_peak(peak);
-                },
-                Tip::Peak(next_peak) => {
-                    match Inner::try_join_peaks(peak, next_peak) {
+            let new_len = NonZeroLength::try_from(new_len).unwrap();
+
+            if let Ok(old_len) = NonZeroLength::try_from(self.len()) {
+                assert!(old_len.min_height() >= peak.height());
+
+                // There already are peaks in this MMR, so we need to join those peaks to either
+                // form an Inner node or a perfect tree.
+                //
+                // 
+
+                /*
+                if let Ok(old_len) = InnerLength::try_from(old_len) {
+                    if let Tip::Inner(old_inner) = self.take_tip()? {
+                        todo!("old_len = 0b{:b} new_len = 0b{:b}", old_len, new_len)
+                    } else {
+                        unreachable!()
+                    }
+                } else if let Tip::Peak(existing_peak) = self.take_tip()? {
+                    match Inner::try_join(existing_peak, peak) {
                         Ok(inner) => {
-                            *self = Self::from_inner(inner);
+                            *self = Self::from_inner_in(inner, self.zone);
                         },
-                        Err(InnerJoinPeaksError::PerfectTree(peak)) => {
+                        Err(InnerJoinError::Peak(peak)) => {
                             *self = Self::from_peak(peak);
                         },
-                        Err(InnerJoinPeaksError::HeightOverflow) => {
+                        Err(InnerJoinError::HeightOverflow { .. }) => {
                             unreachable!("overflow already checked")
                         }
                     }
-                },
-                Tip::Inner(inner) => {
-                    todo!()
-                },
-            };
+                */
+                } else {
+                    unreachable!("we should have a peak")
+                }
+            } else {
+                *self = Self::from_peak(peak);
+            }
             Ok(())
         } else {
             Err(PushError::LengthOverflow(peak))
         }
+            */
     }
 
+    /// Takes the MMR tip, setting the length to zero.
     pub fn take_tip(&mut self) -> Result<Tip<SumPerfectTree<T, S, Z>, Inner<T, S, Z>>, Z::Error>
         where Z: Get
     {
+        match self.len() {
+            0 => Ok(Tip::Empty),
+            1 => {
+                let this = mem::replace(self, Self::new_in(self.zone));
+                let (zone, tip_ptr, tip_digest, sum, _len) = this.into_raw_parts();
+                todo!()
+            },
+            len if len.is_power_of_two() => {
+                todo!()
+            },
+            len => {
+                todo!()
+
+            }
+        }
+
+        /*
         if let Ok(len) = NonZeroLength::try_from(self.len()) {
+            /*
             self.sum.set(Some(S::default()));
             self.tip_digest.set(None);
             self.len = Length(0);
@@ -182,9 +283,11 @@ where T: Load,
                     Ok(Tip::Peak(peak.trust()))
                 },
             }
+            */ todo!()
         } else {
             Ok(Tip::Empty)
         }
+        */
     }
 }
 
@@ -216,7 +319,21 @@ impl<T, S: Copy, Z, P: Ptr, L: ToLength> SumMMR<T, S, Z, P, L> {
     }
 
     pub fn into_raw_parts(self) -> (Z, Option<P>, Option<Digest>, Option<S>, L) {
-        todo!()
+        let this = ManuallyDrop::new(self);
+        unsafe {
+            (ptr::read(&this.zone),
+             this.tip_ptr().map(|tip_ptr| ptr::read(tip_ptr)),
+             this.tip_digest.get(),
+             this.sum.get(),
+             ptr::read(&this.len))
+        }
+    }
+
+    fn strip(self) -> SumMMR<T, S, Z, P, DummyLength> {
+        let (zone, tip_ptr, tip_digest, sum, _len) = self.into_raw_parts();
+        unsafe {
+            SumMMR::from_raw_parts(zone, tip_ptr, tip_digest, sum, DummyLength)
+        }
     }
 }
 
@@ -288,14 +405,17 @@ impl<T, S: Copy, Z, P: Ptr, L: ?Sized + ToLength> SumMMR<T, S, Z, P, L> {
     }
 }
 
-pub enum InnerJoinPeaksError<T, S: Copy, Z: Zone> {
-    HeightOverflow,
-    PerfectTree(SumPerfectTree<T, S, Z>),
+pub enum InnerJoinError<T, S: Copy, Z: Zone> {
+    HeightOverflow {
+        left: SumPerfectTree<T, S, Z>,
+        right: SumPerfectTree<T, S, Z>,
+    },
+    Peak(SumPerfectTree<T, S, Z>),
 }
 
 pub enum InnerPushPeakError<T, S: Copy, Z: Zone> {
-    LengthOverflow,
-    PerfectTree(SumPerfectTree<T, S, Z>),
+    LengthOverflow(SumPerfectTree<T, S, Z>),
+    Peak(SumPerfectTree<T, S, Z>),
     Zone(Z::Error),
 }
 
@@ -303,65 +423,74 @@ impl<T, S: Copy, Z: Zone> Inner<T, S, Z>
 where T: Load,
       S: Blob + Default
 {
-    pub fn try_join_peaks(lhs: SumPerfectTree<T, S, Z>, rhs: SumPerfectTree<T, S, Z>)
-        -> Result<Self, InnerJoinPeaksError<T, S, Z>>
+    /// Creates an `Inner` node by joining two trees.
+    ///
+    /// The trees must be *different* heights.
+    pub fn try_join(left: SumPerfectTree<T, S, Z>, right: SumPerfectTree<T, S, Z>)
+        -> Result<Self, InnerJoinError<T, S, Z>>
         where Z: Alloc
     {
-        if lhs.height() == rhs.height() {
-            match lhs.try_join(rhs) {
-                Ok(peak) => Err(InnerJoinPeaksError::PerfectTree(peak)),
-                Err(_) => todo!(),
-            }
-        } else {
-            let len = InnerLength::new(lhs.len() + rhs.len()).unwrap();
-
-            let (peak, next) = if lhs.height() > rhs.height() {
+        let (left, right) = match SumPerfectTree::try_join(left, right) {
+            Ok(peak) => {
+                return Err(InnerJoinError::Peak(peak));
+            },
+            Err(JoinError::HeightOverflow { lhs, rhs }) => {
+                return Err(InnerJoinError::HeightOverflow { left: lhs, right: rhs });
+            },
+            Err(JoinError::HeightMismatch { lhs, rhs }) if lhs.height() > rhs.height() => {
                 (lhs, rhs)
-            } else {
+            },
+            Err(JoinError::HeightMismatch { lhs, rhs }) => {
                 (rhs, lhs)
-            };
+            },
+        };
 
-            let next = SumMMR::from_peak(next);
-            unsafe {
-                Ok(Self::new_unchecked(peak, next, len))
-            }
+        let len = left.len().checked_add(right.len()).unwrap();
+        let len = InnerLength::new(len).unwrap();
+
+        let left = SumMMR::from_peak(left);
+        let right = SumMMR::from_peak(right);
+        unsafe {
+            Ok(Self::new_unchecked(left, right, len))
         }
     }
 
+    /// Pushes a new tree.
     pub fn push_peak(
         self,
         peak: SumPerfectTree<T, S, Z>,
     ) -> Result<Self, InnerPushPeakError<T, S, Z>>
         where Z: Alloc + GetMut
     {
+        //assert!(self.len.max_height() >= 
         match self.len.checked_add(peak.len()) {
-            Ok(new_len) if self.peak.height() > peak.height() => {
-                todo!()
-            },
-            Ok(new_len) => {
-                assert!(peak.height() > self.peak.height());
+            Ok(_new_len) => {
                 todo!()
             },
             Err(Some(new_height)) => {
                 todo!()
             },
             Err(None) => {
-                Err(InnerPushPeakError::LengthOverflow)
+                Err(InnerPushPeakError::LengthOverflow(peak))
             }
         }
     }
 }
 
 impl<T, S: Copy, Z, P: Ptr, L: ToInnerLength> Inner<T, S, Z, P, L> {
-    pub unsafe fn new_unchecked<HP, HN>(
-        peak: SumPerfectTree<T, S, Z, P, HP>,
-        next: SumMMR<T, S, Z, P, HN>,
+    pub unsafe fn new_unchecked<LL, LR>(
+        left: SumMMR<T, S, Z, P, LL>,
+        right: SumMMR<T, S, Z, P, LR>,
         len: L
     ) -> Self
-        where HP: ToHeight,
-              HN: ToLength,
+        where LL: ToLength,
+              LR: ToLength,
     {
-        todo!()
+        Self {
+            left: left.strip(),
+            right: right.strip(),
+            len
+        }
     }
 }
 
@@ -370,31 +499,31 @@ impl<T, S: Copy, Z, P: Ptr, L: ?Sized + ToInnerLength> Inner<T, S, Z, P, L> {
         self.len.to_length().into()
     }
 
-    pub fn peak(&self) -> &SumPerfectTreeDyn<T, S, Z, P> {
-        let (height, _) = self.len.to_inner_length().split();
+    pub fn left(&self) -> &SumMMRDyn<T, S, Z, P> {
+        let len = self.len.to_length();
         unsafe {
-            &*SumPerfectTreeDyn::make_fat_ptr(&self.peak as *const _ as *const _, height)
+            &*SumMMRDyn::make_fat_ptr(&self.left as *const _ as *const _, len)
         }
     }
 
-    pub fn peak_mut(&mut self) -> &mut SumPerfectTreeDyn<T, S, Z, P> {
-        let (height, _) = self.len.to_inner_length().split();
+    pub fn left_mut(&mut self) -> &mut SumMMRDyn<T, S, Z, P> {
+        let len = self.len.to_length();
         unsafe {
-            &mut *SumPerfectTreeDyn::make_fat_ptr_mut(&mut self.peak as *mut _ as *mut _, height)
+            &mut *SumMMRDyn::make_fat_ptr_mut(&mut self.left as *mut _ as *mut _, len)
         }
     }
 
-    pub fn next(&self) -> &SumMMRDyn<T, S, Z, P> {
-        let (_, next_len) = self.len.to_inner_length().split();
+    pub fn right(&self) -> &SumMMRDyn<T, S, Z, P> {
+        let len = self.len.to_length();
         unsafe {
-            &*SumMMR::make_fat_ptr(&self.next as *const _ as *const _, next_len.into())
+            &*SumMMRDyn::make_fat_ptr(&self.right as *const _ as *const _, len)
         }
     }
 
-    pub fn next_mut(&mut self) -> &mut SumMMRDyn<T, S, Z, P> {
-        let (_, next_len) = self.len.to_inner_length().split();
+    pub fn right_mut(&mut self) -> &mut SumMMRDyn<T, S, Z, P> {
+        let len = self.len.to_length();
         unsafe {
-            &mut *SumMMR::make_fat_ptr_mut(&mut self.next as *mut _ as *mut _, next_len.into())
+            &mut *SumMMRDyn::make_fat_ptr_mut(&mut self.right as *mut _ as *mut _, len)
         }
     }
 }
@@ -532,8 +661,8 @@ impl<T, S: Copy, Z, P: Ptr> IntoOwned for InnerDyn<T, S, Z, P> {
 
         unsafe {
             Inner {
-                peak: ptr::read(&this.peak),
-                next: ptr::read(&this.next),
+                left: ptr::read(&this.left),
+                right: ptr::read(&this.right),
                 len: this.len.to_inner_length(),
             }
         }
@@ -684,7 +813,14 @@ mod tests {
         dbg!(&mmr);
         dbg!(mmr.try_push(1u8));
         dbg!(&mmr);
-        dbg!(mmr.try_push(1u8));
+        dbg!(mmr.try_push(2u8));
+        dbg!(&mmr);
+
+        dbg!(mmr.try_push(3u8));
+        dbg!(&mmr);
+
+        dbg!(mmr.try_push(4u8));
         dbg!(&mmr);
     }
 }
+*/

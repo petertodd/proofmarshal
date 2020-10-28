@@ -5,6 +5,7 @@
 #![feature(rustc_attrs)]
 #![feature(slice_ptr_len)]
 #![feature(unwrap_infallible)]
+#![feature(once_cell)]
 
 #![allow(incomplete_features)]
 #![feature(const_generics)]
@@ -16,3 +17,14 @@
 pub mod commit;
 
 pub mod collections;
+
+#[macro_export]
+macro_rules! unreachable_unchecked {
+    ($($arg:tt)*) => {
+        if cfg!(debug_assertions) {
+            panic!($($arg)*)
+        } else {
+            ::core::hint::unreachable_unchecked()
+        }
+    }
+}

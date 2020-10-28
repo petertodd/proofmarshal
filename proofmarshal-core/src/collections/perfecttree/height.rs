@@ -22,11 +22,11 @@ pub struct NonZeroHeight(NonZeroU8);
 
 /// Unsized height.
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DynHeight([()]);
+pub struct HeightDyn([()]);
 
 /// Unsized non-zero height.
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DynNonZeroHeight([()]);
+pub struct NonZeroHeightDyn([()]);
 
 pub trait ToHeight {
     fn to_height(&self) -> Height;
@@ -190,7 +190,7 @@ impl ToNonZeroHeight for NonZeroHeight {
     }
 }
 
-impl ToHeight for DynHeight {
+impl ToHeight for HeightDyn {
     fn to_height(&self) -> Height {
         let n = self.0.len();
         debug_assert!(n < Height::MAX as usize);
@@ -198,7 +198,7 @@ impl ToHeight for DynHeight {
     }
 }
 
-impl ToNonZeroHeight for DynNonZeroHeight {
+impl ToNonZeroHeight for NonZeroHeightDyn {
     fn to_nonzero_height(&self) -> NonZeroHeight {
         let n = self.0.len();
         debug_assert!(n < Height::MAX as usize);
@@ -210,17 +210,17 @@ impl ToNonZeroHeight for DynNonZeroHeight {
 }
 
 // fmt::Debug impls
-impl fmt::Debug for DynHeight {
+impl fmt::Debug for HeightDyn {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("DynHeight")
+        f.debug_tuple("HeightDyn")
             .field(&self.0.len())
             .finish()
     }
 }
 
-impl fmt::Debug for DynNonZeroHeight {
+impl fmt::Debug for NonZeroHeightDyn {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("DynNonZeroHeight")
+        f.debug_tuple("NonZeroHeightDyn")
             .field(&self.0.len())
             .finish()
     }
@@ -228,7 +228,8 @@ impl fmt::Debug for DynNonZeroHeight {
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub(crate) struct DummyHeight;
+#[non_exhaustive]
+pub struct DummyHeight;
 
 impl ToHeight for DummyHeight {
     fn to_height(&self) -> Height {
@@ -237,7 +238,8 @@ impl ToHeight for DummyHeight {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub(crate) struct DummyNonZeroHeight;
+#[non_exhaustive]
+pub struct DummyNonZeroHeight;
 
 impl ToNonZeroHeight for DummyNonZeroHeight {
     fn to_nonzero_height(&self) -> NonZeroHeight {
@@ -375,4 +377,19 @@ impl_cmp_ops! {
     Height = NonZeroHeight,
     Height = u8,
     NonZeroHeight = u8,
+}
+
+macro_rules! impl_fmt {
+    ($( $t:ty, )+) => {$(
+        impl fmt::Display for $t {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.to_height().get().fmt(f)
+            }
+        }
+    )+}
+}
+
+impl_fmt! {
+    Height, HeightDyn,
+    NonZeroHeight, NonZeroHeightDyn,
 }

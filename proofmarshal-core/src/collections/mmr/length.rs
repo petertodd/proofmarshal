@@ -2,12 +2,15 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::cmp;
+use std::ops;
+use std::hint;
 
 use thiserror::Error;
 
 use hoard::blob::{Bytes, BytesUninit};
 use hoard::primitive::Primitive;
 
+use crate::unreachable_unchecked;
 use crate::collections::mmr::{Height, NonZeroHeight};
 
 pub trait ToLength {
@@ -37,6 +40,12 @@ pub trait ToInnerLength {
 impl From<InnerLength> for NonZeroLength {
     fn from(len: InnerLength) -> Self {
         Self(len.0)
+    }
+}
+
+impl From<InnerLength> for Length {
+    fn from(len: InnerLength) -> Self {
+        Self(len.get())
     }
 }
 
@@ -81,6 +90,22 @@ impl Length {
     pub fn checked_add(self, other: impl Into<Self>) -> Option<Self> {
         self.0.checked_add(other.into().get())
               .map(Self)
+    }
+
+    /// Splits the `Length` into left and right, if possible.
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::mmr::length::{InnerLength, NonZeroLength};
+    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// assert_eq!(InnerLength::new(0b11).unwrap()
+    ///                        .split(),
+    ///            (NonZeroLength::new(0b10).unwrap(),
+    ///             NonZeroLength::new(0b01).unwrap()));
+    /// ```
+    pub fn split(self) -> Result<(NonZeroLength, NonZeroLength), Option<Height>> {
+        let len = NonZeroLength::new(self.get()).ok_or(None)?;
+        let len = NonZeroLength::try_into_inner_length(len)?;
+        Ok(len.split())
     }
 }
 
@@ -176,9 +201,55 @@ impl NonZeroLength {
         InnerLength::new(self.get())
             .ok_or(Height::new(lsb).unwrap())
     }
+
+    /// Returns the minimum height tree within this length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::mmr::length::InnerLength;
+    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// assert_eq!(InnerLength::new(0b11).unwrap()
+    ///                        .min_height(),
+    ///            Height::new(0).unwrap());
+    ///
+    /// assert_eq!(InnerLength::new(0b1100000000000000000000000000000000000000000000000000000000000000).unwrap()
+    ///                        .min_height(),
+    ///            Height::new(62).unwrap());
+    /// ```
+    pub fn min_height(self) -> Height {
+        let r = self.get().trailing_zeros() as u8;
+        r.try_into().unwrap()
+    }
+
+    /// Returns the maximum height tree within this length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::mmr::length::InnerLength;
+    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// assert_eq!(InnerLength::new(0b11).unwrap()
+    ///                        .max_height(),
+    ///            Height::new(1).unwrap());
+    ///
+    /// assert_eq!(InnerLength::new(0b1100000000000000000000000000000000000000000000000000000000000000).unwrap()
+    ///                        .max_height(),
+    ///            Height::new(63).unwrap());
+    /// ```
+    pub fn max_height(self) -> Height {
+        let r = (usize::MAX.count_ones() - 1 - self.get().leading_zeros()) as u8;
+        r.try_into().unwrap()
+    }
 }
 
 impl InnerLength {
+    /// The largest possible value.
+    pub const MAX: Self = InnerLength(NonZeroLength::MAX.0);
+
+    /// The smallest possible value.
+    pub const MIN: Self = InnerLength(unsafe { NonZeroUsize::new_unchecked(0b11) });
+
     /// Creates a new `InnerLength`.
     ///
     /// ```
@@ -227,20 +298,73 @@ impl InnerLength {
         }
     }
 
-    /// Split the `InnerLength` into the height of the smallest tree, and the remaining length.
+    /// Splits the `InnerLength` into left and right.
     ///
     /// ```
     /// # use proofmarshal_core::collections::mmr::length::{InnerLength, NonZeroLength};
     /// # use proofmarshal_core::collections::perfecttree::height::Height;
-    /// let (rhs_height, rest_len) = InnerLength::new(0b11).unwrap().split();
-    /// assert_eq!(rhs_height, 0);
-    /// assert_eq!(rest_len, 0b1);
+    /// assert_eq!(InnerLength::new(0b11).unwrap()
+    ///                        .split(),
+    ///            (NonZeroLength::new(0b10).unwrap(),
+    ///             NonZeroLength::new(0b01).unwrap()));
     /// ```
-    pub fn split(self) -> (Height, NonZeroLength) {
-        let height: u8 = self.get().trailing_zeros().try_into().unwrap();
-        let rest = self.get() & !(2 << height);
-        (height.try_into().unwrap(),
-         rest.try_into().unwrap())
+    pub fn split(self) -> (NonZeroLength, NonZeroLength) {
+        let mut mask = usize::MAX;
+        loop {
+            mask <<= 1;
+            debug_assert_ne!(mask, 0);
+
+            let lhs = self.get() & mask;
+            let rhs = self.get() & !mask;
+
+            if lhs.count_ones().is_power_of_two() {
+                let lhs = NonZeroLength::new(lhs)
+                                        .unwrap_or_else(|| unsafe { unreachable_unchecked!() });
+                let rhs = NonZeroLength::new(rhs)
+                                        .unwrap_or_else(|| unsafe { unreachable_unchecked!() });
+                break (lhs, rhs)
+            }
+        }
+    }
+
+    /// Returns the minimum height tree within this length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::mmr::length::InnerLength;
+    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// assert_eq!(InnerLength::new(0b11).unwrap()
+    ///                        .min_height(),
+    ///            Height::new(0).unwrap());
+    ///
+    /// assert_eq!(InnerLength::new(0b1100000000000000000000000000000000000000000000000000000000000000).unwrap()
+    ///                        .min_height(),
+    ///            Height::new(62).unwrap());
+    /// ```
+    pub fn min_height(self) -> Height {
+        let r = self.get().trailing_zeros() as u8;
+        r.try_into().unwrap()
+    }
+
+    /// Returns the maximum height tree within this length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::mmr::length::InnerLength;
+    /// # use proofmarshal_core::collections::perfecttree::height::Height;
+    /// assert_eq!(InnerLength::new(0b11).unwrap()
+    ///                        .max_height(),
+    ///            Height::new(1).unwrap());
+    ///
+    /// assert_eq!(InnerLength::new(0b1100000000000000000000000000000000000000000000000000000000000000).unwrap()
+    ///                        .max_height(),
+    ///            Height::new(63).unwrap());
+    /// ```
+    pub fn max_height(self) -> Height {
+        let r = (usize::MAX.count_ones() - 1 - self.get().leading_zeros()) as u8;
+        r.try_into().unwrap()
     }
 }
 
@@ -276,11 +400,27 @@ impl TryFrom<usize> for NonZeroLength {
     }
 }
 
+impl TryFrom<Length> for NonZeroLength {
+    type Error = NonZeroLengthError;
+
+    fn try_from(len: Length) -> Result<Self, Self::Error> {
+        len.0.try_into()
+    }
+}
+
 impl TryFrom<usize> for InnerLength {
     type Error = InnerLengthError;
 
     fn try_from(len: usize) -> Result<Self, Self::Error> {
         Self::new(len).ok_or(InnerLengthError)
+    }
+}
+
+impl TryFrom<NonZeroLength> for InnerLength {
+    type Error = InnerLengthError;
+
+    fn try_from(len: NonZeroLength) -> Result<Self, Self::Error> {
+        Self::new(len.into()).ok_or(InnerLengthError)
     }
 }
 
@@ -533,6 +673,65 @@ impl_cmp_ops! {
     InnerLength : usize,
 }
 
+macro_rules! impl_bit_ops {
+    ($( $t:ty => { $( $u:ty ),+ } ,)+) => {$(
+        $(
+            impl ops::BitAnd<$u> for $t {
+                type Output = Length;
+
+                #[inline(always)]
+                fn bitand(self, other: $u) -> Self::Output {
+                    let lhs: usize = self.into();
+                    let rhs: usize = other.into();
+                    Length(lhs & rhs)
+                }
+            }
+
+            impl ops::BitXor<$u> for $t {
+                type Output = Length;
+
+                #[inline(always)]
+                fn bitxor(self, other: $u) -> Self::Output {
+                    let lhs: usize = self.into();
+                    let rhs: usize = other.into();
+                    Length(lhs ^ rhs)
+                }
+            }
+        )+
+    )+}
+}
+
+impl_bit_ops! {
+    Length => {Length, NonZeroLength, InnerLength, usize },
+    NonZeroLength => {Length, NonZeroLength, InnerLength, usize },
+    InnerLength => {Length, NonZeroLength, InnerLength, usize },
+}
+
+macro_rules! impl_fmts {
+    ($( $t:ty, )+) => {$(
+        impl fmt::Display for $t {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let this = usize::from(*self);
+                this.fmt(f)
+            }
+        }
+
+        impl fmt::Binary for $t {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let this = usize::from(*self);
+                this.fmt(f)
+            }
+        }
+    )+}
+}
+
+impl_fmts! {
+    Length,
+    NonZeroLength,
+    InnerLength,
+}
+
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -541,5 +740,17 @@ mod test {
     fn test() {
         let l = InnerLength::new(0b11).unwrap();
         dbg!(l.split());
+    }
+
+    #[test]
+    fn ops_bitand() {
+        assert_eq!(Length(0) & Length(0),
+                   0);
+        assert_eq!(Length(0b11) & Length(0b1),
+                   0b1);
+        assert_eq!(Length(0b11) & 0b10,
+                   0b10);
+        assert_eq!(InnerLength::MAX & NonZeroLength::MAX,
+                   Length::MAX);
     }
 }
