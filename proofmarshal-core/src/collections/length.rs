@@ -312,20 +312,18 @@ impl InnerLength {
     ///            (NonZeroLength::new(0b10).unwrap(),
     ///             NonZeroLength::new(0b01).unwrap()));
     /// ```
-    pub fn split(self) -> (NonZeroLength, NonZeroLength) {
+    pub const fn split(self) -> (NonZeroLength, NonZeroLength) {
         let mut mask = usize::MAX;
         loop {
             mask <<= 1;
-            debug_assert_ne!(mask, 0);
+            //debug_assert_ne!(mask, 0);
 
             let lhs = self.get() & mask;
             let rhs = self.get() & !mask;
 
             if lhs.count_ones().is_power_of_two() {
-                let lhs = NonZeroLength::new(lhs)
-                                        .unwrap_or_else(|| unsafe { unreachable_unchecked!() });
-                let rhs = NonZeroLength::new(rhs)
-                                        .unwrap_or_else(|| unsafe { unreachable_unchecked!() });
+                let lhs = unsafe { NonZeroLength::new_unchecked(lhs) };
+                let rhs = unsafe { NonZeroLength::new_unchecked(rhs) };
                 break (lhs, rhs)
             }
         }

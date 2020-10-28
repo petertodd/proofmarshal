@@ -27,7 +27,7 @@ use super::length::*;
 mod leaf;
 pub use self::leaf::*;
 
-mod raw;
+pub mod raw;
 use self::raw::*;
 pub use self::raw::Kind;
 

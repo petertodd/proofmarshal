@@ -213,7 +213,7 @@ impl<Z: Zone> AsZone<()> for Z {
     }
 }
 
-pub trait Alloc : Zone {
+pub trait Alloc : GetMut {
     fn alloc_raw(&mut self, layout: core::alloc::Layout) -> (NonNull<()>, Self::Ptr, Self);
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Bag<T, Self, Self::Ptr> {
