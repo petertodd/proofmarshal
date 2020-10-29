@@ -97,27 +97,52 @@ impl Default for HeapPtr {
     }
 }
 
-impl Get for Heap {
-    unsafe fn get_unchecked<'p, T: ?Sized + LoadRef>(&self, ptr: &'p HeapPtr, metadata: T::Metadata)
+impl TryGet for Heap {
+    unsafe fn try_get_unchecked<'p, T: ?Sized + LoadRef>(&self, ptr: &'p HeapPtr, metadata: T::Metadata)
         -> Result<MaybeValid<Ref<'p, T>>, Self::Error>
     {
         let r = ptr.try_get_dirty::<T>(metadata).into_ok();
         Ok(Ref::Borrowed(r).into())
     }
 
-    unsafe fn take_unchecked<'p, T: ?Sized + LoadRef>(&self, ptr: HeapPtr, metadata: T::Metadata)
+    unsafe fn try_take_unchecked<'p, T: ?Sized + LoadRef>(self, ptr: HeapPtr, metadata: T::Metadata)
         -> Result<MaybeValid<T::Owned>, Self::Error>
     {
         todo!()
     }
 }
 
-impl GetMut for Heap {
-    unsafe fn get_unchecked_mut<'p, T: ?Sized + Pointee>(&self, ptr: &'p mut HeapPtr, metadata: T::Metadata)
+impl TryGetMut for Heap {
+    unsafe fn try_get_unchecked_mut<'p, T: ?Sized + Pointee>(&self, ptr: &'p mut HeapPtr, metadata: T::Metadata)
         -> Result<MaybeValid<&'p mut T>, Self::Error>
     {
         let r = ptr.try_get_dirty_mut::<T>(metadata).into_ok();
         Ok(r.into())
+    }
+}
+
+impl Get for Heap {
+    unsafe fn get_unchecked<'a, T: ?Sized + LoadRef>(&'a self, ptr: &'a HeapPtr, metadata: T::Metadata)
+        -> MaybeValid<Ref<'a, T>>
+    where Self: AsZone<T::Zone>
+    {
+        self.try_get_unchecked::<T>(ptr, metadata).into_ok()
+    }
+
+    unsafe fn take_unchecked<'p, T: ?Sized + LoadRef>(self, ptr: HeapPtr, metadata: T::Metadata)
+        -> MaybeValid<T::Owned>
+    where Self: AsZone<T::Zone>
+    {
+        self.try_take_unchecked::<T>(ptr, metadata).into_ok()
+    }
+}
+
+impl GetMut for Heap {
+    unsafe fn get_unchecked_mut<'a, T: ?Sized + LoadRef>(&'a self, ptr: &'a mut HeapPtr, metadata: T::Metadata)
+        -> MaybeValid<&'a mut T>
+    where Self: AsZone<T::Zone>
+    {
+        self.try_get_unchecked_mut::<T>(ptr, metadata).into_ok()
     }
 }
 

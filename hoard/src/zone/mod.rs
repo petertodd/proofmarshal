@@ -165,8 +165,8 @@ impl<P: Ptr> AsPtr<P> for ! {
     }
 }
 
-pub trait Get<P = <Self as Zone>::Ptr> : Zone {
-    unsafe fn get_unchecked<'a, T: ?Sized>(
+pub trait TryGet<P = <Self as Zone>::Ptr> : Zone {
+    unsafe fn try_get_unchecked<'a, T: ?Sized>(
         &'a self,
         ptr: &'a P,
         metadata: T::Metadata
@@ -174,11 +174,39 @@ pub trait Get<P = <Self as Zone>::Ptr> : Zone {
         where T: LoadRef,
               Self: AsZone<T::Zone>;
 
-    unsafe fn take_unchecked<T: ?Sized>(
-        &self,
+    unsafe fn try_take_unchecked<T: ?Sized>(
+        self,
         ptr: P,
         metadata: T::Metadata
     ) -> Result<MaybeValid<T::Owned>, Self::Error>
+        where T: LoadRef,
+              Self: AsZone<T::Zone>;
+}
+
+pub trait TryGetMut<P = <Self as Zone>::Ptr> : Get<P> {
+    unsafe fn try_get_unchecked_mut<'a, T: ?Sized>(
+        &'a self,
+        ptr: &'a mut P,
+        metadata: T::Metadata
+    ) -> Result<MaybeValid<&'a mut T>, Self::Error>
+        where T: LoadRef,
+              Self: AsZone<T::Zone>;
+}
+
+pub trait Get<P = <Self as Zone>::Ptr> : TryGet<P> {
+    unsafe fn get_unchecked<'a, T: ?Sized>(
+        &'a self,
+        ptr: &'a P,
+        metadata: T::Metadata
+    ) -> MaybeValid<Ref<'a, T>>
+        where T: LoadRef,
+              Self: AsZone<T::Zone>;
+
+    unsafe fn take_unchecked<T: ?Sized>(
+        self,
+        ptr: P,
+        metadata: T::Metadata
+    ) -> MaybeValid<T::Owned>
         where T: LoadRef,
               Self: AsZone<T::Zone>;
 }
@@ -188,7 +216,7 @@ pub trait GetMut<P = <Self as Zone>::Ptr> : Get<P> {
         &'a self,
         ptr: &'a mut P,
         metadata: T::Metadata
-    ) -> Result<MaybeValid<&'a mut T>, Self::Error>
+    ) -> MaybeValid<&'a mut T>
         where T: LoadRef,
               Self: AsZone<T::Zone>;
 }
@@ -213,7 +241,7 @@ impl<Z: Zone> AsZone<()> for Z {
     }
 }
 
-pub trait Alloc : GetMut {
+pub trait Alloc : Zone {
     fn alloc_raw(&mut self, layout: core::alloc::Layout) -> (NonNull<()>, Self::Ptr, Self);
 
     fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Bag<T, Self, Self::Ptr> {
