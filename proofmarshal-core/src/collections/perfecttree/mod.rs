@@ -110,61 +110,59 @@ impl<T, Z, P: Ptr> PerfectTree<T, Z, P> {
 impl<T, Z: Zone> PerfectTreeDyn<T, Z>
 where T: Load
 {
-    pub fn get<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, T>>, Z::Error>
+    pub fn get<'a>(&'a self, idx: usize) -> Option<Ref<'a, T>>
         where Z: Get + AsZone<T::Zone>
     {
-        match self.get_leaf(idx)? {
-            None => Ok(None),
-            Some(Ref::Borrowed(leaf)) => Ok(Some(leaf.get()?)),
+        match self.get_leaf(idx) {
+            None => None,
+            Some(Ref::Borrowed(leaf)) => Some(leaf.get()),
             Some(Ref::Owned(_leaf)) => todo!(),
         }
     }
 
-    pub fn get_mut(&mut self, idx: usize) -> Result<Option<&mut T>, Z::Error>
+    pub fn get_mut(&mut self, idx: usize) -> Option<&mut T>
         where Z: GetMut + AsZone<T::Zone>
     {
-        match self.get_leaf_mut(idx)? {
-            None => Ok(None),
-            Some(leaf) => Ok(Some(leaf.get_mut()?)),
+        match self.get_leaf_mut(idx) {
+            None => None,
+            Some(leaf) => Some(leaf.get_mut()),
         }
     }
 
-    pub fn get_leaf<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, Leaf<T, Z>>>, Z::Error>
+    pub fn get_leaf<'a>(&'a self, idx: usize) -> Option<Ref<'a, Leaf<T, Z>>>
         where Z: Get
     {
         match self.kind() {
             Kind::Leaf(leaf) if idx == 0 => {
-                Ok(Some(Ref::Borrowed(leaf)))
+                Some(Ref::Borrowed(leaf))
             },
-            Kind::Leaf(_) => Ok(None),
+            Kind::Leaf(_) => None,
             Kind::Tip(tip) => tip.get_leaf(idx),
         }
     }
 
-    pub fn get_leaf_mut(&mut self, idx: usize) -> Result<Option<&mut Leaf<T, Z>>, Z::Error>
+    pub fn get_leaf_mut(&mut self, idx: usize) -> Option<&mut Leaf<T, Z>>
         where Z: GetMut
     {
         match self.kind_mut() {
-            Kind::Leaf(leaf) if idx == 0 => {
-                Ok(Some(leaf))
-            },
-            Kind::Leaf(_) => Ok(None),
+            Kind::Leaf(leaf) if idx == 0 => Some(leaf),
+            Kind::Leaf(_) => None,
             Kind::Tip(tip) => tip.get_leaf_mut(idx),
         }
     }
 }
 
 use hoard::zone::heap::Heap;
-pub fn test_get<'a>(tree: &'a PerfectTreeDyn<u8, Heap>, idx: usize) -> Result<Option<Ref<'a, u8>>, !> {
+pub fn test_get<'a>(tree: &'a PerfectTreeDyn<u8, Heap>, idx: usize) -> Option<Ref<'a, u8>> {
     tree.get(idx)
 }
 
 pub fn test_get_leaf<'a>(tree: &'a PerfectTreeDyn<u8, Heap>, idx: usize) -> Option<Ref<'a, Leaf<u8, Heap>>> {
-    tree.get_leaf(idx).into_ok()
+    tree.get_leaf(idx)
 }
 
 pub fn test_get_leaf_mut<'a>(tree: &mut PerfectTreeDyn<u8, Heap>, idx: usize) -> Option<&mut Leaf<u8, Heap>> {
-    tree.get_leaf_mut(idx).into_ok()
+    tree.get_leaf_mut(idx)
 }
 
 pub fn test_drop(tree: PerfectTree<u8, Heap>) {
@@ -240,47 +238,45 @@ impl<T, Z, P: Ptr> InnerTip<T, Z, P> {
 impl<T, Z: Zone> InnerTipDyn<T, Z>
 where T: Load
 {
-    pub fn get_leaf<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, Leaf<T, Z>>>, Z::Error>
+    pub fn get_leaf<'a>(&'a self, idx: usize) -> Option<Ref<'a, Leaf<T, Z>>>
         where Z: Get
     {
         if idx < self.len() {
-            match self.get_node()? {
+            match self.get_node() {
                 Ref::Borrowed(node) => node.get_leaf(idx),
                 Ref::Owned(_node) => todo!(),
             }
         } else {
-            Ok(None)
+            None
         }
     }
 
-    pub fn get_leaf_mut(&mut self, idx: usize) -> Result<Option<&mut Leaf<T, Z>>, Z::Error>
+    pub fn get_leaf_mut(&mut self, idx: usize) -> Option<&mut Leaf<T, Z>>
         where Z: GetMut
     {
         if idx < self.len() {
-            self.get_node_mut()?
+            self.get_node_mut()
                 .get_leaf_mut(idx)
         } else {
-            Ok(None)
+            None
         }
     }
 
-    pub fn get_node<'a>(&'a self) -> Result<Ref<'a, InnerNodeDyn<T, Z>>, Z::Error>
+    pub fn get_node<'a>(&'a self) -> Ref<'a, InnerNodeDyn<T, Z>>
         where Z: Get
     {
-        let r = unsafe {
-            self.raw.zone.get_unchecked(&self.raw.ptr, self.height())?
-        };
-        Ok(r.trust())
+        unsafe {
+            self.raw.zone.get_unchecked(&self.raw.ptr, self.height())
+        }.trust()
     }
 
-    pub fn get_node_mut(&mut self) -> Result<&mut InnerNodeDyn<T, Z>, Z::Error>
+    pub fn get_node_mut(&mut self) -> &mut InnerNodeDyn<T, Z>
         where Z: GetMut
     {
         let height = self.height();
-        let r = unsafe {
-            self.raw.zone.get_unchecked_mut(&mut self.raw.ptr, height)?
-        };
-        Ok(r.trust())
+        unsafe {
+            self.raw.zone.get_unchecked_mut(&mut self.raw.ptr, height)
+        }.trust()
     }
 }
 
@@ -360,7 +356,7 @@ impl<T, Z, P: Ptr> InnerNode<T, Z, P> {
 impl<T, Z: Zone> InnerNodeDyn<T, Z>
 where T: Load
 {
-    pub fn get_leaf<'a>(&'a self, idx: usize) -> Result<Option<Ref<'a, Leaf<T, Z>>>, Z::Error>
+    pub fn get_leaf<'a>(&'a self, idx: usize) -> Option<Ref<'a, Leaf<T, Z>>>
         where Z: Get
     {
         let len = usize::from(self.len());
@@ -369,11 +365,11 @@ where T: Load
         } else if idx < len {
             self.right().get_leaf(idx - (len / 2))
         } else {
-            Ok(None)
+            None
         }
     }
 
-    pub fn get_leaf_mut(&mut self, idx: usize) -> Result<Option<&mut Leaf<T, Z>>, Z::Error>
+    pub fn get_leaf_mut(&mut self, idx: usize) -> Option<&mut Leaf<T, Z>>
         where Z: GetMut
     {
         let len = usize::from(self.len());
@@ -382,7 +378,7 @@ where T: Load
         } else if idx < len {
             self.right_mut().get_leaf_mut(idx - (len / 2))
         } else {
-            Ok(None)
+            None
         }
     }
 }
@@ -816,11 +812,11 @@ mod tests {
         assert_eq!(tip.height(), 1);
 
         let tip = PerfectTree::from_tip(tip);
-        assert_eq!(tip.get(0).into_ok(),
+        assert_eq!(tip.get(0),
                    Some(Ref::Owned(1)));
-        assert_eq!(tip.get(1).into_ok(),
+        assert_eq!(tip.get(1),
                    Some(Ref::Owned(2)));
-        assert_eq!(tip.get(2).into_ok(), None);
+        assert_eq!(tip.get(2), None);
     }
 }
 

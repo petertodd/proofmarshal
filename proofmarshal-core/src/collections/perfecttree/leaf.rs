@@ -39,13 +39,13 @@ impl<T, Z: Zone> Leaf<T, Z> {
 impl<T, Z: Zone> Leaf<T, Z>
 where T: Load
 {
-    pub fn get(&self) -> Result<Ref<T>, Z::Error>
+    pub fn get(&self) -> Ref<T>
         where Z: Get + AsZone<T::Zone>
     {
         self.bag.get()
     }
 
-    pub fn get_mut(&mut self) -> Result<&mut T, Z::Error>
+    pub fn get_mut(&mut self) -> &mut T
         where Z: GetMut + AsZone<T::Zone>
     {
         self.bag.get_mut()
