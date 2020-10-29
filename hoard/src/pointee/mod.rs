@@ -5,7 +5,7 @@ use crate::primitive::Primitive;
 
 pub trait Pointee {
     type Metadata : 'static + Primitive + fmt::Debug + Eq + Ord;
-    type LayoutError : 'static + std::error::Error;
+    type LayoutError : 'static + std::error::Error + Send;
 
     fn metadata(this: *const Self) -> Self::Metadata;
 

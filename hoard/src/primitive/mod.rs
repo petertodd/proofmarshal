@@ -6,7 +6,7 @@ use crate::zone::Ptr;
 pub mod impls;
 
 pub trait Primitive : 'static + Copy {
-    type DecodeBytesError : 'static + std::error::Error;
+    type DecodeBytesError : 'static + std::error::Error + Send;
     const BLOB_SIZE: usize;
 
     fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self>;

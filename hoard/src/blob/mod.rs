@@ -14,7 +14,7 @@ pub use crate::maybevalid::MaybeValid;
 
 pub trait Blob : 'static + Sized {
     const SIZE: usize;
-    type DecodeBytesError : 'static + std::error::Error;
+    type DecodeBytesError : 'static + std::error::Error + Send;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self>;
     fn decode_bytes(blob: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError>;
