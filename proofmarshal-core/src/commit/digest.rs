@@ -219,36 +219,36 @@ impl<T> fmt::Debug for Digest<T> {
     }
 }
 
-/*
-impl<T: ?Sized> hash::Hash for Digest<T> {
+impl<T> hash::Hash for Digest<T> {
     #[inline]
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.as_bytes().hash(state)
     }
 }
 
-impl<T: ?Sized> PartialEq for Digest<T> {
+impl<T> PartialEq for Digest<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.as_bytes().eq(other.as_bytes())
     }
 }
-impl<T: ?Sized> Eq for Digest<T> {}
+impl<T> Eq for Digest<T> {}
 
-impl<T: ?Sized> PartialOrd for Digest<T> {
+impl<T> PartialOrd for Digest<T> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         self.as_bytes().partial_cmp(other.as_bytes())
     }
 }
 
-impl<T: ?Sized> Ord for Digest<T> {
+impl<T> Ord for Digest<T> {
     #[inline]
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.as_bytes().cmp(other.as_bytes())
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
