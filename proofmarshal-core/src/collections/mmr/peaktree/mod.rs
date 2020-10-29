@@ -26,31 +26,37 @@ use self::raw::*;
 pub use self::raw::Kind;
 
 pub struct InnerNode<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: InnerNodeRaw<T, Z, P>,
     len: InnerLength,
 }
 
 pub struct InnerNodeDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: InnerNodeRaw<T, Z, P>,
     len: InnerLengthDyn,
 }
 
 pub struct InnerTip<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: InnerTipRaw<T, Z, P>,
     len: InnerLength,
 }
 
 pub struct InnerTipDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: InnerTipRaw<T, Z, P>,
     len: InnerLengthDyn,
 }
 
 pub struct PeakTree<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: PeakTreeRaw<T, Z, P>,
     len: NonZeroLength,
 }
 
 pub struct PeakTreeDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: PeakTreeRaw<T, Z, P>,
     len: NonZeroLengthDyn,
 }
@@ -79,7 +85,11 @@ impl<T, Z, P: Ptr> PeakTree<T, Z, P> {
         len: NonZeroLength,
     ) -> Self
     {
-        Self { raw, len }
+        Self {
+            marker: PhantomData,
+            raw,
+            len,
+        }
     }
 }
 
@@ -221,6 +231,7 @@ macro_rules! impl_deref {
                 let this = Own::leak(self);
                 unsafe {
                     $t {
+                        marker: PhantomData,
                         len: this.len(),
                         raw: ptr::read(&this.raw),
                     }

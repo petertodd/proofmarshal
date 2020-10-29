@@ -33,36 +33,42 @@ pub use self::raw::Kind;
 
 #[repr(C)]
 pub struct InnerNode<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: InnerNodeRaw<T, Z, P>,
     height: NonZeroHeight,
 }
 
 #[repr(C)]
 pub struct InnerNodeDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: InnerNodeRaw<T, Z, P>,
     height: NonZeroHeightDyn,
 }
 
 #[repr(C)]
 pub struct InnerTip<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: InnerTipRaw<T, Z, P>,
     height: NonZeroHeight,
 }
 
 #[repr(C)]
 pub struct InnerTipDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: InnerTipRaw<T, Z, P>,
     height: NonZeroHeightDyn,
 }
 
 #[repr(C)]
 pub struct PerfectTree<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: PerfectTreeRaw<T, Z, P>,
     height: Height,
 }
 
 #[repr(C)]
 pub struct PerfectTreeDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+    marker: PhantomData<T>,
     raw: PerfectTreeRaw<T, Z, P>,
     height: HeightDyn,
 }
@@ -88,6 +94,7 @@ impl<T, Z, P: Ptr> PerfectTree<T, Z, P> {
 
     pub unsafe fn from_raw_parts(raw: PerfectTreeRaw<T, Z, P>, height: Height) -> Self {
         Self {
+            marker: PhantomData,
             raw,
             height,
         }
@@ -220,6 +227,7 @@ impl<T, Z: Zone> InnerTip<T, Z> {
 impl<T, Z, P: Ptr> InnerTip<T, Z, P> {
     pub unsafe fn from_raw_parts(raw: InnerTipRaw<T, Z, P>, height: NonZeroHeight) -> Self {
         Self {
+            marker: PhantomData,
             raw,
             height,
         }
@@ -338,6 +346,7 @@ impl<T, Z: Zone> InnerNode<T, Z> {
 impl<T, Z, P: Ptr> InnerNode<T, Z, P> {
     pub unsafe fn from_raw_parts(raw: InnerNodeRaw<T, Z, P>, height: NonZeroHeight) -> Self {
         Self {
+            marker: PhantomData,
             raw,
             height,
         }
@@ -491,6 +500,7 @@ macro_rules! impl_deref {
                 let this = Own::leak(self);
                 unsafe {
                     $t {
+                        marker: PhantomData,
                         height: this.height(),
                         raw: ptr::read(&this.raw),
                     }
