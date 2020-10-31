@@ -810,6 +810,52 @@ where T: Load
     }
 }
 
+// -------- drop impls ------------
+impl<T, Z, P: Ptr> Drop for PerfectTreeDyn<T, Z, P> {
+    fn drop(&mut self) {
+        match self.kind_mut() {
+            Kind::Leaf(leaf) => unsafe { ptr::drop_in_place(leaf) },
+            Kind::Tip(tip) => unsafe { ptr::drop_in_place(tip) },
+        }
+    }
+}
+
+impl<T, Z, P: Ptr> Drop for PerfectTree<T, Z, P> {
+    fn drop(&mut self) {
+        unsafe { ptr::drop_in_place(self.deref_mut()) }
+    }
+}
+
+impl<T, Z, P: Ptr> Drop for TipDyn<T, Z, P> {
+    fn drop(&mut self) {
+        let height = self.height();
+        unsafe {
+            self.raw.ptr.dealloc::<PairDyn<T, Z, P>>(height);
+        }
+    }
+}
+
+impl<T, Z, P: Ptr> Drop for Tip<T, Z, P> {
+    fn drop(&mut self) {
+        unsafe { ptr::drop_in_place(self.deref_mut()) }
+    }
+}
+
+impl<T, Z, P: Ptr> Drop for PairDyn<T, Z, P> {
+    fn drop(&mut self) {
+        unsafe {
+            ptr::drop_in_place(self.left_mut());
+            ptr::drop_in_place(self.right_mut());
+        }
+    }
+}
+
+impl<T, Z, P: Ptr> Drop for Pair<T, Z, P> {
+    fn drop(&mut self) {
+        unsafe { ptr::drop_in_place(self.deref_mut()) }
+    }
+}
+
 
 // -------------- fmt::Debug impls ---------------
 
@@ -1214,42 +1260,6 @@ impl<T, Z, P: Ptr> InnerNodeDyn<T, Z, P> {
 
 
 
-// -------- drop impls ------------
-impl<T, Z, P: Ptr> Drop for InnerNode<T, Z, P> {
-    fn drop(&mut self) {
-        unsafe { self.raw.dealloc(self.height()) }
-    }
-}
-
-impl<T, Z, P: Ptr> Drop for InnerNodeDyn<T, Z, P> {
-    fn drop(&mut self) {
-        unsafe { self.raw.dealloc(self.height()) }
-    }
-}
-
-impl<T, Z, P: Ptr> Drop for InnerTip<T, Z, P> {
-    fn drop(&mut self) {
-        unsafe { self.raw.dealloc(self.height()) }
-    }
-}
-
-impl<T, Z, P: Ptr> Drop for InnerTipDyn<T, Z, P> {
-    fn drop(&mut self) {
-        unsafe { self.raw.dealloc(self.height()) }
-    }
-}
-
-impl<T, Z, P: Ptr> Drop for PerfectTree<T, Z, P> {
-    fn drop(&mut self) {
-        unsafe { self.raw.dealloc(self.height()) }
-    }
-}
-
-impl<T, Z, P: Ptr> Drop for PerfectTreeDyn<T, Z, P> {
-    fn drop(&mut self) {
-        unsafe { self.raw.dealloc(self.height()) }
-    }
-}
 
 // ---------- Debug impls ----------
 impl<T, Z, P: Ptr> fmt::Debug for PerfectTreeDyn<T, Z, P>
