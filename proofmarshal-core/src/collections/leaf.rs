@@ -136,6 +136,17 @@ impl<T, Z, P: Ptr> Leaf<T, Z, P> {
     }
 }
 
+impl<T, Z, P: Ptr> Commit for Leaf<T, Z, P>
+where T: Commit
+{
+    const VERBATIM_LEN: usize = Digest::<!>::LEN;
+    type Committed = T::Committed;
+
+    fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
+        dst.write(&self.digest().as_bytes())
+    }
+}
+
 // ---- hoard impls ------
 
 #[derive(Debug, Error)]
@@ -192,5 +203,45 @@ where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug
             .field("zone", &self.raw.zone)
             .field("ptr", &self.try_get_dirty().map_err(P::from_clean))
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use hoard::zone::heap::Heap;
+
+    #[test]
+    fn test_commit() {
+        let n = 42u8;
+        let leaf_n = Leaf::new_in(n, Heap);
+
+        assert!(leaf_n.try_digest().is_none());
+        assert_eq!(leaf_n.digest(), n.commit());
+        assert_eq!(leaf_n.try_digest(), Some(n.commit().cast()));
+        assert_eq!(leaf_n.commit(), n.commit());
+    }
+
+    #[test]
+    fn test_digest_updated_on_write() {
+        let n = 1u8;
+        let mut leaf_n = Leaf::new_in(n, Heap);
+
+        *(leaf_n.get_mut()) = 2;
+
+        assert!(leaf_n.try_digest().is_none());
+        assert_eq!(leaf_n.digest(), 2u8.commit());
+        assert!(leaf_n.try_digest().is_some());
+
+        leaf_n.get_mut();
+        assert!(leaf_n.try_digest().is_none());
+        assert_eq!(leaf_n.digest(), 2u8.commit());
+
+        *(leaf_n.get_mut()) = 3;
+
+        assert!(leaf_n.try_digest().is_none());
+        assert_eq!(leaf_n.digest(), 3u8.commit());
+        assert!(leaf_n.try_digest().is_some());
     }
 }
