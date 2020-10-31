@@ -3,8 +3,10 @@ use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ptr;
 
-use hoard::zone::Ptr;
+use hoard::blob::{Blob, Bytes, BytesUninit};
+use hoard::zone::{Ptr, PtrBlob};
 use hoard::pointee::Pointee;
+use hoard::load::MaybeValid;
 
 use crate::commit::Digest;
 use crate::collections::perfecttree::{
@@ -124,5 +126,54 @@ impl<T, Z, P: Ptr> InnerNodeRaw<T, Z, P> {
     pub unsafe fn dealloc(&mut self, len: InnerLength) {
         ptr::drop_in_place(self.left_mut(len));
         ptr::drop_in_place(self.right_mut(len));
+    }
+}
+
+// ---- blob impls ----
+impl<T, Z, P: PtrBlob> Blob for InnerNodeRaw<T, Z, P>
+where T: Blob,
+      Z: Blob,
+{
+    const SIZE: usize = 0;
+
+    type DecodeBytesError = !;
+    fn encode_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        todo!()
+    }
+
+    fn decode_bytes(_: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
+        todo!()
+    }
+}
+
+impl<T, Z, P: PtrBlob> Blob for InnerTipRaw<T, Z, P>
+where T: Blob,
+      Z: Blob,
+{
+    const SIZE: usize = 0;
+
+    type DecodeBytesError = !;
+    fn encode_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        todo!()
+    }
+
+    fn decode_bytes(_: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
+        todo!()
+    }
+}
+
+impl<T, Z, P: PtrBlob> Blob for PeakTreeRaw<T, Z, P>
+where T: Blob,
+      Z: Blob,
+{
+    const SIZE: usize = 0;
+
+    type DecodeBytesError = !;
+    fn encode_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        todo!()
+    }
+
+    fn decode_bytes(_: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
+        todo!()
     }
 }

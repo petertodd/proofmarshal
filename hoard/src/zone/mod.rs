@@ -242,9 +242,9 @@ impl<Z: Zone> AsZone<()> for Z {
 }
 
 pub trait Alloc : Zone {
-    fn alloc_raw(&mut self, layout: core::alloc::Layout) -> (NonNull<()>, Self::Ptr, Self);
+    fn alloc_raw(&self, layout: core::alloc::Layout) -> (NonNull<()>, Self::Ptr, Self);
 
-    fn alloc<T: ?Sized + Pointee>(&mut self, src: impl Take<T>) -> Bag<T, Self, Self::Ptr> {
+    fn alloc<T: ?Sized + Pointee>(&self, src: impl Take<T>) -> Bag<T, Self, Self::Ptr> {
         src.take_unsized(|src| {
             let (dst, zone_ptr, zone) = self.alloc_raw(Layout::for_value::<T>(&src));
 

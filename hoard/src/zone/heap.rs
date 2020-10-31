@@ -158,7 +158,7 @@ impl Zone for Heap {
 }
 
 impl Alloc for Heap {
-    fn alloc_raw(&mut self, layout: core::alloc::Layout) -> (NonNull<()>, Self::Ptr, Self) {
+    fn alloc_raw(&self, layout: core::alloc::Layout) -> (NonNull<()>, Self::Ptr, Self) {
         let (nonnull, ptr) = HeapPtr::alloc_raw(layout);
         (nonnull, ptr, Heap)
     }

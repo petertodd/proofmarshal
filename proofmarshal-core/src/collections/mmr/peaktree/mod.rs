@@ -7,10 +7,12 @@ use std::ops::{Deref, DerefMut};
 use std::marker::PhantomData;
 use std::fmt;
 
-use hoard::pointee::Pointee;
-use hoard::zone::{Alloc, Get, GetMut, Ptr, Zone};
-use hoard::owned::{Take, Own, IntoOwned};
 use hoard::bag::Bag;
+use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
+use hoard::owned::{Take, Own, IntoOwned};
+use hoard::pointee::Pointee;
+use hoard::zone::{Alloc, Get, GetMut, Ptr, PtrBlob, Zone};
+use hoard::load::{Load, LoadRef, MaybeValid};
 
 use crate::collections::{
     length::*,
@@ -275,6 +277,24 @@ impl_drop! {
     InnerNode, InnerNodeDyn,
     InnerTip, InnerTipDyn,
     PeakTree, PeakTreeDyn,
+}
+
+// ---- hoard impls -------
+impl<T, Z, P: PtrBlob> Blob for InnerNode<T, Z, P>
+where T: Blob,
+      Z: Blob,
+{
+    const SIZE: usize = 0;
+
+    type DecodeBytesError = !;
+
+    fn encode_bytes<'a>(&self, _: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        todo!()
+    }
+
+    fn decode_bytes(_: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
+        todo!()
+    }
 }
 
 #[cfg(test)]
