@@ -108,7 +108,8 @@ impl TryGet for Heap {
     unsafe fn try_take_unchecked<'p, T: ?Sized + LoadRef>(self, ptr: HeapPtr, metadata: T::Metadata)
         -> Result<MaybeValid<T::Owned>, Self::Error>
     {
-        todo!()
+        let r = ptr.try_take_dirty::<T>(metadata).into_ok();
+        Ok(r.into())
     }
 }
 

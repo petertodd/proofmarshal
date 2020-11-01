@@ -17,20 +17,17 @@ use hoard::pointee::Pointee;
 use hoard::zone::{Alloc, Get, GetMut, Ptr, PtrBlob, Zone};
 use hoard::load::{Load, LoadRef, MaybeValid};
 
-use crate::collections::perfecttree::Leaf;
+use crate::collections::leaf::Leaf;
 use crate::collections::length::*;
+use crate::collections::perfecttree::PerfectTree;
 
 pub mod peaktree;
 use self::peaktree::PeakTree;
 
-pub struct MMR<T, Z, P: Ptr = <Z as Zone>::Ptr> {
-    state: State<T, Z, P>,
+#[derive(Debug)]
+pub struct MMR<T, Z = (), P: Ptr = <Z as Zone>::Ptr> {
+    peaks: Option<PeakTree<T, Z, P>>,
     zone: Z,
-}
-
-enum State<T, Z, P: Ptr = <Z as Zone>::Ptr> {
-    Empty,
-    Peaks(PeakTree<T, Z, P>),
 }
 
 impl<T, Z: Zone> Default for MMR<T, Z>
@@ -42,47 +39,55 @@ where Z: Default
 }
 
 impl<T, Z: Zone> MMR<T, Z> {
-    pub fn new_in(zone: impl Borrow<Z>) -> Self {
+    pub fn new_in(zone: Z) -> Self {
         Self {
-            state: State::Empty,
-            zone: zone.borrow().clone(),
+            peaks: None,
+            zone,
         }
     }
 
     pub fn len(&self) -> Length {
-        match &self.state {
-            State::Empty => Length(0),
-            State::Peaks(peaks) => peaks.len().into(),
-        }
+        self.peaks.as_ref()
+            .map(|peaks| {
+                peaks.len().into()
+            }).unwrap_or(Length(0))
     }
 }
-
-#[derive(Debug)]
-pub struct OverflowError<T>(pub T);
 
 impl<T, Z: Zone> MMR<T, Z>
 where T: Load,
 {
-    pub fn push(&mut self, value: T) -> Result<Result<(), OverflowError<T>>, Z::Error>
-        where Z: Alloc
+    pub fn try_push(&mut self, value: T) -> Result<(), T>
+        where Z: GetMut + Alloc
     {
         if self.len() < Length::MAX {
             let leaf = Leaf::new_in(value, self.zone);
-            Ok(match self.push_leaf(leaf)? {
+            match self.try_push_leaf(leaf) {
                 Ok(()) => Ok(()),
                 Err(_overflow) => unreachable!("overflow condition already checked"),
-            })
+            }
         } else {
-            Ok(Err(OverflowError(value)))
+            Err(value)
         }
     }
 
-    pub fn push_leaf(&mut self, leaf: Leaf<T, Z>) -> Result<Result<(), OverflowError<Leaf<T, Z>>>, Z::Error>
-        where Z: Alloc
+    pub fn try_push_leaf(&mut self, leaf: Leaf<T, Z>) -> Result<(), Leaf<T, Z>>
+        where Z: GetMut + Alloc
     {
-        todo!()
+        if self.len() < Length::MAX {
+            let new_peak = if let Some(peaks) = self.peaks.take() {
+                peaks.try_push_peak(leaf.into()).ok().expect("overflow condition already checked")
+            } else {
+                PeakTree::from(PerfectTree::from(leaf))
+            };
+            self.peaks = Some(new_peak);
+            Ok(())
+        } else {
+            Err(leaf)
+        }
     }
 
+    /*
     pub fn get(&self, _idx: usize) -> Result<Option<Ref<T>>, Z::Error>
         where Z: Get
     {
@@ -97,6 +102,7 @@ where T: Load,
             State::Peaks(_peaks) => todo!(), //tree.get_leaf(idx),
         }
     }
+    */
 }
 
 #[cfg(test)]
@@ -106,7 +112,15 @@ mod tests {
     use hoard::zone::heap::Heap;
 
     #[test]
-    fn test() {
-        let mmr = MMR::<u8,Heap>::default();
+    fn test_push() {
+        let mut mmr = MMR::<u32,Heap>::default();
+
+        dbg!(&mmr);
+
+        for i in 1 ..= 10240 {
+            mmr.try_push(i).unwrap();
+            eprintln!("mmr.len() = 0b{:b}", mmr.len());
+        }
+        dbg!(mmr.len().split());
     }
 }

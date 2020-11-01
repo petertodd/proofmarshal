@@ -1,4 +1,4 @@
-use std::num::{NonZeroU64, NonZeroUsize};
+use std::num::{NonZeroU8, NonZeroU64, NonZeroUsize};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::cmp;
@@ -157,8 +157,8 @@ impl NonZeroLength {
              .unwrap_or_else(|| unsafe { unreachable_unchecked!() })
     }
 
-    pub const fn get(self) -> usize {
-        self.0.get()
+    pub const fn get(self) -> NonZeroUsize {
+        self.0
     }
 
     /// Checked addition.
@@ -174,8 +174,39 @@ impl NonZeroLength {
     ///            None);
     /// ```
     pub fn checked_add(self, other: impl Into<Length>) -> Option<Self> {
-        self.get().checked_add(other.into().get())
-                  .and_then(Self::new)
+        self.get().get().checked_add(other.into().get())
+                        .and_then(Self::new)
+    }
+
+    #[track_caller]
+    pub fn push_peak(self, right: impl Into<Height>) -> Result<InnerLength, Option<NonZeroHeight>> {
+        let left = self;
+        let right = right.into();
+        if self.min_height() > right {
+            let right = NonZeroLength::from_height(right);
+            let sum = self.0 | right.0;
+            Ok(InnerLength(sum))
+        } else if self.min_height() == right {
+            let right_len = NonZeroLength::from_height(right);
+            match self.get().get().checked_add(right_len.into()) {
+                None => Err(None),
+                Some(sum) if sum.is_power_of_two() => {
+                    let height = u8::try_from(sum.trailing_zeros()).unwrap();
+
+                    let height = unsafe { NonZeroU8::new_unchecked(height) };
+                    let height = unsafe { NonZeroHeight::new_unchecked(height) };
+
+                    Err(Some(height))
+                },
+                Some(sum) => {
+                    unsafe {
+                        Ok(InnerLength::new_unchecked(sum))
+                    }
+                }
+            }
+        } else {
+            panic!("can't push: self.min_height() = {} < {}", self.min_height(), right)
+        }
     }
 
     /// Tries to converts a `NonZeroLength` into an `InnerLength`.
@@ -198,8 +229,8 @@ impl NonZeroLength {
     ///            Err(Height::new(2).unwrap()));
     /// ```
     pub fn try_into_inner_length(self) -> Result<InnerLength, Height> {
-        let lsb = self.get().trailing_zeros() as u8;
-        InnerLength::new(self.get())
+        let lsb = self.0.get().trailing_zeros() as u8;
+        InnerLength::new(self.into())
             .ok_or(Height::new(lsb)
                           .unwrap_or_else(|| unsafe { unreachable_unchecked!() }))
     }
@@ -220,7 +251,7 @@ impl NonZeroLength {
     ///            Height::new(62).unwrap());
     /// ```
     pub fn min_height(self) -> Height {
-        let r = self.get().trailing_zeros() as u8;
+        let r = self.0.get().trailing_zeros() as u8;
         r.try_into()
          .unwrap_or_else(|_| unsafe { unreachable_unchecked!() })
     }
@@ -241,7 +272,7 @@ impl NonZeroLength {
     ///            Height::new(63).unwrap());
     /// ```
     pub fn max_height(self) -> Height {
-        let r = (usize::MAX.count_ones() - 1 - self.get().leading_zeros()) as u8;
+        let r = (usize::MAX.count_ones() - 1 - self.0.get().leading_zeros()) as u8;
         r.try_into()
          .unwrap_or_else(|_| unsafe { unreachable_unchecked!() })
     }
@@ -302,6 +333,44 @@ impl InnerLength {
         }
     }
 
+    /// Checked push.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use std::convert::TryFrom;
+    /// # use proofmarshal_core::collections::length::InnerLength;
+    /// # use proofmarshal_core::collections::height::{Height, NonZeroHeight};
+    /// let left = InnerLength::new(0b110).unwrap();
+    /// let right = Height::new(0).unwrap();
+    /// assert_eq!(left.push_peak(right).unwrap(),
+    ///            0b111);
+    ///
+    /// let left = InnerLength::new(0b11).unwrap();
+    /// let right = Height::new(0).unwrap();
+    /// assert_eq!(left.push_peak(right).unwrap_err(),
+    ///            Some(NonZeroHeight::try_from(2).unwrap()));
+    ///
+    /// let left = InnerLength::MAX;
+    /// let right = Height::new(0).unwrap();
+    /// assert_eq!(left.push_peak(right).unwrap_err(),
+    ///            None);
+    /// ```
+    ///
+    /// ```should_panic
+    /// # use std::convert::TryFrom;
+    /// # use proofmarshal_core::collections::length::InnerLength;
+    /// # use proofmarshal_core::collections::height::{Height, NonZeroHeight};
+    /// let left = InnerLength::MAX;
+    /// let right = Height::new(1).unwrap();
+    /// left.push_peak(right); // panics!
+    /// ```
+    #[track_caller]
+    pub fn push_peak(self, right: impl Into<Height>) -> Result<Self, Option<NonZeroHeight>> {
+        let left = NonZeroLength::from(self);
+        left.push_peak(right)
+    }
+
     /// Splits the `InnerLength` into left and right.
     ///
     /// ```
@@ -311,6 +380,16 @@ impl InnerLength {
     ///                        .split(),
     ///            (NonZeroLength::new(0b10).unwrap(),
     ///             NonZeroLength::new(0b01).unwrap()));
+    ///
+    /// assert_eq!(InnerLength::new(0b110).unwrap()
+    ///                        .split(),
+    ///            (NonZeroLength::new(0b100).unwrap(),
+    ///             NonZeroLength::new(0b010).unwrap()));
+    ///
+    /// assert_eq!(InnerLength::new(0b1111).unwrap()
+    ///                        .split(),
+    ///            (NonZeroLength::new(0b1100).unwrap(),
+    ///             NonZeroLength::new(0b0011).unwrap()));
     /// ```
     pub const fn split(self) -> (NonZeroLength, NonZeroLength) {
         let mut mask = usize::MAX;
@@ -321,7 +400,7 @@ impl InnerLength {
             let lhs = self.get() & mask;
             let rhs = self.get() & !mask;
 
-            if lhs.count_ones().is_power_of_two() {
+            if lhs.count_ones().is_power_of_two() && rhs != 0 {
                 let lhs = unsafe { NonZeroLength::new_unchecked(lhs) };
                 let rhs = unsafe { NonZeroLength::new_unchecked(rhs) };
                 break (lhs, rhs)

@@ -76,7 +76,7 @@ pub enum Kind<Leaf, Tip> {
 }
 
 impl<T, Z: Zone> PerfectTree<T, Z> {
-    pub fn try_join(left: PerfectTree<T, Z>, right: PerfectTree<T, Z>) -> Result<Self, JoinError<T, Z>>
+    pub fn try_join(left: PerfectTree<T, Z>, right: PerfectTree<T, Z>) -> Result<Self, (PerfectTree<T, Z>, PerfectTree<T, Z>)>
         where Z: Alloc
     {
         let tip = Tip::try_join(left, right)?;
@@ -154,6 +154,10 @@ impl<T, Z, P: Ptr> PerfectTreeDyn<T, Z, P> {
         self.height.to_height()
     }
 
+    pub fn len(&self) -> NonZeroLength {
+        NonZeroLength::from_height(self.height())
+    }
+
     pub fn kind(&self) -> Kind<&Leaf<T, Z, P>, &TipDyn<T, Z, P>> {
         if let Ok(height) = NonZeroHeight::try_from(self.height()) {
             let tip = unsafe { TipDyn::from_raw_node_ref(&self.raw, height) };
@@ -199,7 +203,7 @@ impl<T, Z, P: Ptr> PerfectTreeDyn<T, Z, P> {
 }
 
 impl<T, Z: Zone> Tip<T, Z> {
-    pub fn try_join(left: PerfectTree<T, Z>, right: PerfectTree<T, Z>) -> Result<Self, JoinError<T, Z>>
+    pub fn try_join(left: PerfectTree<T, Z>, right: PerfectTree<T, Z>) -> Result<Self, (PerfectTree<T, Z>, PerfectTree<T, Z>)>
         where Z: Alloc
     {
         let pair = Pair::try_join(left, right)?;
@@ -290,22 +294,10 @@ impl<T, Z, P: Ptr> TipDyn<T, Z, P> {
     }
 }
 
-#[derive(Debug)]
-pub enum JoinError<T, Z, P: Ptr = <Z as Zone>::Ptr> {
-    Overflow {
-        left: PerfectTree<T, Z, P>,
-        right: PerfectTree<T, Z, P>,
-    },
-    Mismatch {
-        left: PerfectTree<T, Z, P>,
-        right: PerfectTree<T, Z, P>,
-    }
-}
-
 impl<T, Z: Zone> Pair<T, Z> {
-    pub fn try_join(left: PerfectTree<T, Z>, right: PerfectTree<T, Z>) -> Result<Self, JoinError<T, Z>> {
+    pub fn try_join(left: PerfectTree<T, Z>, right: PerfectTree<T, Z>) -> Result<Self, (PerfectTree<T, Z>, PerfectTree<T, Z>)> {
         if left.height() != right.height() {
-            Err(JoinError::Mismatch { left, right })
+            panic!("height mismatch")
         } else if let Some(height) = left.height().try_increment() {
             let pair = raw::Pair {
                 left: left.into_raw_node(),
@@ -314,7 +306,7 @@ impl<T, Z: Zone> Pair<T, Z> {
 
             Ok(unsafe { Self::from_raw_pair(pair, height) })
         } else {
-            Err(JoinError::Overflow { left, right })
+            Err((left, right))
         }
     }
 }
