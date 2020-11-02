@@ -10,7 +10,7 @@ use thiserror::Error;
 use hoard::primitive::Primitive;
 use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
 use hoard::load::{MaybeValid, Load, LoadRef};
-use hoard::save::{SaveDirty, SaveDirtyPoll, SaveDirtyRef, SaveDirtyRefPoll, BlobSaver};
+use hoard::save::{SaveDirty, SaveDirtyPoll, SaveDirtyRef, SaveDirtyRefPoll, BlobSaver, Saved};
 use hoard::zone::{Alloc, AsZone, Zone, Get, GetMut, Ptr, PtrConst, PtrBlob, FromPtr};
 use hoard::pointee::Pointee;
 use hoard::owned::{IntoOwned, Take, Own, Ref};
@@ -136,6 +136,18 @@ impl<T, Z, P: Ptr> Leaf<T, Z, P> {
     }
 }
 
+impl<T, Z, P: Ptr> fmt::Debug for Leaf<T, Z, P>
+where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Leaf")
+            .field("digest", &self.raw.digest())
+            .field("zone", &self.raw.zone)
+            .field("ptr", &self.try_get_dirty().map_err(P::from_clean))
+            .finish()
+    }
+}
+
 impl<T, Z, P: Ptr> Commit for Leaf<T, Z, P>
 where T: Commit
 {
@@ -194,15 +206,76 @@ where T: Load,
     }
 }
 
-impl<T, Z, P: Ptr> fmt::Debug for Leaf<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug
+// ----- save impls ---------
+
+impl<Y: Zone, Q: Ptr, T, Z, P: Ptr> Saved<Y, Q> for Leaf<T, Z, P>
+where T: Saved<Y, Q>
 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Leaf")
-            .field("digest", &self.raw.digest())
-            .field("zone", &self.raw.zone)
-            .field("ptr", &self.try_get_dirty().map_err(P::from_clean))
-            .finish()
+    type Saved = Leaf<T::Saved, Y, Q>;
+}
+
+impl<T, Z: Zone, P: Ptr> SaveDirty for Leaf<T, Z, P>
+where T: Commit + SaveDirty,
+      T::CleanPtr: FromPtr<P::Clean>
+{
+    type CleanPtr = P::Clean;
+    type SaveDirtyPoll = LeafSaveDirtyPoll<T::SaveDirtyPoll, P::Clean>;
+
+    fn init_save_dirty(&self) -> Self::SaveDirtyPoll {
+        LeafSaveDirtyPoll {
+            digest: self.digest().cast(),
+            state: match self.try_get_dirty() {
+                Ok(dirty) => State::Dirty(dirty.init_save_dirty()),
+                Err(p_clean) => State::Done(p_clean.to_blob()),
+            }
+        }
+    }
+}
+
+#[doc(hidden)]
+pub struct LeafSaveDirtyPoll<T: SaveDirtyPoll, P: PtrConst> {
+    digest: Digest,
+    state: State<T, P::Blob>,
+}
+
+enum State<T, P> {
+    Dirty(T),
+    Done(P),
+}
+
+impl<T: SaveDirtyPoll, P: PtrConst> LeafSaveDirtyPoll<T, P> {
+    pub(crate) fn encode_raw_node_blob(&self) -> raw::Node<T::SavedBlob, (), P::Blob> {
+        match self.state {
+            State::Done(ptr) => raw::Node::new(Some(self.digest), (), ptr),
+            State::Dirty(_) => panic!(),
+        }
+    }
+}
+
+impl<T: SaveDirtyPoll, P: PtrConst> SaveDirtyPoll for LeafSaveDirtyPoll<T, P>
+where T::CleanPtr: FromPtr<P>
+{
+    type CleanPtr = P;
+    type SavedBlob = Leaf<T::SavedBlob, (), P::Blob>;
+
+    fn save_dirty_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: BlobSaver<CleanPtr = Self::CleanPtr>
+    {
+        loop {
+            self.state = match &mut self.state {
+                State::Dirty(dirty) => {
+                    dirty.save_dirty_poll(saver)?;
+                    let q_blob = saver.save_blob(&dirty.encode_blob())?;
+                    State::Done(q_blob)
+                },
+                State::Done(_) => break Ok(()),
+            };
+        }
+    }
+
+    fn encode_blob(&self) -> Self::SavedBlob {
+        let raw = self.encode_raw_node_blob();
+        unsafe { Leaf::from_raw(raw) }
     }
 }
 

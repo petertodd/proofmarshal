@@ -12,7 +12,7 @@ use thiserror::Error;
 use hoard::primitive::Primitive;
 use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
 use hoard::load::{MaybeValid, Load, LoadRef};
-use hoard::save::{SaveDirty, SaveDirtyPoll, SaveDirtyRef, SaveDirtyRefPoll, BlobSaver};
+use hoard::save::{SaveDirty, SaveDirtyPoll, SaveDirtyRef, SaveDirtyRefPoll, BlobSaver, Saved, SavedRef};
 use hoard::zone::{Alloc, AsZone, Zone, Get, GetMut, Ptr, PtrConst, PtrBlob, FromPtr};
 use hoard::pointee::Pointee;
 use hoard::owned::{IntoOwned, Take, Own, Ref};
@@ -25,7 +25,7 @@ use crate::unreachable_unchecked;
 use super::height::*;
 use super::length::*;
 use super::raw;
-use super::leaf::Leaf;
+use super::leaf::{Leaf, LeafSaveDirtyPoll};
 
 #[repr(C)]
 pub struct Pair<T, Z = (), P: Ptr = <Z as Zone>::Ptr> {
@@ -1044,6 +1044,262 @@ where T: Commit,
     }
 }
 
+// --------- save impls ------------
+
+macro_rules! impl_saved {
+    ($( $t:ident, $t_dyn:ident; )+) => {$(
+        impl<Y: Zone, Q: Ptr, T, Z, P: Ptr> Saved<Y, Q> for $t<T, Z, P>
+        where T: Saved<Y, Q>
+        {
+            type Saved = $t<T::Saved, Y, Q>;
+        }
+
+        impl<Y: Zone, Q: Ptr, T, Z, P: Ptr> SavedRef<Y, Q> for $t_dyn<T, Z, P>
+        where T: Saved<Y, Q>
+        {
+            type SavedRef = $t_dyn<T::Saved, Y, Q>;
+        }
+    )+}
+}
+
+impl_saved!{
+    PerfectTree, PerfectTreeDyn;
+    Pair, PairDyn;
+    Tip, TipDyn;
+}
+
+
+#[doc(hidden)]
+pub enum PerfectTreeDynSaveDirtyPoll<T: SaveDirtyPoll, P: PtrConst> {
+    Leaf(Box<LeafSaveDirtyPoll<T, P>>),
+    Tip(Box<TipDynSaveDirtyPoll<T, P>>),
+}
+
+#[doc(hidden)]
+pub struct PerfectTreeSaveDirtyPoll<T: SaveDirtyPoll, P: PtrConst>(
+    PerfectTreeDynSaveDirtyPoll<T, P>
+);
+
+#[doc(hidden)]
+pub struct TipDynSaveDirtyPoll<T: SaveDirtyPoll, P: PtrConst> {
+    height: NonZeroHeight,
+    digest: Digest,
+    state: State<T, P>,
+}
+
+enum State<T: SaveDirtyPoll, P: PtrConst> {
+    Dirty(PairDynSaveDirtyPoll<T, P>),
+    Done(P::Blob),
+}
+
+
+#[doc(hidden)]
+pub struct PairDynSaveDirtyPoll<T: SaveDirtyPoll, P: PtrConst> {
+    left: PerfectTreeDynSaveDirtyPoll<T, P>,
+    right: PerfectTreeDynSaveDirtyPoll<T, P>,
+}
+
+impl<T: SaveDirtyPoll, P: PtrConst> PerfectTreeDynSaveDirtyPoll<T, P> {
+    fn encode_raw_node_blob(&self) -> raw::Node<T::SavedBlob, (), P::Blob> {
+        match self {
+            Self::Leaf(leaf) => leaf.encode_raw_node_blob(),
+            Self::Tip(tip) => tip.encode_raw_node_blob(),
+        }
+    }
+}
+
+impl<T: SaveDirtyPoll, P: PtrConst> TipDynSaveDirtyPoll<T, P> {
+    fn encode_raw_node_blob(&self) -> raw::Node<T::SavedBlob, (), P::Blob> {
+        match self.state {
+            State::Done(ptr) => raw::Node::new(Some(self.digest), (), ptr),
+            State::Dirty(_) => panic!(),
+        }
+    }
+}
+
+impl<T: SaveDirtyPoll, P: PtrConst> PairDynSaveDirtyPoll<T, P> {
+    fn encode_raw_pair_blob(&self) -> raw::Pair<T::SavedBlob, (), P::Blob> {
+        raw::Pair {
+            left: self.left.encode_raw_node_blob(),
+            right: self.right.encode_raw_node_blob(),
+        }
+    }
+}
+
+impl<T: SaveDirtyPoll, P: PtrConst> SaveDirtyRefPoll for PairDynSaveDirtyPoll<T, P>
+where T::CleanPtr: FromPtr<P>
+{
+    type CleanPtr = P;
+    type SavedBlobDyn = PairDyn<T::SavedBlob, (), P::Blob>;
+
+    fn blob_metadata(&self) -> NonZeroHeight {
+        self.left.blob_metadata()
+                 .try_increment().expect("valid metadata")
+    }
+
+    fn save_dirty_ref_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: BlobSaver<CleanPtr = Self::CleanPtr>
+    {
+        self.left.save_dirty_ref_poll_impl(saver)?;
+        self.right.save_dirty_ref_poll_impl(saver)
+    }
+
+    fn encode_blob_dyn_bytes<'a>(&self, dst: BytesUninit<'a, Self::SavedBlobDyn>) -> Bytes<'a, Self::SavedBlobDyn> {
+        dst.write_struct()
+           .write_field(&self.encode_raw_pair_blob())
+           .done()
+    }
+}
+
+impl<T: SaveDirtyPoll, P: PtrConst> SaveDirtyRefPoll for PerfectTreeDynSaveDirtyPoll<T, P>
+where T::CleanPtr: FromPtr<P>
+{
+    type CleanPtr = P;
+    type SavedBlobDyn = PerfectTreeDyn<T::SavedBlob, (), P::Blob>;
+
+    fn blob_metadata(&self) -> Height {
+        match self {
+            Self::Leaf(_) => Height::ZERO,
+            Self::Tip(tip) => tip.blob_metadata().into(),
+        }
+    }
+
+    fn save_dirty_ref_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: BlobSaver<CleanPtr = Self::CleanPtr>
+    {
+        match self {
+            Self::Leaf(leaf) => leaf.save_dirty_ref_poll_impl(saver),
+            Self::Tip(tip) => tip.save_dirty_ref_poll_impl(saver),
+        }
+    }
+
+    fn encode_blob_dyn_bytes<'a>(&self, dst: BytesUninit<'a, Self::SavedBlobDyn>) -> Bytes<'a, Self::SavedBlobDyn> {
+        dst.write_struct()
+           .write_field(&self.encode_raw_node_blob())
+           .done()
+    }
+}
+
+impl<T: SaveDirtyPoll, P: PtrConst> SaveDirtyRefPoll for TipDynSaveDirtyPoll<T, P>
+where T::CleanPtr: FromPtr<P>
+{
+    type CleanPtr = P;
+    type SavedBlobDyn = TipDyn<T::SavedBlob, (), P::Blob>;
+
+    fn blob_metadata(&self) -> NonZeroHeight {
+        self.height
+    }
+
+    fn save_dirty_ref_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: BlobSaver<CleanPtr = Self::CleanPtr>
+    {
+        loop {
+            self.state = match &mut self.state {
+                State::Dirty(dirty) => {
+                    dirty.save_dirty_ref_poll_impl(saver)?;
+
+                    let q_blob = saver.save_bytes(self.height, |dst| {
+                        dirty.encode_blob_dyn_bytes(dst)
+                    })?;
+
+                    State::Done(q_blob)
+                },
+                State::Done(_) => break Ok(()),
+            };
+        }
+    }
+
+    fn encode_blob_dyn_bytes<'a>(&self, dst: BytesUninit<'a, Self::SavedBlobDyn>) -> Bytes<'a, Self::SavedBlobDyn> {
+        dst.write_struct()
+           .write_field(&self.encode_raw_node_blob())
+           .done()
+    }
+}
+
+impl<T, Z: Zone, P: Ptr> SaveDirtyRef for PerfectTreeDyn<T, Z, P>
+where T: Commit + SaveDirty,
+      T::CleanPtr: FromPtr<P::Clean>
+{
+    type CleanPtr = P::Clean;
+    type SaveDirtyRefPoll = PerfectTreeDynSaveDirtyPoll<T::SaveDirtyPoll, P::Clean>;
+
+    fn init_save_dirty_ref(&self) -> Self::SaveDirtyRefPoll {
+        match self.kind() {
+            Kind::Leaf(leaf) => PerfectTreeDynSaveDirtyPoll::Leaf(leaf.init_save_dirty().into()),
+            Kind::Tip(tip) => PerfectTreeDynSaveDirtyPoll::Tip(tip.init_save_dirty_ref().into()),
+        }
+    }
+}
+
+impl<T, Z: Zone, P: Ptr> SaveDirtyRef for TipDyn<T, Z, P>
+where T: Commit + SaveDirty,
+      T::CleanPtr: FromPtr<P::Clean>
+{
+    type CleanPtr = P::Clean;
+    type SaveDirtyRefPoll = TipDynSaveDirtyPoll<T::SaveDirtyPoll, P::Clean>;
+
+    fn init_save_dirty_ref(&self) -> Self::SaveDirtyRefPoll {
+        TipDynSaveDirtyPoll {
+            height: self.height(),
+            digest: Digest::default(),
+            state: match self.try_get_dirty_pair() {
+                Ok(pair) => State::Dirty(pair.init_save_dirty_ref()),
+                Err(p_clean) => State::Done(p_clean.to_blob()),
+            }
+        }
+    }
+}
+
+impl<T, Z: Zone, P: Ptr> SaveDirtyRef for PairDyn<T, Z, P>
+where T: Commit + SaveDirty,
+      T::CleanPtr: FromPtr<P::Clean>
+{
+    type CleanPtr = P::Clean;
+    type SaveDirtyRefPoll = PairDynSaveDirtyPoll<T::SaveDirtyPoll, P::Clean>;
+
+    fn init_save_dirty_ref(&self) -> Self::SaveDirtyRefPoll {
+        PairDynSaveDirtyPoll {
+            left: self.left().init_save_dirty_ref(),
+            right: self.right().init_save_dirty_ref(),
+        }
+    }
+}
+
+impl<T: SaveDirtyPoll, P: PtrConst> SaveDirtyPoll for PerfectTreeSaveDirtyPoll<T, P>
+where T::CleanPtr: FromPtr<P>
+{
+    type CleanPtr = P;
+    type SavedBlob = PerfectTree<T::SavedBlob, (), P::Blob>;
+
+    fn save_dirty_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: BlobSaver<CleanPtr = Self::CleanPtr>
+    {
+        self.0.save_dirty_ref_poll_impl(saver)
+    }
+
+    fn encode_blob(&self) -> Self::SavedBlob {
+        let raw = self.0.encode_raw_node_blob();
+        let height = self.0.blob_metadata();
+
+        unsafe {
+            PerfectTree::from_raw_node(raw, height)
+        }
+    }
+}
+
+impl<T, Z: Zone, P: Ptr> SaveDirty for PerfectTree<T, Z, P>
+where T: Commit + SaveDirty,
+      T::CleanPtr: FromPtr<P::Clean>
+{
+    type CleanPtr = P::Clean;
+    type SaveDirtyPoll = PerfectTreeSaveDirtyPoll<T::SaveDirtyPoll, P::Clean>;
+
+    fn init_save_dirty(&self) -> Self::SaveDirtyPoll {
+        PerfectTreeSaveDirtyPoll(
+            self.deref().init_save_dirty_ref()
+        )
+    }
+}
 
 #[cfg(test)]
 mod tests {
