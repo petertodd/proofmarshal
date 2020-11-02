@@ -143,7 +143,7 @@ impl Height {
     }
 
     #[inline(always)]
-    pub fn get(self) -> u8 {
+    pub const fn get(self) -> u8 {
         self.0
     }
 

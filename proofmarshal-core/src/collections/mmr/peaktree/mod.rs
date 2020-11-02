@@ -118,61 +118,6 @@ where T: Load
                       .map(Self::from)
             }
         }
-        /*
-        match self.len().push_peak(peak.height()) {
-            Ok(new_len) => {
-                let (new_left_len, new_right_len) = new_len.split();
-                if new_left_len == self.len() {
-                    let pair = Pair::new(self, peak.into());
-                    let inner = Inner::new(pair);
-                    Ok(Self::from(inner))
-                } else if let Kind::Inner(inner) = self.into_kind() {
-                    todo!()
-                } else {
-                    unreachable!()
-                }
-            },
-            Err(Some(_height)) => {
-                match self.into_kind() {
-                    Kind::Peak(left) => {
-                        match Inner::try_join_peaks(left, peak) {
-                            Ok(inner) => Ok(Self::from(inner)),
-                            Err((left, right)) => {
-                                let peak = PerfectTree::try_join(left, right)
-                                                       .ok().expect("BUG: overflow already checked");
-                                Ok(Self::from(peak))
-                            }
-                        }
-                    },
-                    Kind::Inner(inner) => {
-                        let peak = inner.merge_peak(peak);
-                        Ok(Self::from(peak))
-                    }
-                }
-            },
-            Err(None) => Err((self, peak)),
-        }
-        */
-        /*
-        match self.into_kind() {
-            Kind::Inner(inner) => {
-                match inner.try_push_peak_impl(right) {
-                    Ok(inner) => Self::from(inner),
-                    Err(Some(peak)) => Self::from(peak),
-                    Err(None) => panic!("overflow"),
-                }
-            }
-            Kind::Peak(left) => {
-                match Inner::try_join_peaks(left, right) {
-                    Ok(inner) => Self::from(inner),
-                    Err((left, right)) => {
-                        let peak = PerfectTree::try_join(left, right).ok().expect("overflow");
-                        Self::from(peak)
-                    }
-                }
-            }
-        }
-        */
     }
 
     fn merge_peak(self, right: PerfectTree<T, Z>) -> PerfectTree<T, Z>
@@ -203,32 +148,19 @@ impl<T, Z, P: Ptr> PeakTree<T, Z, P> {
     }
 }
 
-/*
 impl<T, Z: Zone> PeakTreeDyn<T, Z>
 where T: Load
 {
-    pub fn get(&self, idx: usize) -> Option<Ref<T>>
-        where Z: Get + AsZone<T::Zone>
-    {
-        self.get_peak(idx).map(|peak| {
-            match peak {
-                Ref::Borrowed(peak) => peak.get(),
-                Ref::Owned(peak) => Ref::Owned(peak.take()),
-            }
-        })
-    }
-
-    pub fn get_peak(&self, idx: usize) -> Option<Ref<PerfectTree<T, Z>>>
+    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, Z>>>
         where Z: Get
     {
         match self.kind() {
-            Kind::Peak(peak) if idx == 0 => Some(Ref::Borrowed(peak)),
+            Kind::Peak(peak) if peak.height() == height => Some(Ref::Borrowed(peak)),
             Kind::Peak(_) => None,
-            Kind::Inner(inner) => inner.get_peak(idx),
+            Kind::Inner(inner) => inner.get(height),
         }
     }
 }
-*/
 
 impl<T, Z, P: Ptr> PeakTreeDyn<T, Z, P> {
     pub fn len(&self) -> NonZeroLength {
@@ -335,7 +267,7 @@ where T: Load
                     Ok(Self::new(Pair::new(self.into(), peak.into())).into())
                 } else {
                     eprintln!("self.len() = 0b{:b}, peak.len() = 0b{:b}", self.len(), peak.len());
-                    let (old_left, old_right) = self.into_pair().split();
+                    let (old_left, old_right) = self.into_pair().into_split();
                     eprintln!("old_left.len() = 0b{:b}, old_right.len() = 0b{:b}", old_left.len(), old_right.len());
 
                     let new_right = old_right.try_push_peak(peak).ok().expect("overflow already checked");
@@ -405,16 +337,19 @@ where T: Load
     }
 }
 
-/*
 impl<T, Z: Zone> InnerDyn<T, Z>
 where T: Load
 {
-    pub fn get_peak(&self, idx: usize) -> Option<Ref<PerfectTree<T, Z>>>
+    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, Z>>>
         where Z: Get
     {
-        match self.get_pair() {
-            Ref::Borrowed(pair) => pair.get_peak(idx),
-            Ref::Owned(_owned) => todo!(),
+        if self.len().contains(height) {
+            match self.get_pair() {
+                Ref::Borrowed(pair) => pair.get(height),
+                Ref::Owned(_pair) => todo!()
+            }
+        } else {
+            None
         }
     }
 
@@ -427,6 +362,7 @@ where T: Load
         }
     }
 
+    /*
     pub fn get_pair_mut(&mut self) -> &mut PairDyn<T, Z>
         where Z: GetMut
     {
@@ -436,8 +372,9 @@ where T: Load
                     .trust()
         }
     }
+    */
 }
-*/
+
 impl<T, Z, P: Ptr> InnerDyn<T, Z, P> {
     pub fn len(&self) -> InnerLength {
         self.len.to_inner_length()
@@ -481,11 +418,12 @@ where T: Load
     fn merge_peak(self, peak: PerfectTree<T, Z>) -> PerfectTree<T, Z>
         where Z: Alloc + GetMut
     {
-        let (left, right) = self.split();
+        let (left, right) = self.into_split();
         let peak = right.merge_peak(peak);
         left.merge_peak(peak)
     }
 }
+
 
 impl<T, Z, P: Ptr> Pair<T, Z, P>
 {
@@ -523,7 +461,7 @@ impl<T, Z, P: Ptr> Pair<T, Z, P>
         )
     }
 
-    pub fn split(self) -> (PeakTree<T, Z, P>, PeakTree<T, Z, P>) {
+    pub fn into_split(self) -> (PeakTree<T, Z, P>, PeakTree<T, Z, P>) {
         let (left_len, right_len) = self.len().split();
         let raw = self.into_raw_pair();
 
@@ -534,51 +472,24 @@ impl<T, Z, P: Ptr> Pair<T, Z, P>
     }
 }
 
-impl<T, Z: Zone> Pair<T, Z>
-where T: Load
-{
-    /*
-    pub(crate) fn try_push_peak_impl(self, peak: PerfectTree<T, Z>) -> Result<Self, Option<PeakTree<T, Z>>>
-        where Z: Alloc + GetMut
-    {
-        if self.len().min_height() > peak.height() {
-            todo!()
-        } else {
-            assert_eq!(self.len().min_height(), peak.height());
-            let (left, right) = self.split();
-            let right = right.push_peak_impl(peak);
-
-            match right.into_kind() {
-                Kind::Peak(right) if left.len().min_height() == right.height() => {
-                    let tree = left.push_peak_impl(right);
-                    Err(Some(tree))
-                },
-                Kind::Peak(right) => Ok(Self::new(left, right.into())),
-                Kind::Inner(right) => Ok(Self::new(left, right.into()))
-            }
-        }
-    }
-    */
-}
-
-/*
 impl<T, Z: Zone> PairDyn<T, Z>
 where T: Load
 {
-    pub fn get_peak(&self, idx: usize) -> Option<Ref<PerfectTree<T, Z>>>
+    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, Z>>>
         where Z: Get
     {
-        let len = usize::from(self.len());
-        if idx < len / 2 {
-            self.left().get_peak(idx)
-        } else if idx < len {
-            self.right().get_peak(idx - (len / 2))
+        if self.len().contains(height) {
+            let (left, right) = self.split();
+            if left.len().contains(height) {
+                left.get(height)
+            } else {
+                right.get(height)
+            }
         } else {
             None
         }
     }
 }
-*/
 
 impl<T, Z, P: Ptr> PairDyn<T, Z, P> {
     pub fn len(&self) -> InnerLength {
@@ -591,33 +502,39 @@ impl<T, Z, P: Ptr> PairDyn<T, Z, P> {
         self.raw.left.zone
     }
 
-    pub fn left(&self) -> &PeakTreeDyn<T, Z, P> {
-        let (left, _right) = self.len().split();
+    pub fn split(&self) -> (&PeakTreeDyn<T, Z, P>, &PeakTreeDyn<T, Z, P>) {
+        let (left_len, right_len) = self.len().split();
         unsafe {
-            PeakTreeDyn::from_raw_node_ref(&self.raw.left, left)
+            (PeakTreeDyn::from_raw_node_ref(&self.raw.left, left_len),
+             PeakTreeDyn::from_raw_node_ref(&self.raw.right, right_len))
         }
+    }
+
+    pub fn split_mut(&mut self) -> (&mut PeakTreeDyn<T, Z, P>, &mut PeakTreeDyn<T, Z, P>) {
+        let (left_len, right_len) = self.len().split();
+        let (left, right) = self.raw.split_mut();
+        unsafe {
+            (PeakTreeDyn::from_raw_node_mut(left, left_len),
+             PeakTreeDyn::from_raw_node_mut(right, right_len))
+        }
+    }
+
+    pub fn left(&self) -> &PeakTreeDyn<T, Z, P> {
+        self.split().0
     }
 
     pub fn left_mut(&mut self) -> &mut PeakTreeDyn<T, Z, P> {
-        let (left, _right) = self.len().split();
-        unsafe {
-            PeakTreeDyn::from_raw_node_mut(&mut self.raw.left, left)
-        }
+        self.split_mut().0
     }
 
     pub fn right(&self) -> &PeakTreeDyn<T, Z, P> {
-        let (_left, right) = self.len().split();
-        unsafe {
-            PeakTreeDyn::from_raw_node_ref(&self.raw.right, right)
-        }
+        self.split().1
     }
 
     pub fn right_mut(&mut self) -> &mut PeakTreeDyn<T, Z, P> {
-        let (_left, right) = self.len().split();
-        unsafe {
-            PeakTreeDyn::from_raw_node_mut(&mut self.raw.right, right)
-        }
+        self.split_mut().1
     }
+
 }
 
 // --------- conversions from raw -------------

@@ -107,6 +107,28 @@ impl Length {
         let len = NonZeroLength::try_into_inner_length(len)?;
         Ok(len.split())
     }
+
+    /// Returns true if a 2ⁿ height tree is contained within this length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::length::Length;
+    /// # use proofmarshal_core::collections::height::Height;
+    /// let len = Length(0b1010);
+    ///
+    /// assert!(!len.contains(Height::new(0).unwrap()));
+    /// assert!(len.contains(Height::new(1).unwrap()));
+    /// assert!(!len.contains(Height::new(2).unwrap()));
+    /// assert!(len.contains(Height::new(3).unwrap()));
+    /// ```
+    pub fn contains(self, height: impl Into<Height>) -> bool {
+        let height = height.into();
+        match self.0 & (1 << height.get()) {
+            0 => false,
+            _ => true,
+        }
+    }
 }
 
 impl ToLength for Length {
@@ -275,6 +297,24 @@ impl NonZeroLength {
         let r = (usize::MAX.count_ones() - 1 - self.0.get().leading_zeros()) as u8;
         r.try_into()
          .unwrap_or_else(|_| unsafe { unreachable_unchecked!() })
+    }
+
+    /// Returns true if a 2ⁿ height tree is contained within this length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::length::NonZeroLength;
+    /// # use proofmarshal_core::collections::height::Height;
+    /// let len = NonZeroLength::new(0b1010).unwrap();
+    ///
+    /// assert!(!len.contains(Height::new(0).unwrap()));
+    /// assert!(len.contains(Height::new(1).unwrap()));
+    /// assert!(!len.contains(Height::new(2).unwrap()));
+    /// assert!(len.contains(Height::new(3).unwrap()));
+    /// ```
+    pub fn contains(self, height: impl Into<Height>) -> bool {
+        Length::from(self).contains(height)
     }
 }
 
@@ -448,6 +488,24 @@ impl InnerLength {
         let r = (usize::MAX.count_ones() - 1 - self.get().leading_zeros()) as u8;
         r.try_into()
          .unwrap_or_else(|_| unsafe { unreachable_unchecked!() })
+    }
+
+    /// Returns true if a 2ⁿ height tree is contained within this length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use proofmarshal_core::collections::length::InnerLength;
+    /// # use proofmarshal_core::collections::height::Height;
+    /// let len = InnerLength::new(0b1010).unwrap();
+    ///
+    /// assert!(!len.contains(Height::new(0).unwrap()));
+    /// assert!(len.contains(Height::new(1).unwrap()));
+    /// assert!(!len.contains(Height::new(2).unwrap()));
+    /// assert!(len.contains(Height::new(3).unwrap()));
+    /// ```
+    pub fn contains(self, height: impl Into<Height>) -> bool {
+        Length::from(self).contains(height)
     }
 }
 

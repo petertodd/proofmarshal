@@ -29,6 +29,13 @@ pub struct Pair<T, Z, P> {
     pub right: Node<T, Z, P>,
 }
 
+impl<T, Z, P> Pair<T, Z, P> {
+    pub fn split_mut(&mut self) -> (&mut Node<T, Z, P>, &mut Node<T, Z, P>) {
+        (&mut self.left,
+         &mut self.right)
+    }
+}
+
 impl<T, Z, P> Node<T, Z, P> {
     pub fn new(digest: Option<Digest>, zone: Z, ptr: P) -> Self {
         Self {
