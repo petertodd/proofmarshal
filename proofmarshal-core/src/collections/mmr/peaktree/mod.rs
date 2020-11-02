@@ -260,15 +260,15 @@ where T: Load
     {
         match self.len().push_peak(peak.height()) {
             Ok(new_len) => {
-                let (new_left_len, new_right_len) = new_len.split();
-                eprintln!("new_left_len = 0b{:b}, new_right_len = 0b{:b}", new_left_len, new_right_len);
+                let (new_left_len, _new_right_len) = new_len.split();
+                //eprintln!("new_left_len = 0b{:b}, new_right_len = 0b{:b}", new_left_len, new_right_len);
 
                 if new_left_len == self.len() {
                     Ok(Self::new(Pair::new(self.into(), peak.into())).into())
                 } else {
-                    eprintln!("self.len() = 0b{:b}, peak.len() = 0b{:b}", self.len(), peak.len());
+                    //eprintln!("self.len() = 0b{:b}, peak.len() = 0b{:b}", self.len(), peak.len());
                     let (old_left, old_right) = self.into_pair().into_split();
-                    eprintln!("old_left.len() = 0b{:b}, old_right.len() = 0b{:b}", old_left.len(), old_right.len());
+                    //eprintln!("old_left.len() = 0b{:b}, old_right.len() = 0b{:b}", old_left.len(), old_right.len());
 
                     let new_right = old_right.try_push_peak(peak).ok().expect("overflow already checked");
 
@@ -277,7 +277,7 @@ where T: Load
                             Ok(Self::new(Pair::new(old_left, new_right.into())).into())
                         },
                         Kind::Peak(new_right) => {
-                            eprintln!("merging 0b{:b} with 0b{:b}", old_left.len(), new_right.len());
+                            //eprintln!("merging 0b{:b} with 0b{:b}", old_left.len(), new_right.len());
                             Ok(old_left.try_push_peak(new_right)
                                        .ok().expect("overflow already checked"))
                         }
@@ -446,7 +446,6 @@ impl<T, Z, P: Ptr> Pair<T, Z, P>
         let len = left.len().get() | right.len().get();
         let len = InnerLength::try_from(len.get()).unwrap();
 
-        dbg!(len);
         assert_eq!(len.split(), (left.len(), right.len()));
 
         unsafe {
@@ -1136,9 +1135,8 @@ mod tests {
     use hoard::zone::heap::Heap;
 
     #[test]
-    fn test_get() {
+    fn test() {
         let peak = PerfectTree::new_leaf_in(42u8, Heap);
-        let peaks = PeakTree::from(peak);
-        dbg!(peaks);
+        let _peaks = PeakTree::from(peak);
     }
 }

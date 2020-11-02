@@ -202,7 +202,6 @@ impl NonZeroLength {
 
     #[track_caller]
     pub fn push_peak(self, right: impl Into<Height>) -> Result<InnerLength, Option<NonZeroHeight>> {
-        let left = self;
         let right = right.into();
         if self.min_height() > right {
             let right = NonZeroLength::from_height(right);
@@ -880,7 +879,9 @@ mod test {
     #[test]
     fn test() {
         let l = InnerLength::new(0b11).unwrap();
-        dbg!(l.split());
+        let (left, right) = l.split();
+        assert_eq!(left, 2);
+        assert_eq!(right, 1);
     }
 
     #[test]

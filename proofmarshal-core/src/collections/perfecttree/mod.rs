@@ -1065,13 +1065,13 @@ mod tests {
     #[test]
     fn test_commit() {
         let n = 0u8;
-        let d_n = n.commit();
+        let _d_n = n.commit();
 
         let leaf0 = PerfectTree::new_leaf_in(0u8, Heap);
         let leaf1 = PerfectTree::new_leaf_in(1u8, Heap);
         let tree0 = PerfectTree::try_join(leaf0, leaf1).unwrap();
 
-        dbg!(tree0.commit());
-        dbg!(tree0.to_verbatim());
+        let _ = tree0.commit();
+        let _ = tree0.to_verbatim();
     }
 }

@@ -115,7 +115,6 @@ where T: Load,
                     None
                 }
             },
-            Some(_peak) => None,
             None => None,
         }
     }
