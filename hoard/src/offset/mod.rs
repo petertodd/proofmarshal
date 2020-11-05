@@ -25,11 +25,11 @@ pub enum OffsetMut<M> {
 }
 
 impl<M> Offset<M> {
-    fn new(offset: u64, mapping: M) -> Self {
+    pub fn new(offset: u64, mapping: M) -> Self {
         Self { offset, mapping }
     }
 
-    fn to_blob(&self) -> Offset {
+    pub fn to_blob(&self) -> Offset {
         Offset::new(self.offset, ())
     }
 }
@@ -45,10 +45,8 @@ impl Primitive for Offset {
     type DecodeBytesError = !;
 
     fn decode_blob_bytes(blob: Bytes<'_, Self>) -> Result<Self, Self::DecodeBytesError> {
-        /*
         let buf = TryFrom::try_from(&blob[..]).unwrap();
-        Ok(Self(u64::from_le_bytes(buf)))
-        */ todo!()
+        Ok(Self::new(u64::from_le_bytes(buf), ()))
     }
 
     fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -66,11 +64,11 @@ impl<'m, M: ?Sized> PtrClean for Offset<&'m M> {
     type Zone = &'m M;
 
     fn to_blob(self) -> Self::Blob {
-        todo!()
+        Offset::new(self.offset, ())
     }
 
     fn from_blob(blob: Self::Blob, zone: &Self::Zone) -> Self {
-        todo!()
+        Self::new(blob.offset, *zone)
     }
 }
 
@@ -81,7 +79,7 @@ impl<'m, M: ?Sized> Ptr for OffsetMut<&'m M>
     type Blob = Offset;
 
     fn from_clean(clean: Self::Clean) -> Self {
-        todo!()
+        Self::Offset(clean)
     }
 
     unsafe fn dealloc<T: ?Sized + Pointee>(&mut self, metadata: T::Metadata) {
