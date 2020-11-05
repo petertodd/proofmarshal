@@ -1,7 +1,5 @@
 use crate::blob::*;
-use crate::load::*;
-use crate::save::*;
-use crate::zone::Ptr;
+use crate::load::Load;
 
 pub mod impls;
 
@@ -36,6 +34,7 @@ impl<T: Primitive> Load for T {
     }
 }
 
+/*
 impl<Z, P, T: Primitive> Saved<Z, P> for T {
     type Saved = T;
 }
@@ -67,3 +66,4 @@ impl<T: Primitive> SaveDirtyPoll for PrimitiveSaveDirtyPoll<T> {
         self.0
     }
 }
+*/

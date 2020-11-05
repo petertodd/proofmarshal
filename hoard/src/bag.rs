@@ -1,37 +1,33 @@
-use std::ptr::null;
-use std::task::Poll;
+use std::marker::PhantomData;
 use std::fmt;
 use std::any;
 use std::mem::ManuallyDrop;
 
 use thiserror::Error;
 
-use crate::blob::*;
-use crate::load::{Load, LoadRef, MaybeValid};
-use crate::save::*;
-use crate::owned::{Ref, Take, IntoOwned, Own};
-
-use crate::zone::{AsPtr, FromPtr, Ptr, PtrConst, PtrBlob, Zone, AsZone, Get, GetMut, TryGet, TryGetMut};
 use crate::pointee::Pointee;
-use crate::primitive::Primitive;
+use crate::blob::*;
+use crate::load::{Load, LoadRefIn, MaybeValid};
+use crate::owned::{Ref, Take, IntoOwned, RefOwn};
+use crate::ptr::{Ptr, PtrClean, PtrBlob, Get, TryGet, GetMut, TryGetMut};
 
-pub struct Bag<T: ?Sized + Pointee, Z, P: Ptr = <Z as Zone>::Ptr> {
+#[repr(C)]
+pub struct Bag<T: ?Sized + Pointee, P: Ptr> {
+    marker: PhantomData<T>,
     ptr: P,
-    metadata: *const T,
-    zone: Z,
+    metadata: T::Metadata,
 }
 
-impl<T: ?Sized + Pointee, Z, P: Ptr> Drop for Bag<T, Z, P> {
+impl<T: ?Sized + Pointee, P: Ptr> Drop for Bag<T, P> {
     fn drop(&mut self) {
-        let metadata = T::metadata(self.metadata);
-
         unsafe {
-            self.ptr.dealloc::<T>(metadata);
+            self.ptr.dealloc::<T>(self.metadata);
         }
     }
 }
 
-impl<T: ?Sized + Pointee, Z, P: Ptr> Bag<T, Z, P> {
+impl<T: ?Sized + Pointee, P: Ptr> Bag<T, P> {
+    /*
     pub fn new(src: impl Take<T>) -> Self
         where Z: Default, P: Default,
     {
@@ -41,77 +37,95 @@ impl<T: ?Sized + Pointee, Z, P: Ptr> Bag<T, Z, P> {
             Self::from_raw_parts(ptr, metadata, Z::default())
         }
     }
+    */
 
-    pub unsafe fn from_raw_parts(ptr: P, metadata: T::Metadata, zone: Z) -> Self {
+    pub unsafe fn from_raw_parts(ptr: P, metadata: T::Metadata) -> Self {
         Self {
+            marker: PhantomData,
             ptr,
-            metadata: T::make_fat_ptr(null(), metadata),
-            zone,
+            metadata,
         }
     }
 
-    pub fn into_raw_parts(self) -> (P, T::Metadata, Z) {
+    pub fn into_raw_parts(self) -> (P, T::Metadata) {
         let this = ManuallyDrop::new(self);
 
         unsafe {
             (std::ptr::read(&this.ptr),
-             T::metadata(this.metadata),
-             std::ptr::read(&this.zone))
+             this.metadata)
         }
     }
 
-    pub fn metadata(&self) -> T::Metadata {
-        T::metadata(self.metadata)
+    pub fn ptr(&self) -> &P {
+        &self.ptr
     }
 
-    pub fn zone(&self) -> &Z {
-        &self.zone
+    pub fn metadata(&self) -> T::Metadata {
+        self.metadata
     }
 
     pub fn try_get_dirty(&self) -> Result<&T, P::Clean> {
         unsafe {
             self.ptr.try_get_dirty::<T>(self.metadata())
-        }
+        }.map(|r| r.trust())
     }
 
     pub fn try_get_dirty_mut(&mut self) -> Result<&mut T, P::Clean> {
         unsafe {
             self.ptr.try_get_dirty_mut::<T>(self.metadata())
-        }
+        }.map(|r| r.trust())
     }
 
     pub fn try_take_dirty(self) -> Result<T::Owned, P::Clean>
         where T: IntoOwned
     {
-        let (ptr, metadata, _zone) = self.into_raw_parts();
+        let (ptr, metadata) = self.into_raw_parts();
 
         unsafe {
             ptr.try_take_dirty::<T>(metadata)
-        }
+        }.map(|r| r.trust())
     }
 }
 
-impl<T: ?Sized + Pointee, Z, P: Ptr> Bag<T, Z, P>
-where T: LoadRef,
-      Z: Zone + AsZone<T::Zone>
+impl<T: ?Sized + Pointee, P: Ptr> Bag<T, P>
+where T: LoadRefIn<P::Zone>,
 {
+    #[track_caller]
     pub fn get<'a>(&'a self) -> Ref<'a, T>
-        where Z: Get<P>
+        where P: Get
     {
         unsafe {
-            self.zone.get_unchecked(&self.ptr, self.metadata())
+            self.ptr.get(self.metadata())
         }.trust()
     }
 
-    pub fn try_get<'a>(&'a self) -> Result<Ref<'a, T>, Z::Error>
-        where Z: TryGet<P>
+    pub fn try_get<'a>(&'a self) -> Result<Ref<'a, T>, P::Error>
+        where P: TryGet
     {
         unsafe {
-            self.zone.try_get_unchecked(&self.ptr, self.metadata())
-                     .map(MaybeValid::trust)
+            self.ptr.try_get(self.metadata())
+                    .map(MaybeValid::trust)
         }
     }
 
+    pub fn get_mut<'a>(&'a mut self) -> &'a mut T
+        where P: GetMut
+    {
+        unsafe {
+            self.ptr.get_mut(self.metadata())
+        }.trust()
+    }
+
+    pub fn try_get_mut<'a>(&'a mut self) -> Result<&'a mut T, P::Error>
+        where P: TryGetMut
+    {
+        unsafe {
+            self.ptr.try_get_mut(self.metadata())
+                    .map(MaybeValid::trust)
+        }
+    }
+
+/*
     pub fn take(self) -> T::Owned
         where Z: Get<P>
     {
@@ -149,47 +163,45 @@ where T: LoadRef,
                      .map(MaybeValid::trust)
         }
     }
+*/
 }
 
-impl<T: ?Sized + Pointee, Z, P: Ptr> fmt::Debug for Bag<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+impl<T: ?Sized + Pointee, P: Ptr> fmt::Debug for Bag<T, P>
+where T: fmt::Debug, P: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.debug_struct(any::type_name::<Self>())
             .field("ptr", &self.try_get_dirty().map_err(P::from_clean))
-            .field("metadata", &self.metadata())
-            .field("zone", &self.zone)
+            .field("metadata", &self.metadata)
             .finish()
     }
 }
 
 #[derive(Error)]
 #[error("FIXME")]
-pub enum DecodeBagBytesError<T: ?Sized + BlobDyn, Z: Blob, P: PtrBlob> {
+pub enum DecodeBagBytesError<T: ?Sized + BlobDyn, P: PtrBlob> {
     Ptr(P::DecodeBytesError),
-    Metadata(<T::Metadata as Primitive>::DecodeBytesError),
+    Metadata(<T::Metadata as Blob>::DecodeBytesError),
     Layout(<T as Pointee>::LayoutError),
-    Zone(Z::DecodeBytesError),
 }
 
-impl<T: ?Sized + BlobDyn, Z: Blob, P: PtrBlob> fmt::Debug for DecodeBagBytesError<T, Z, P> {
+impl<T: ?Sized + BlobDyn, P: PtrBlob> fmt::Debug for DecodeBagBytesError<T, P> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         todo!()
     }
 }
 
-impl<T: ?Sized + Pointee, Z: Blob, P: Ptr> Blob for Bag<T, Z, P>
+impl<T: ?Sized + Pointee, P: Ptr> Blob for Bag<T, P>
 where T: BlobDyn,
       P: PtrBlob,
 {
-    const SIZE: usize = <P as Blob>::SIZE + <Z as Blob>::SIZE + <T::Metadata as Blob>::SIZE;
-    type DecodeBytesError = DecodeBagBytesError<T, Z, P>;
+    const SIZE: usize = <P as Blob>::SIZE + <T::Metadata as Blob>::SIZE;
+    type DecodeBytesError = DecodeBagBytesError<T, P>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
            .write_field(&self.ptr)
            .write_field(&self.metadata())
-           .write_field(&self.zone)
            .done()
     }
 
@@ -198,107 +210,31 @@ where T: BlobDyn,
 
         let ptr = fields.trust_field().map_err(DecodeBagBytesError::Ptr)?;
         let metadata = fields.trust_field().map_err(DecodeBagBytesError::Metadata)?;
-        let zone = fields.trust_field().map_err(DecodeBagBytesError::Zone)?;
         T::try_size(metadata).map_err(DecodeBagBytesError::Layout)?;
         fields.assert_done();
 
         unsafe {
-            Ok(Self::from_raw_parts(ptr, metadata, zone).into())
+            Ok(Self::from_raw_parts(ptr, metadata).into())
+        }
+    }
+}
+
+impl<T: ?Sized + Pointee, P: Ptr> Load for Bag<T, P>
+where T: LoadRefIn<P::Zone>
+{
+    type Blob = Bag<T::BlobDyn, P::Blob>;
+    type Zone = P::Zone;
+
+    fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
+        let ptr = P::from_clean(P::Clean::from_blob(blob.ptr, zone));
+        let metadata = blob.metadata();
+        unsafe {
+            Self::from_raw_parts(ptr, metadata)
         }
     }
 }
 
 /*
-#[derive(Error)]
-#[error("FIXME")]
-pub enum ValidateBagError<T: ?Sized + BlobDyn, P: PtrBlob> {
-    Ptr {
-        ptr: P,
-        metadata: T::Metadata,
-        err: Box<dyn std::error::Error>,
-    },
-    PointeeBytes(T::DecodeBytesError),
-    PointeeChildren(T::ValidateError),
-}
-
-impl<T: ?Sized + BlobDyn, P: PtrBlob> fmt::Debug for ValidateBagError<T, P> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        todo!()
-    }
-}
-
-pub struct BagValidator<T: ?Sized + BlobDyn, P: Ptr> {
-    ptr: P,
-    metadata: T::Metadata,
-    state: State<T::ValidatePoll>,
-}
-
-enum State<T> {
-    Pending,
-    Polling(T),
-    Done,
-}
-
-impl<T: ?Sized + Pointee, P: PtrBlob> ValidatePoll for BagValidator<T, P>
-where T: BlobDyn,
-      P: FromPtr<T::Ptr>,
-{
-    type Ptr = P;
-    type Error = ValidateBagError<T, P>;
-
-    fn validate_poll_impl<V>(&mut self, validator: &mut V) -> Poll<Result<(), Self::Error>>
-        where V: Validator<Ptr = P>
-    {
-        loop {
-            self.state = match &mut self.state {
-                State::Pending => {
-                    let r = validator.check_blob(self.ptr, self.metadata, |maybe_blob| {
-                        maybe_blob.map(T::validate_bytes_children)
-                    }).map_err(|ptr_err| ValidateBagError::Ptr {
-                        ptr: self.ptr,
-                        metadata: self.metadata,
-                        err: Box::new(ptr_err),
-                    })?;
-
-                    match r {
-                        Poll::Pending => return Poll::Pending,
-                        Poll::Ready(Some(Err(decode_err))) => {
-                            return Err(ValidateBagError::PointeeBytes(decode_err)).into();
-                        },
-                        Poll::Ready(Some(Ok(pointee_poll))) => State::Polling(pointee_poll),
-                        Poll::Ready(None) => State::Done,
-                    }
-                },
-                State::Polling(pointee_poll) => {
-                    match pointee_poll.validate_poll(validator)
-                                      .map_err(ValidateBagError::PointeeChildren)?
-                    {
-                        Poll::Pending => return Poll::Pending,
-                        Poll::Ready(()) => State::Done,
-                    }
-                }
-                State::Done => break Ok(()).into(),
-            };
-        }
-    }
-}
-*/
-
-impl<T: ?Sized + Pointee, Z, P: Ptr> Load for Bag<T, Z, P>
-where T: LoadRef, Z: Zone,
-{
-    type Blob = Bag<T::BlobDyn, (), P::Blob>;
-    type Zone = Z;
-
-    fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
-        let ptr = P::from_clean(P::Clean::from_blob(blob.ptr));
-        let metadata = blob.metadata();
-        unsafe {
-            Self::from_raw_parts(ptr, metadata, *zone)
-        }
-    }
-}
-
 impl<Y: Zone, Q: Ptr, T: ?Sized, Z, P: Ptr> Saved<Y, Q> for Bag<T, Z, P>
 where T: SavedRef<Y, Q>,
 {
@@ -443,4 +379,5 @@ mod tests {
     fn test() {
     }
 }
+*/
 */

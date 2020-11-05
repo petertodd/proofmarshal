@@ -3,11 +3,9 @@ use std::marker::PhantomData;
 use std::cmp;
 
 use crate::blob::{Blob, Bytes, BytesUninit};
-use crate::zone::{AsPtr, FromPtr, Ptr, PtrBlob};
 use crate::primitive::Primitive;
-use crate::owned::{IntoOwned, Ref};
 use crate::pointee::Pointee;
-use crate::zone::heap::HeapPtr;
+use crate::ptr::PtrBlob;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Offset(u64);
@@ -27,18 +25,6 @@ impl Primitive for Offset {
 }
 
 impl PtrBlob for Offset {
-}
-
-impl AsPtr<Self> for Offset {
-    fn as_ptr(&self) -> &Self {
-        self
-    }
-}
-
-impl FromPtr<Self> for Offset {
-    fn from_ptr(this: Self) -> Self {
-        this
-    }
 }
 
 impl Offset {

@@ -1,17 +1,17 @@
 use core::mem::ManuallyDrop;
 use core::ptr;
 
-use super::Own;
+use super::RefOwn;
 
 pub unsafe trait Take<T: ?Sized> : Sized {
     fn take_unsized<F, R>(self, f: F) -> R
-        where F: FnOnce(Own<T>) -> R;
+        where F: FnOnce(RefOwn<T>) -> R;
 
     fn take_sized(self) -> T
         where T: Sized
     {
         self.take_unsized(|src| {
-            let src: &mut T = Own::leak(src);
+            let src: &mut T = RefOwn::leak(src);
 
             unsafe {
                 ptr::read(src)
@@ -22,10 +22,10 @@ pub unsafe trait Take<T: ?Sized> : Sized {
 
 unsafe impl<T> Take<T> for T {
     fn take_unsized<F, R>(self, f: F) -> R
-        where F: FnOnce(Own<T>) -> R
+        where F: FnOnce(RefOwn<T>) -> R
     {
         let mut this = ManuallyDrop::new(self);
-        let own = unsafe { Own::<T>::new_unchecked(&mut this) };
+        let own = unsafe { RefOwn::<T>::new_unchecked(&mut this) };
         f(own)
     }
 }

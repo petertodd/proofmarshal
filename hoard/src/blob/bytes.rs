@@ -5,6 +5,8 @@ use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
 use std::slice;
 
+use crate::pointee::Pointee;
+
 use super::{Blob, BlobDyn, MaybeValid};
 
 pub struct Bytes<'a, T: ?Sized + BlobDyn> {
@@ -99,7 +101,22 @@ impl<T: ?Sized + BlobDyn> fmt::Debug for ValidBytes<'_, T> {
 }
 
 
-impl<'a, T: ?Sized + BlobDyn> Bytes<'a, T> {
+impl<'a, T: ?Sized> Bytes<'a, T>
+where T: BlobDyn + Pointee
+{
+    pub fn try_from_slice(slice: &'a [u8], metadata: T::Metadata) -> Result<Self, TryFromSliceError<T::LayoutError>> {
+        let expected_len = T::try_size(metadata)
+                             .map_err(TryFromSliceError::Metadata)?;
+
+        if slice.len() == expected_len {
+            Ok(unsafe {
+                Self::new_unchecked(slice.as_ptr().cast(), metadata)
+            })
+        } else {
+            Err(TryFromSliceError::WrongSize)
+        }
+    }
+
     pub unsafe fn new_unchecked(ptr: *const u8, metadata: T::Metadata) -> Self {
         let ptr = T::make_fat_ptr(ptr as *const (), metadata);
         Self {
@@ -148,48 +165,45 @@ impl<'a, T: ?Sized + BlobDyn> StructCursor<'a, T> {
 
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct TryFromSliceError;
+pub enum TryFromSliceError<LayoutError> {
+    Metadata(LayoutError),
+    WrongSize,
+}
 
 impl<'a, T: Blob> TryFrom<&'a [u8]> for Bytes<'a, T> {
-    type Error = TryFromSliceError;
+    type Error = TryFromSliceError<!>;
 
-    fn try_from(slice: &'a [u8]) -> Result<Self, TryFromSliceError> {
-        if slice.len() == T::SIZE {
-            Ok(unsafe {
-                Self::new_unchecked(slice.as_ptr().cast(), ())
-            })
-        } else {
-            Err(TryFromSliceError)
-        }
+    fn try_from(slice: &'a [u8]) -> Result<Self, Self::Error> {
+        Self::try_from_slice(slice, ())
     }
 }
 
 
 
 impl<'a, T: Blob> TryFrom<&'a mut [u8]> for BytesUninit<'a, T> {
-    type Error = TryFromSliceError;
+    type Error = TryFromSliceError<!>;
 
-    fn try_from(slice: &'a mut [u8]) -> Result<Self, TryFromSliceError> {
+    fn try_from(slice: &'a mut [u8]) -> Result<Self, TryFromSliceError<!>> {
         if slice.len() == T::SIZE {
             Ok(unsafe {
                 Self::new_unchecked(slice.as_mut_ptr().cast())
             })
         } else {
-            Err(TryFromSliceError)
+            Err(TryFromSliceError::WrongSize)
         }
     }
 }
 
 impl<'a, T: Blob> TryFrom<&'a mut [MaybeUninit<u8>]> for BytesUninit<'a, T> {
-    type Error = TryFromSliceError;
+    type Error = TryFromSliceError<!>;
 
-    fn try_from(slice: &'a mut [MaybeUninit<u8>]) -> Result<Self, TryFromSliceError> {
+    fn try_from(slice: &'a mut [MaybeUninit<u8>]) -> Result<Self, TryFromSliceError<!>> {
         if slice.len() == T::SIZE {
             Ok(unsafe {
                 Self::new_unchecked(slice.as_mut_ptr().cast())
             })
         } else {
-            Err(TryFromSliceError)
+            Err(TryFromSliceError::WrongSize)
         }
     }
 }

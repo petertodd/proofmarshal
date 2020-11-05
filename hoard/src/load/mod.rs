@@ -3,9 +3,7 @@ use std::task::Poll;
 use crate::blob::{Blob, BlobDyn, Bytes};
 use crate::pointee::Pointee;
 use crate::owned::{Ref, IntoOwned};
-use crate::zone::{PtrConst, PtrBlob, FromPtr};
-
-pub mod impls;
+use crate::ptr::AsZone;
 
 pub use crate::maybevalid::MaybeValid;
 
@@ -28,6 +26,36 @@ pub trait Load : Sized {
         let this = Self::load(blob, zone);
 
         Ok(MaybeValid::from(Ref::<Self>::Owned(this)))
+    }
+}
+
+pub trait LoadIn<Z> : Sized {
+    type Blob : Blob;
+
+    fn load_in(blob: Self::Blob, zone: &Z) -> Self;
+    fn load_maybe_valid_in(blob: MaybeValid<Self::Blob>, zone: &Z) -> MaybeValid<Self>;
+
+    fn load_bytes_in<'a>(bytes: Bytes<'a, Self::Blob>, zone: &Z)
+        -> Result<MaybeValid<Ref<'a, Self>>, <Self::Blob as Blob>::DecodeBytesError>;
+}
+
+impl<T: Load, Z> LoadIn<Z> for T
+where Z: AsZone<T::Zone>
+{
+    type Blob = T::Blob;
+
+    fn load_in(blob: Self::Blob, zone: &Z) -> Self {
+        T::load(blob, zone.as_zone())
+    }
+
+    fn load_maybe_valid_in(blob: MaybeValid<Self::Blob>, zone: &Z) -> MaybeValid<Self> {
+        T::load_maybe_valid(blob, zone.as_zone())
+    }
+
+    fn load_bytes_in<'a>(bytes: Bytes<'a, Self::Blob>, zone: &Z)
+        -> Result<MaybeValid<Ref<'a, Self>>, <Self::Blob as Blob>::DecodeBytesError>
+    {
+        T::load_bytes(bytes, zone.as_zone())
     }
 }
 
@@ -57,29 +85,46 @@ impl<T: Load> LoadRef for T {
     {
         T::load_bytes(bytes, zone)
     }
+
+    fn load_owned_from_bytes(bytes: Bytes<'_, Self::BlobDyn>, zone: &Self::Zone)
+        -> Result<MaybeValid<Self::Owned>,
+                  <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    {
+        let blob = <T::Blob as Blob>::decode_bytes(bytes)?
+                                     .trust();
+        let this = T::load(blob, zone);
+        Ok(MaybeValid::from(this))
+    }
 }
 
-/*
-pub trait Validate : Load {
-    type CleanPtr : PtrConst;
-    type ValidateError : 'static + std::error::Error;
-    type ValidatePoll : ValidatePoll<CleanPtr = Self::CleanPtr>;
+pub trait LoadRefIn<Z> : Pointee + IntoOwned {
+    type BlobDyn : ?Sized + BlobDyn + Pointee<Metadata = <Self as Pointee>::Metadata>;
+
+    fn load_ref_from_bytes_in<'a>(bytes: Bytes<'a, Self::BlobDyn>, zone: &Z)
+        -> Result<MaybeValid<Ref<'a, Self>>,
+                  <Self::BlobDyn as BlobDyn>::DecodeBytesError>;
+
+    fn load_owned_from_bytes_in(bytes: Bytes<'_, Self::BlobDyn>, zone: &Z)
+        -> Result<MaybeValid<Self::Owned>,
+                  <Self::BlobDyn as BlobDyn>::DecodeBytesError>;
 }
 
-pub trait ValidatePoll {
-    type CleanPtr : PtrConst;
-    type Error : 'static + std::error::Error;
+impl<T: ?Sized + LoadRef, Z> LoadRefIn<Z> for T
+where Z: AsZone<T::Zone>
+{
+    type BlobDyn = T::BlobDyn;
 
-    fn validate_poll_impl<V>(&mut self, validator: &mut V) -> Poll<Result<(), Self::Error>>
-        where V: Validator<Ptr = Self::CleanPtr>;
+    fn load_ref_from_bytes_in<'a>(bytes: Bytes<'a, Self::BlobDyn>, zone: &Z)
+        -> Result<MaybeValid<Ref<'a, Self>>,
+                  <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    {
+        Self::load_ref_from_bytes(bytes, zone.as_zone())
+    }
 
-    fn validate_poll<V>(&mut self, validator: &mut V) -> Poll<Result<(), Self::Error>>
-        where V: Validator,
-              V::Ptr: FromPtr<Self::CleanPtr>;
+    fn load_owned_from_bytes_in(bytes: Bytes<'_, Self::BlobDyn>, zone: &Z)
+        -> Result<MaybeValid<Self::Owned>,
+                  <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    {
+        Self::load_owned_from_bytes(bytes, zone.as_zone())
+    }
 }
-
-pub trait Validator {
-    type Ptr : PtrConst;
-    type Error : 'static + std::error::Error;
-}
-*/

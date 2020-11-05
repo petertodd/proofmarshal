@@ -1,3 +1,5 @@
+use crate::owned::{Ref, IntoOwned};
+
 /// A wrapper type for values that may not be fully valid.
 #[derive(Debug)]
 #[repr(transparent)]
@@ -13,6 +15,10 @@ where T: AsRef<U>
 }
 
 impl<T> MaybeValid<T> {
+    pub const fn new(inner: T) -> Self {
+        MaybeValid(inner)
+    }
+
     /// Extracts the wrapped value, trusting it to be valid.
     pub fn trust(self) -> T {
         self.0
@@ -36,5 +42,11 @@ impl<'a, T: ?Sized> From<&'a T> for &'a MaybeValid<T> {
     fn from(inner_ref: &'a T) -> Self {
         // SAFETY: #[repr(transparent)]
         unsafe { &* (inner_ref as *const T as *const Self) }
+    }
+}
+
+impl<'a, T: ?Sized + IntoOwned> From<&'a T> for MaybeValid<Ref<'a, T>> {
+    fn from(inner_ref: &'a T) -> Self {
+        Self(Ref::Borrowed(inner_ref))
     }
 }
