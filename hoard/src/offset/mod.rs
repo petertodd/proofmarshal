@@ -56,12 +56,22 @@ impl Primitive for Offset {
     }
 }
 
+impl<M> From<!> for Offset<M> {
+    fn from(never: !) -> Self {
+        match never {}
+    }
+}
+
 impl PtrBlob for Offset {
 }
 
 impl<'m, M: ?Sized> PtrClean for Offset<&'m M> {
     type Blob = Offset;
     type Zone = &'m M;
+
+    fn zone(&self) -> Self::Zone {
+        self.mapping
+    }
 
     fn to_blob(self) -> Self::Blob {
         Offset::new(self.offset, ())

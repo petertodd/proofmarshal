@@ -36,6 +36,12 @@ impl Heap {
     }
 }
 
+impl From<!> for Heap {
+    fn from(never: !) -> Self {
+        never
+    }
+}
+
 impl Ptr for Heap {
     type Zone = ();
     type Clean = !;

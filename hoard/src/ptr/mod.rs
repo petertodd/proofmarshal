@@ -10,6 +10,16 @@ use crate::load::LoadRefIn;
 pub mod heap;
 pub use self::heap::Heap;
 
+pub mod key;
+pub use self::key::Key;
+
+//pub mod cow;
+//pub use self::cow::Cow;
+
+pub mod error;
+pub use self::error::{Error, ErrorKind};
+
+
 pub trait AsZone<Z: ?Sized> {
     fn as_zone(&self) -> &Z;
 }
@@ -26,8 +36,16 @@ impl<T: ?Sized> AsZone<T> for T {
     }
 }
 
-pub trait Ptr : Sized {
-    type Zone : AsZone<()>;
+pub trait Zone : Copy + AsZone<()> {
+    type Id : 'static + Send;
+}
+
+impl Zone for () {
+    type Id = ();
+}
+
+pub trait Ptr : Sized + From<!> {
+    type Zone : Zone;
     type Clean : PtrClean<Zone = Self::Zone, Blob = Self::Blob>;
     type Blob : PtrBlob;
 
@@ -55,10 +73,11 @@ pub trait Ptr : Sized {
 }
 
 /// Needs no deallocation; data available.
-pub trait PtrClean : Copy {
-    type Zone : AsZone<()>;
+pub trait PtrClean : Copy + From<!> {
+    type Zone : Zone;
     type Blob : PtrBlob;
 
+    fn zone(&self) -> Self::Zone;
     fn to_blob(self) -> Self::Blob;
     fn from_blob(blob: Self::Blob, zone: &Self::Zone) -> Self;
 }
@@ -91,12 +110,15 @@ impl<P: PtrClean> Ptr for P {
 }
 
 /// Raw blob.
-pub trait PtrBlob : Copy + Blob {
+pub trait PtrBlob : Copy + Blob + From<!> {
 }
 
 impl<P: PtrBlob> PtrClean for P {
     type Zone = ();
     type Blob = Self;
+
+    fn zone(&self) -> () {
+    }
 
     fn to_blob(self) -> Self {
         self

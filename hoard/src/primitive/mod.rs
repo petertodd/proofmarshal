@@ -1,5 +1,6 @@
 use crate::blob::*;
 use crate::load::Load;
+use crate::save::{Save, SavePoll, Saver};
 
 pub mod impls;
 
@@ -34,36 +35,34 @@ impl<T: Primitive> Load for T {
     }
 }
 
-/*
-impl<Z, P, T: Primitive> Saved<Z, P> for T {
-    type Saved = T;
-}
+impl<Q, R, T: Primitive> Save<Q, R> for T {
+    type SavePoll = PrimitiveSavePoll<T>;
+    type SrcBlob = T;
+    type DstBlob = T;
 
-impl<T: Primitive> SaveDirty for T {
-    type CleanPtr = !;
-    type SaveDirtyPoll = PrimitiveSaveDirtyPoll<T>;
+    fn init_save(&self) -> Self::SavePoll {
+        PrimitiveSavePoll(*self)
+    }
 
-    fn init_save_dirty(&self) -> Self::SaveDirtyPoll {
-        PrimitiveSaveDirtyPoll(*self)
+    fn init_save_from_blob(this: &Self) -> Self::SavePoll {
+        PrimitiveSavePoll(*this)
     }
 }
 
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct PrimitiveSaveDirtyPoll<T>(T);
+pub struct PrimitiveSavePoll<T>(T);
 
-impl<T: Primitive> SaveDirtyPoll for PrimitiveSaveDirtyPoll<T> {
-    type CleanPtr = !;
-    type SavedBlob = T;
+impl<Q, R, T: Primitive> SavePoll<Q, R> for PrimitiveSavePoll<T> {
+    type DstBlob = T;
 
-    fn save_dirty_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: BlobSaver
+    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver
     {
         Ok(())
     }
 
-    fn encode_blob(&self) -> Self::SavedBlob {
+    fn encode_blob(&self) -> Self::DstBlob {
         self.0
     }
 }
-*/

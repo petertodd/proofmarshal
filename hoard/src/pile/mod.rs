@@ -17,7 +17,7 @@ impl<B> Pile<B> {
 }
 
 impl<B: AsRef<[u8]>> Pile<B> {
-    fn try_get_tip<'p, T>(&'p self) -> Result<MaybeValid<T>, Error<SliceGetBlobError>>
+    pub fn try_get_tip<'p, T>(&'p self) -> Result<MaybeValid<T>, Error<SliceGetBlobError>>
         where T: Load,
               &'p [u8]: AsZone<T::Zone>,
 

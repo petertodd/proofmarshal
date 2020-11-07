@@ -1,35 +1,35 @@
 use super::*;
 
-impl<Y, Q: Ptr, T: Saved<Y, Q>> Saved<Y, Q> for Option<T> {
-    type Saved = Option<T::Saved>;
-}
+impl<Q, R, T: Save<Q, R>> Save<Q, R> for Option<T> {
+    type SrcBlob = Option<T::SrcBlob>;
+    type DstBlob = Option<T::DstBlob>;
+    type SavePoll = OptionSavePoll<T::SavePoll>;
 
-impl<T: SaveDirty> SaveDirty for Option<T> {
-    type CleanPtr = T::CleanPtr;
-    type SaveDirtyPoll = OptionSaveDirtyPoll<T::SaveDirtyPoll>;
+    fn init_save(&self) -> Self::SavePoll {
+        OptionSavePoll(self.as_ref().map(|inner| inner.init_save()))
+    }
 
-    fn init_save_dirty(&self) -> Self::SaveDirtyPoll {
-        OptionSaveDirtyPoll(self.as_ref().map(|inner| inner.init_save_dirty()))
+    fn init_save_from_blob(this: &Self::SrcBlob) -> Self::SavePoll {
+        OptionSavePoll(this.as_ref().map(|inner| T::init_save_from_blob(inner)))
     }
 }
 
 #[derive(Debug)]
-pub struct OptionSaveDirtyPoll<T>(Option<T>);
+pub struct OptionSavePoll<T>(Option<T>);
 
-impl<T: SaveDirtyPoll> SaveDirtyPoll for OptionSaveDirtyPoll<T> {
-    type CleanPtr = T::CleanPtr;
-    type SavedBlob = Option<T::SavedBlob>;
+impl<Q, R, T: SavePoll<Q, R>> SavePoll<Q, R> for OptionSavePoll<T> {
+    type DstBlob = Option<T::DstBlob>;
 
-    fn save_dirty_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: BlobSaver<CleanPtr = Self::CleanPtr>
+    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver<SrcPtr = Q, DstPtr = R>
     {
         match &mut self.0 {
             None => Ok(()),
-            Some(inner) => inner.save_dirty_poll_impl(saver),
+            Some(inner) => inner.save_poll(saver),
         }
     }
 
-    fn encode_blob(&self) -> Self::SavedBlob {
+    fn encode_blob(&self) -> Self::DstBlob {
         self.0.as_ref().map(T::encode_blob)
     }
 }

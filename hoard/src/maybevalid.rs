@@ -50,3 +50,9 @@ impl<'a, T: ?Sized + IntoOwned> From<&'a T> for MaybeValid<Ref<'a, T>> {
         Self(Ref::Borrowed(inner_ref))
     }
 }
+
+impl<'a, T: ?Sized + IntoOwned> From<MaybeValid<&'a T>> for MaybeValid<Ref<'a, T>> {
+    fn from(r: MaybeValid<&'a T>) -> Self {
+        Self(Ref::Borrowed(r.trust()))
+    }
+}
