@@ -236,7 +236,7 @@ where T: SaveRef<Q, R>,
         BagSavePoll {
             metadata: self.metadata(),
             state: match self.try_get_dirty() {
-                Ok(dirty) => State::Dirty(dirty.init_save()),
+                Ok(dirty) => State::Dirty(dirty.init_save_ref()),
                 Err(p_clean) => State::Clean(p_clean.to_blob()),
             }
         }
@@ -281,10 +281,10 @@ where T: SaveRef<Q, R>,
                     }
                 },
                 State::Dirty(target_poll) => {
-                    target_poll.save_poll(saver)?;
+                    target_poll.save_ref_poll(saver)?;
 
                     let r_ptr = saver.save_blob_with(self.metadata, |dst| {
-                        target_poll.encode_blob_bytes(dst)
+                        target_poll.encode_blob_dyn_bytes(dst)
                     })?;
 
                     State::Done(r_ptr)
@@ -302,116 +302,3 @@ where T: SaveRef<Q, R>,
         }
     }
 }
-
-/*
-impl<T: SaveDirtyRefPoll, P: PtrConst> SaveDirtyPoll for BagSaveDirtyPoll<T, P>
-where T::CleanPtr: FromPtr<P>
-{
-    type CleanPtr = P;
-    type SavedBlob = Bag<T::SavedBlobDyn, (), P::Blob>;
-
-    fn save_dirty_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: BlobSaver<CleanPtr = Self::CleanPtr>
-    {
-        loop {
-            self.state = match &mut self.state {
-                State::Dirty(dirty) => {
-                    dirty.save_dirty_ref_poll(saver)?;
-
-                    let q_blob = saver.save_bytes(self.metadata, |dst| {
-                        dirty.encode_blob_dyn_bytes(dst)
-                    })?;
-
-                    State::Done(q_blob)
-                },
-                State::Done(_) => break Ok(()),
-            };
-        }
-    }
-
-    fn encode_blob(&self) -> Self::SavedBlob {
-        match self.state {
-            State::Done(ptr_blob) => {
-                unsafe { Bag::from_raw_parts(ptr_blob, self.metadata, ()) }
-            },
-            State::Dirty(_) => panic!(),
-        }
-    }
-}
-
-/*
-impl<Y: Zone, Q: Ptr, T: ?Sized + Pointee, Z: Zone, P: Ptr> Save<Y, Q> for Bag<T, Z, P>
-where T: SaveRef<Y, Q>,
-      Q::Blob: PtrConst,
-      P::Blob: PtrConst + Into<Q::Blob>,
-{
-    type SavePoll = BagSavePoll<Q, T::SaveRefPoll>;
-
-    fn init_save(&self) -> Self::SavePoll {
-        BagSavePoll {
-            metadata: self.metadata(),
-            state: match self.try_get_dirty() {
-                Ok(dirty) => State::Dirty(dirty.init_save_ref()),
-                Err(p_clean) => {
-                    let p_blob: P::Blob = p_clean.to_blob();
-                    let q_blob: Q::Blob = p_blob.into();
-                    State::Done(q_blob)
-                }
-            }
-        }
-    }
-}
-
-pub struct BagSavePoll<Q: Ptr, T: SaveRefPoll<Q>> {
-    metadata: <T::SavedBlob as Pointee>::Metadata,
-    state: State<Q, T>,
-}
-
-enum State<Q: Ptr, T> {
-    Dirty(T),
-    Done(<Q as Load>::Blob),
-}
-
-impl<Q: Ptr, T> SavePoll<Q> for BagSavePoll<Q, T>
-where T: SaveRefPoll<Q>,
-      Q::Blob: PtrConst,
-{
-    type SavedBlob = Bag<T::SavedBlob, (), Q::Blob>;
-
-    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<DstPtr = Q>
-    {
-        loop {
-            self.state = match &mut self.state {
-                State::Dirty(dirty) => {
-                    dirty.save_ref_poll(saver)?;
-
-                    let q_blob = saver.save_bytes(self.metadata, |dst| {
-                        dirty.encode_blob_bytes(dst)
-                    })?;
-
-                    State::Done(q_blob)
-                },
-                State::Done(_) => break Ok(()),
-            };
-        }
-    }
-
-    fn encode_blob(&self) -> Self::SavedBlob {
-        match self.state {
-            State::Done(q_blob) => {
-                unsafe { Bag::from_raw_parts(q_blob, self.metadata, ()) }
-            },
-            State::Dirty(_) => panic!(),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test() {
-    }
-}
-*/
-*/

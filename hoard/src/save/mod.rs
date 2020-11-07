@@ -66,20 +66,20 @@ pub trait SaveRef<SrcPtr, DstPtr = <SrcPtr as PtrClean>::Blob> : Pointee {
     type DstBlob : ?Sized + BlobDyn<Metadata = Self::Metadata>;
     type SavePoll : SaveRefPoll<SrcPtr, DstPtr, DstBlob = Self::DstBlob>;
 
-    fn init_save(&self) -> Self::SavePoll;
+    fn init_save_ref(&self) -> Self::SavePoll;
 
-    fn init_save_from_bytes(blob: Bytes<'_, Self::SrcBlob>)
+    fn init_save_ref_from_bytes(blob: Bytes<'_, Self::SrcBlob>)
         -> Result<Self::SavePoll, <Self::SrcBlob as BlobDyn>::DecodeBytesError>;
 }
 
 pub trait SaveRefPoll<SrcPtr, DstPtr> {
     type DstBlob : ?Sized + BlobDyn;
 
-    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+    fn save_ref_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
         where S: Saver<SrcPtr = SrcPtr, DstPtr = DstPtr>;
 
     fn blob_metadata(&self) -> <Self::DstBlob as Pointee>::Metadata;
-    fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self::DstBlob>) -> Bytes<'a, Self::DstBlob>;
+    fn encode_blob_dyn_bytes<'a>(&self, dst: BytesUninit<'a, Self::DstBlob>) -> Bytes<'a, Self::DstBlob>;
 }
 
 impl<Q, R, T: Save<Q, R>> SaveRef<Q, R> for T {
@@ -87,11 +87,11 @@ impl<Q, R, T: Save<Q, R>> SaveRef<Q, R> for T {
     type DstBlob = T::DstBlob;
     type SavePoll = T::SavePoll;
 
-    fn init_save(&self) -> Self::SavePoll {
+    fn init_save_ref(&self) -> Self::SavePoll {
         self.init_save()
     }
 
-    fn init_save_from_bytes(blob: Bytes<'_, Self::SrcBlob>)
+    fn init_save_ref_from_bytes(blob: Bytes<'_, Self::SrcBlob>)
         -> Result<Self::SavePoll, <Self::SrcBlob as BlobDyn>::DecodeBytesError>
     {
         todo!()
@@ -101,7 +101,7 @@ impl<Q, R, T: Save<Q, R>> SaveRef<Q, R> for T {
 impl<Q, R, T: SavePoll<Q, R>> SaveRefPoll<Q, R> for T {
     type DstBlob = T::DstBlob;
 
-    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+    fn save_ref_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
         where S: Saver<SrcPtr = Q, DstPtr = R>
     {
         self.save_poll(saver)
@@ -110,7 +110,7 @@ impl<Q, R, T: SavePoll<Q, R>> SaveRefPoll<Q, R> for T {
     fn blob_metadata(&self) -> () {
     }
 
-    fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self::DstBlob>) -> Bytes<'a, Self::DstBlob> {
+    fn encode_blob_dyn_bytes<'a>(&self, dst: BytesUninit<'a, Self::DstBlob>) -> Bytes<'a, Self::DstBlob> {
         self.encode_blob_bytes(dst)
     }
 }

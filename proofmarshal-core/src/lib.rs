@@ -5,7 +5,6 @@
 #![feature(rustc_attrs)]
 #![feature(slice_ptr_len)]
 #![feature(unwrap_infallible)]
-#![feature(once_cell)]
 
 #![allow(incomplete_features)]
 #![feature(const_generics)]

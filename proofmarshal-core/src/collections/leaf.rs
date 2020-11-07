@@ -1,4 +1,5 @@
 use std::borrow::{Borrow, BorrowMut};
+use std::marker::PhantomData;
 use std::convert::TryFrom;
 use std::error;
 use std::fmt;
@@ -9,11 +10,11 @@ use thiserror::Error;
 
 use hoard::primitive::Primitive;
 use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
-use hoard::load::{MaybeValid, Load, LoadRef};
-use hoard::save::{SaveDirty, SaveDirtyPoll, SaveDirtyRef, SaveDirtyRefPoll, BlobSaver, Saved};
-use hoard::zone::{Alloc, AsZone, Zone, Get, GetMut, Ptr, PtrConst, PtrBlob, FromPtr};
+use hoard::load::{MaybeValid, Load, LoadRef, LoadIn, LoadRefIn};
+use hoard::save::{Save, SavePoll, Saver};
+use hoard::ptr::{AsZone, Zone, Get, GetMut, Ptr, PtrClean, PtrBlob};
 use hoard::pointee::Pointee;
-use hoard::owned::{IntoOwned, Take, Own, Ref};
+use hoard::owned::{IntoOwned, Take, RefOwn, Ref};
 use hoard::bag::Bag;
 
 use crate::commit::{Commit, WriteVerbatim, Digest};
@@ -22,11 +23,11 @@ use super::raw;
 
 /// Leaf node in a tree.
 #[repr(transparent)]
-pub struct Leaf<T, Z = (), P: Ptr = <Z as Zone>::Ptr> {
-    raw: ManuallyDrop<raw::Node<T, Z, P>>,
+pub struct Leaf<T, P: Ptr> {
+    raw: ManuallyDrop<raw::Node<T, P>>,
 }
 
-impl<T, Z, P: Ptr> Drop for Leaf<T, Z, P> {
+impl<T, P: Ptr> Drop for Leaf<T, P> {
     fn drop(&mut self) {
         unsafe {
             self.raw.ptr.dealloc::<T>(())
@@ -34,45 +35,46 @@ impl<T, Z, P: Ptr> Drop for Leaf<T, Z, P> {
     }
 }
 
-impl<T, Z: Zone> Leaf<T, Z> {
-    pub fn new_in(value: T, mut zone: impl BorrowMut<Z>) -> Self
-        where Z: Alloc,
+impl<T, P: Ptr> Leaf<T, P> {
+    pub fn new(value: T) -> Self
+        where P: Default,
     {
-        Self::new_unchecked(None, zone.borrow_mut().alloc(value))
+        Self::new_unchecked(None, P::alloc(value))
     }
 }
 
-impl<T, Z, P: Ptr> Leaf<T, Z, P> {
-    pub fn new_unchecked(digest: Option<Digest>, bag: Bag<T, Z, P>) -> Self {
-        let (ptr, (), zone) = bag.into_raw_parts();
-        let raw = raw::Node::new(digest, zone, ptr);
+impl<T, P: Ptr> Leaf<T, P> {
+    pub fn new_unchecked(digest: Option<Digest>, bag: Bag<T, P>) -> Self {
+        let (ptr, ()) = bag.into_raw_parts();
+        let raw = raw::Node::new(digest, ptr);
 
         unsafe {
             Self::from_raw(raw)
         }
     }
 
-    pub unsafe fn from_raw(raw: raw::Node<T, Z, P>) -> Self {
+    pub unsafe fn from_raw(raw: raw::Node<T, P>) -> Self {
         Self {
             raw: ManuallyDrop::new(raw),
         }
     }
 
-    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, Z, P>) -> &Self {
+    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, P>) -> &Self {
         &*(raw as *const _ as *const _)
     }
 
-    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, Z, P>) -> &mut Self {
+    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, P>) -> &mut Self {
         &mut *(raw as *mut _ as *mut _)
     }
 
-    pub fn into_raw(self) -> raw::Node<T, Z, P> {
+    pub fn into_raw(self) -> raw::Node<T, P> {
         let this = ManuallyDrop::new(self);
         unsafe {
             ptr::read(&*this.raw)
         }
     }
 
+    /*
     pub fn digest(&self) -> Digest<T::Committed>
         where T: Commit
     {
@@ -94,61 +96,64 @@ impl<T, Z, P: Ptr> Leaf<T, Z, P> {
     pub fn try_digest(&self) -> Option<Digest> {
         self.raw.digest()
     }
+    */
 }
 
-impl<T, Z: Zone> Leaf<T, Z>
-where T: Load
+impl<T, P: Ptr> Leaf<T, P>
+where T: Load,
+      P::Zone: AsZone<T::Zone>,
 {
     pub fn get(&self) -> Ref<T>
-        where Z: Get + AsZone<T::Zone>
+        where P: Get
     {
         unsafe {
-            self.raw.get_unchecked::<T>(())
+            self.raw.get::<T>(T::sized_metadata())
                     .trust()
         }
     }
 
     pub fn get_mut(&mut self) -> &mut T
-        where Z: GetMut + AsZone<T::Zone>
+        where P: GetMut
     {
         unsafe {
-            self.raw.get_unchecked_mut::<T>(())
+            self.raw.get_mut::<T>(T::sized_metadata())
                     .trust()
         }
     }
 
     pub fn take(self) -> T
-        where Z: Get + AsZone<T::Zone>
+        where P: Get
     {
         let raw = self.into_raw();
         unsafe {
-            raw.take_unchecked::<T>(())
+            raw.take::<T>(T::sized_metadata())
                .trust()
         }
     }
 }
 
-impl<T, Z, P: Ptr> Leaf<T, Z, P> {
+impl<T, P: Ptr> Leaf<T, P> {
     pub fn try_get_dirty(&self) -> Result<&T, P::Clean> {
         unsafe {
             self.raw.try_get_dirty(())
+                    .map(MaybeValid::trust)
         }
     }
 }
 
-impl<T, Z, P: Ptr> fmt::Debug for Leaf<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug
+impl<T, P: Ptr> fmt::Debug for Leaf<T, P>
+where T: fmt::Debug, P: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Leaf")
             .field("digest", &self.raw.digest())
-            .field("zone", &self.raw.zone)
             .field("ptr", &self.try_get_dirty().map_err(P::from_clean))
             .finish()
     }
 }
 
-impl<T, Z, P: Ptr> Commit for Leaf<T, Z, P>
+/*
+impl<T, P: Ptr> Commit for Leaf<T, P>
 where T: Commit
 {
     const VERBATIM_LEN: usize = Digest::<!>::LEN;
@@ -158,6 +163,7 @@ where T: Commit
         dst.write(&self.digest().as_bytes())
     }
 }
+*/
 
 // ---- hoard impls ------
 
@@ -166,13 +172,12 @@ where T: Commit
 #[doc(hidden)]
 pub struct DecodeLeafBytesError<Raw: error::Error>(Raw);
 
-impl<T, Z, P: PtrBlob> Blob for Leaf<T, Z, P>
+impl<T, P: PtrBlob> Blob for Leaf<T, P>
 where T: Blob,
-      Z: Blob,
 {
-    const SIZE: usize = <raw::Node<T, Z, P> as Blob>::SIZE;
+    const SIZE: usize = <raw::Node<T, P> as Blob>::SIZE;
 
-    type DecodeBytesError = DecodeLeafBytesError<<raw::Node<T, Z, P> as Blob>::DecodeBytesError>;
+    type DecodeBytesError = DecodeLeafBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
@@ -190,14 +195,13 @@ where T: Blob,
     }
 }
 
-impl<T, Z, P: Ptr> Load for Leaf<T, Z, P>
+impl<T, P: Ptr> Load for Leaf<T, P>
 where T: Load,
-      Z: Zone,
 {
-    type Blob = Leaf<T::Blob, (), P::Blob>;
-    type Zone = Z;
+    type Blob = Leaf<T::Blob, P::Blob>;
+    type Zone = P::Zone;
 
-    fn load(blob: Self::Blob, zone: &Z) -> Self {
+    fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
         let raw = raw::Node::load(blob.into_raw(), zone);
 
         unsafe {
@@ -208,41 +212,46 @@ where T: Load,
 
 // ----- save impls ---------
 
-impl<Y: Zone, Q: Ptr, T, Z, P: Ptr> Saved<Y, Q> for Leaf<T, Z, P>
-where T: Saved<Y, Q>
+impl<Q: PtrClean, R: PtrBlob, T, P: Ptr> Save<Q, R> for Leaf<T, P>
+where T: Save<Q, R>,
+      Q: From<P::Clean>,
+      Q::Zone: AsZone<P::Zone>,
 {
-    type Saved = Leaf<T::Saved, Y, Q>;
-}
+    type SrcBlob = Leaf<T::SrcBlob, P::Blob>;
+    type DstBlob = Leaf<T::DstBlob, R>;
+    type SavePoll = LeafSavePoll<T, P::Clean, T::SavePoll, R>;
 
-impl<T, Z: Zone, P: Ptr> SaveDirty for Leaf<T, Z, P>
-where T: Commit + SaveDirty,
-      T::CleanPtr: FromPtr<P::Clean>
-{
-    type CleanPtr = P::Clean;
-    type SaveDirtyPoll = LeafSaveDirtyPoll<T::SaveDirtyPoll, P::Clean>;
-
-    fn init_save_dirty(&self) -> Self::SaveDirtyPoll {
-        LeafSaveDirtyPoll {
-            digest: self.digest().cast(),
+    fn init_save(&self) -> Self::SavePoll {
+        LeafSavePoll {
+            marker: PhantomData,
+            digest: Digest::default(), //self.digest().cast(),
             state: match self.try_get_dirty() {
-                Ok(dirty) => State::Dirty(dirty.init_save_dirty()),
-                Err(p_clean) => State::Done(p_clean.to_blob()),
+                Ok(dirty) => State::Dirty(dirty.init_save()),
+                Err(p_clean) => State::Clean(p_clean.to_blob()),
             }
         }
+    }
+
+    fn init_save_from_blob(_blob: &Self::SrcBlob) -> Self::SavePoll {
+        todo!()
     }
 }
 
 #[doc(hidden)]
-pub struct LeafSaveDirtyPoll<T: SaveDirtyPoll, P: PtrConst> {
+pub struct LeafSavePoll<T, P: PtrClean, S, R> {
+    marker: PhantomData<fn(T)>,
     digest: Digest,
-    state: State<T, P::Blob>,
+    state: State<P, S, R>,
 }
 
-enum State<T, P> {
-    Dirty(T),
-    Done(P),
+#[derive(Debug)]
+enum State<P: PtrClean, S, R> {
+    Clean(P::Blob),
+    Dirty(S),
+    Done(R),
 }
 
+/*
 impl<T: SaveDirtyPoll, P: PtrConst> LeafSaveDirtyPoll<T, P> {
     pub(crate) fn encode_raw_node_blob(&self) -> raw::Node<T::SavedBlob, (), P::Blob> {
         match self.state {
@@ -251,34 +260,46 @@ impl<T: SaveDirtyPoll, P: PtrConst> LeafSaveDirtyPoll<T, P> {
         }
     }
 }
+*/
 
-impl<T: SaveDirtyPoll, P: PtrConst> SaveDirtyPoll for LeafSaveDirtyPoll<T, P>
-where T::CleanPtr: FromPtr<P>
+impl<Q: PtrClean, R: PtrBlob, T, P: PtrClean> SavePoll<Q, R> for LeafSavePoll<T, P, T::SavePoll, R>
+where T: Save<Q, R>,
+      Q: From<P>,
+      Q::Zone: AsZone<P::Zone>,
 {
-    type CleanPtr = P;
-    type SavedBlob = Leaf<T::SavedBlob, (), P::Blob>;
+    type DstBlob = Leaf<T::DstBlob, R>;
 
-    fn save_dirty_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: BlobSaver<CleanPtr = Self::CleanPtr>
+    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver<SrcPtr = Q, DstPtr = R>
     {
         loop {
             self.state = match &mut self.state {
-                State::Dirty(dirty) => {
-                    dirty.save_dirty_poll(saver)?;
-                    let q_blob = saver.save_blob(&dirty.encode_blob())?;
-                    State::Done(q_blob)
+                State::Clean(p_blob) => {
+                    match saver.try_save_ptr::<P, T>(*p_blob, ())? {
+                        Ok(r_ptr) => State::Done(r_ptr),
+                        Err(target_poll) => State::Dirty(target_poll),
+                    }
+                },
+                State::Dirty(target_poll) => {
+                    target_poll.save_poll(saver)?;
+
+                    let r_ptr = saver.save_blob_with((), |dst| {
+                        target_poll.encode_blob_bytes(dst)
+                    })?;
+
+                    State::Done(r_ptr)
                 },
                 State::Done(_) => break Ok(()),
-            };
+            }
         }
     }
 
-    fn encode_blob(&self) -> Self::SavedBlob {
-        let raw = self.encode_raw_node_blob();
-        unsafe { Leaf::from_raw(raw) }
+    fn encode_blob(&self) -> Self::DstBlob {
+        todo!()
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,3 +339,4 @@ mod tests {
         assert!(leaf_n.try_digest().is_some());
     }
 }
+*/

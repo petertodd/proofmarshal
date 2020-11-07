@@ -101,13 +101,13 @@ where M: Map<Key = Offset>
     pub fn save<T: ?Sized>(mut self, value: &T) -> (Offset, Vec<u8>)
         where T: SaveRef<Key<'m, M>, Offset>
     {
-        let mut poll = value.init_save();
+        let mut poll = value.init_save_ref();
 
-        poll.save_poll(&mut self).into_ok();
+        poll.save_ref_poll(&mut self).into_ok();
 
         let metadata = poll.blob_metadata();
         let offset = self.save_blob_with(poll.blob_metadata(), |dst| {
-            poll.encode_blob_bytes(dst)
+            poll.encode_blob_dyn_bytes(dst)
         }).into_ok();
 
         (offset, self.dst)

@@ -6,49 +6,46 @@ use std::error;
 use thiserror::Error;
 
 use hoard::blob::{Blob, Bytes, BytesUninit};
-use hoard::load::{Load, LoadRef, MaybeValid};
+use hoard::load::{Load, LoadRef, LoadRefIn, MaybeValid};
 use hoard::owned::Ref;
-use hoard::zone::{Get, GetMut, TryGet, TryGetMut, Zone, AsZone, Ptr, PtrConst};
+use hoard::ptr::{Get, GetMut, TryGet, TryGetMut, Zone, AsZone, Ptr, PtrClean};
 use hoard::pointee::Pointee;
 
 use crate::commit::Digest;
 
 /// A raw, untyped, tree node.
 #[derive(Debug)]
-pub struct Node<T, Z, P> {
+pub struct Node<T, P> {
     marker: PhantomData<T>,
     digest: Cell<Option<Digest>>,
-    pub zone: Z,
     pub ptr: P,
 }
 
 /// A pair of left and right `Node`\'s.
 #[derive(Debug)]
-pub struct Pair<T, Z, P> {
-    pub left: Node<T, Z, P>,
-    pub right: Node<T, Z, P>,
+pub struct Pair<T, P> {
+    pub left: Node<T, P>,
+    pub right: Node<T, P>,
 }
 
-impl<T, Z, P> Pair<T, Z, P> {
-    pub fn split_mut(&mut self) -> (&mut Node<T, Z, P>, &mut Node<T, Z, P>) {
+impl<T, P> Pair<T, P> {
+    pub fn split_mut(&mut self) -> (&mut Node<T, P>, &mut Node<T, P>) {
         (&mut self.left,
          &mut self.right)
     }
 }
 
-impl<T, Z, P> Node<T, Z, P> {
-    pub fn new(digest: Option<Digest>, zone: Z, ptr: P) -> Self {
+impl<T, P> Node<T, P> {
+    pub fn new(digest: Option<Digest>, ptr: P) -> Self {
         Self {
             marker: PhantomData,
             digest: digest.into(),
-            zone,
             ptr,
         }
     }
 
-    pub fn into_raw_parts(self) -> (Option<Digest>, Z, P) {
+    pub fn into_raw_parts(self) -> (Option<Digest>, P) {
         (self.digest.into_inner(),
-         self.zone,
          self.ptr)
     }
 
@@ -61,28 +58,31 @@ impl<T, Z, P> Node<T, Z, P> {
     }
 }
 
-impl<T, Z, P: Ptr> Node<T, Z, P> {
-    pub unsafe fn get_unchecked<U: ?Sized + LoadRef>(&self, metadata: U::Metadata) -> MaybeValid<Ref<U>>
-        where Z: Get<P> + AsZone<U::Zone>
+impl<T, P: Ptr> Node<T, P> {
+    pub unsafe fn get<U: ?Sized>(&self, metadata: U::Metadata) -> MaybeValid<Ref<U>>
+        where U: LoadRefIn<P::Zone>,
+              P: Get
     {
-        self.zone.get_unchecked::<U>(&self.ptr, metadata)
+        self.ptr.get::<U>(metadata)
     }
 
-    pub unsafe fn get_unchecked_mut<U: ?Sized + LoadRef>(&mut self, metadata: U::Metadata) -> MaybeValid<&mut U>
-        where Z: GetMut<P> + AsZone<U::Zone>
+    pub unsafe fn get_mut<U: ?Sized + LoadRef>(&mut self, metadata: U::Metadata) -> MaybeValid<&mut U>
+        where U: LoadRefIn<P::Zone>,
+              P: GetMut
     {
-        let r = self.zone.get_unchecked_mut::<U>(&mut self.ptr, metadata);
+        let r = self.ptr.get_mut::<U>(metadata);
         self.digest.take();
         r
     }
 
-    pub unsafe fn take_unchecked<U: ?Sized + LoadRef>(self, metadata: U::Metadata) -> MaybeValid<U::Owned>
-        where Z: Get<P> + AsZone<U::Zone>
+    pub unsafe fn take<U: ?Sized + LoadRef>(self, metadata: U::Metadata) -> MaybeValid<U::Owned>
+        where U: LoadRefIn<P::Zone>,
+              P: Get
     {
-        self.zone.take_unchecked::<U>(self.ptr, metadata)
+        self.ptr.take::<U>(metadata)
     }
 
-    pub unsafe fn try_get_dirty<U: ?Sized + Pointee>(&self, metadata: U::Metadata) -> Result<&U, P::Clean> {
+    pub unsafe fn try_get_dirty<U: ?Sized + Pointee>(&self, metadata: U::Metadata) -> Result<MaybeValid<&U>, P::Clean> {
         self.ptr.try_get_dirty(metadata)
     }
 }
@@ -90,24 +90,21 @@ impl<T, Z, P: Ptr> Node<T, Z, P> {
 #[doc(hidden)]
 #[derive(Debug, Error)]
 #[error("FIXME")]
-pub enum DecodeNodeBytesError<Z: error::Error, P: error::Error> {
-    Zone(Z),
+pub enum DecodeNodeBytesError<P: error::Error> {
     Ptr(P),
 }
 
-impl<T, Z, P> Blob for Node<T, Z, P>
+impl<T, P> Blob for Node<T, P>
 where T: 'static,
-      Z: Blob,
       P: Blob,
 {
-    const SIZE: usize = <Digest as Blob>::SIZE + Z::SIZE + P::SIZE;
+    const SIZE: usize = <Digest as Blob>::SIZE + P::SIZE;
 
-    type DecodeBytesError = DecodeNodeBytesError<Z::DecodeBytesError, P::DecodeBytesError>;
+    type DecodeBytesError = DecodeNodeBytesError<P::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
            .write_field(&self.digest.get().expect("digest missing"))
-           .write_field(&self.zone)
            .write_field(&self.ptr)
            .done()
     }
@@ -115,26 +112,24 @@ where T: 'static,
     fn decode_bytes(src: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
         let mut fields = src.struct_fields();
         let digest = fields.trust_field().into_ok();
-        let zone = fields.trust_field().map_err(DecodeNodeBytesError::Zone)?;
         let ptr = fields.trust_field().map_err(DecodeNodeBytesError::Ptr)?;
         fields.assert_done();
-        Ok(Self::new(Some(digest), zone, ptr).into())
+        Ok(Self::new(Some(digest), ptr).into())
     }
 }
 
-impl<T, Z, P> Load for Node<T, Z, P>
+impl<T, P> Load for Node<T, P>
 where T: Load,
-      Z: Zone,
       P: Ptr,
 {
-    type Blob = Node<T::Blob, (), P::Blob>;
-    type Zone = Z;
+    type Blob = Node<T::Blob, P::Blob>;
+    type Zone = P::Zone;
 
-    fn load(blob: Self::Blob, zone: &Z) -> Self {
-        let ptr = P::from_clean(P::Clean::from_blob(blob.ptr));
+    fn load(blob: Self::Blob, zone: &P::Zone) -> Self {
+        let ptr = P::from_clean(P::Clean::from_blob(blob.ptr, zone));
 
         let digest = blob.digest().unwrap();
-        Self::new(Some(digest), zone.clone(), ptr)
+        Self::new(Some(digest), ptr)
     }
 }
 
@@ -146,14 +141,13 @@ pub enum DecodePairBytesError<E: error::Error> {
     Right(E),
 }
 
-impl<T, Z, P> Blob for Pair<T, Z, P>
+impl<T, P> Blob for Pair<T, P>
 where T: 'static,
-      Z: Blob,
       P: Blob,
 {
-    const SIZE: usize = <Node<T, Z, P> as Blob>::SIZE * 2;
+    const SIZE: usize = <Node<T, P> as Blob>::SIZE * 2;
 
-    type DecodeBytesError = DecodePairBytesError<<Node<T, Z, P> as Blob>::DecodeBytesError>;
+    type DecodeBytesError = DecodePairBytesError<<Node<T, P> as Blob>::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
@@ -174,15 +168,14 @@ where T: 'static,
     }
 }
 
-impl<T, Z, P> Load for Pair<T, Z, P>
+impl<T, P> Load for Pair<T, P>
 where T: Load,
-      Z: Zone,
       P: Ptr,
 {
-    type Blob = Pair<T::Blob, (), P::Blob>;
-    type Zone = Z;
+    type Blob = Pair<T::Blob, P::Blob>;
+    type Zone = P::Zone;
 
-    fn load(blob: Self::Blob, zone: &Z) -> Self {
+    fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
         Self {
             left: Load::load(blob.left, zone),
             right: Load::load(blob.right, zone),
@@ -196,20 +189,19 @@ mod tests {
 
     #[test]
     fn test_digest() {
-        let node: Node<u8, (), ()> = Node::new(None, (), ());
+        let node: Node<u8, ()> = Node::new(None, ());
         assert!(node.digest().is_none());
 
         let digest = Digest::default();
-        let node: Node<u8, (), ()> = Node::new(Some(digest), (), ());
+        let node: Node<u8, ()> = Node::new(Some(digest), ());
         assert_eq!(node.digest().unwrap(), digest);
     }
 
     #[test]
     fn test_blob_encode() {
-        let node: Node<u8, u16, u32> = Node::new(Some(Digest::default()), 16, 32);
+        let node: Node<u8, u32> = Node::new(Some(Digest::default()), 32);
         assert_eq!(node.to_blob_bytes(),
                    vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        16, 0,
                         32, 0, 0, 0]);
     }
 }

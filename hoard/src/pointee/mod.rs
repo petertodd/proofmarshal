@@ -9,6 +9,12 @@ pub trait Pointee {
 
     fn metadata(this: *const Self) -> Self::Metadata;
 
+    fn sized_metadata() -> Self::Metadata
+        where Self: Sized
+    {
+        unreachable!()
+    }
+
     /// Makes a fat pointer from a thin pointer.
     fn make_fat_ptr(thin: *const (), metadata: Self::Metadata) -> *const Self;
 
@@ -30,6 +36,10 @@ impl<T> Pointee for T {
     type LayoutError = !;
 
     fn metadata(_: *const Self) -> Self::Metadata {
+        ()
+    }
+
+    fn sized_metadata() -> Self::Metadata {
         ()
     }
 
