@@ -16,10 +16,12 @@ use super::{Key, Map};
 pub struct Offset(u64);
 
 impl Offset {
+    #[inline]
     pub const fn new(n: u64) -> Self {
         Self(n)
     }
 
+    #[inline]
     pub const fn get(self) -> u64 {
         self.0
     }
@@ -29,10 +31,12 @@ impl Primitive for Offset {
     const BLOB_SIZE: usize = 8;
     type DecodeBytesError = !;
 
+    #[inline]
     fn encode_blob_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_bytes(&self.0.to_le_bytes())
     }
 
+    #[inline]
     fn decode_blob_bytes(blob: Bytes<'_, Self>) -> Result<Self, Self::DecodeBytesError> {
         let buf = TryFrom::try_from(&blob[..]).unwrap();
         Ok(Self::new(u64::from_le_bytes(buf)))
@@ -40,6 +44,7 @@ impl Primitive for Offset {
 }
 
 impl From<!> for Offset {
+    #[inline]
     fn from(never: !) -> Self { never }
 }
 
@@ -47,6 +52,7 @@ impl PtrBlob for Offset {
 }
 
 impl From<Offset> for u64 {
+    #[inline]
     fn from(offset: Offset) -> u64 {
         offset.0
     }
@@ -55,6 +61,7 @@ impl From<Offset> for u64 {
 macro_rules! impl_cmp {
     ($( $lhs:ty => $rhs:ty; )+ ) => {$(
         impl cmp::PartialEq<$rhs> for $lhs {
+            #[inline]
             fn eq(&self, rhs: &$rhs) -> bool {
                 let lhs = u64::from(*self);
                 let rhs = u64::from(*rhs);

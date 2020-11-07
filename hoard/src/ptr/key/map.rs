@@ -26,6 +26,7 @@ impl<M: ?Sized + Map> Map for &'_ M {
     type Error = M::Error;
     type Key = M::Key;
 
+    #[inline]
     fn id(&self) -> Self::Id {
         (**self).id()
     }
@@ -55,6 +56,7 @@ impl Map for [u8] {
     type Error = SliceError;
     type Key = Offset;
 
+    #[inline]
     fn id(&self) -> Self::Id {
         SliceId(self.into())
     }

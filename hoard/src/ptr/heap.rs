@@ -37,6 +37,7 @@ impl Heap {
 }
 
 impl From<!> for Heap {
+    #[inline]
     fn from(never: !) -> Self {
         never
     }
