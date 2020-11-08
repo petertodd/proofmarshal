@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use hoard::primitive::Primitive;
 use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
-use hoard::load::{MaybeValid, Load, LoadRef, LoadIn, LoadRefIn};
+use hoard::load::{MaybeValid, Load, LoadRef};
 use hoard::save::{Save, SavePoll, Saver};
 use hoard::ptr::{AsZone, Zone, Get, GetMut, Ptr, PtrClean, PtrBlob};
 use hoard::pointee::Pointee;
@@ -199,6 +199,7 @@ impl<T, P: Ptr> Load for Leaf<T, P>
 where T: Load,
 {
     type Blob = Leaf<T::Blob, P::Blob>;
+    type Ptr = P;
     type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
@@ -212,6 +213,7 @@ where T: Load,
 
 // ----- save impls ---------
 
+/*
 impl<Q: PtrClean, R: PtrBlob, T, P: Ptr> Save<Q, R> for Leaf<T, P>
 where T: Save<Q, R>,
       Q: From<P::Clean>,
@@ -339,4 +341,5 @@ mod tests {
         assert!(leaf_n.try_digest().is_some());
     }
 }
+*/
 */

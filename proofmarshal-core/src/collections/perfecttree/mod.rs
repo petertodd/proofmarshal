@@ -25,7 +25,7 @@ use crate::unreachable_unchecked;
 use super::height::*;
 use super::length::*;
 use super::raw;
-use super::leaf::{Leaf, LeafSavePoll};
+use super::leaf::Leaf;
 
 #[repr(C)]
 pub struct Pair<T, P: Ptr> {
@@ -240,7 +240,7 @@ where T: Load,
         where P: Get
     {
         unsafe {
-            self.raw.get(self.height())
+            self.raw.get::<PairDyn<T, P>>(self.height())
                     .trust()
         }
     }
@@ -250,7 +250,7 @@ where T: Load,
     {
         let height = self.height();
         unsafe {
-            self.raw.get_mut(height)
+            self.raw.get_mut::<PairDyn<T, P>>(height)
                     .trust()
         }
     }
@@ -588,6 +588,7 @@ impl<T, P: Ptr> Load for PerfectTree<T, P>
 where T: Load
 {
     type Blob = PerfectTree<T::Blob, P::Blob>;
+    type Ptr = P;
     type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
@@ -633,6 +634,7 @@ impl<T, P: Ptr> LoadRef for PerfectTreeDyn<T, P>
 where T: Load
 {
     type BlobDyn = PerfectTreeDyn<T::Blob, P::Blob>;
+    type Ptr = P;
     type Zone = P::Zone;
 
     fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
@@ -679,6 +681,7 @@ impl<T, P: Ptr> Load for Tip<T, P>
 where T: Load
 {
     type Blob = Tip<T::Blob, P::Blob>;
+    type Ptr = P;
     type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
@@ -723,6 +726,7 @@ impl<T, P: Ptr> LoadRef for TipDyn<T, P>
 where T: Load
 {
     type BlobDyn = TipDyn<T::Blob, P::Blob>;
+    type Ptr = P;
     type Zone = P::Zone;
 
     fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
@@ -769,6 +773,7 @@ impl<T, P: Ptr> Load for Pair<T, P>
 where T: Load
 {
     type Blob = Pair<T::Blob, P::Blob>;
+    type Ptr = P;
     type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
@@ -813,6 +818,7 @@ impl<T, P: Ptr> LoadRef for PairDyn<T, P>
 where T: Load
 {
     type BlobDyn = PairDyn<T::Blob, P::Blob>;
+    type Ptr = P;
     type Zone = P::Zone;
 
     fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
@@ -1030,6 +1036,7 @@ where T: Commit,
 
 // --------- save impls ------------
 
+/*
 #[doc(hidden)]
 pub enum PerfectTreeDynSavePoll<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean> {
     //Leaf(Box<LeafSavePoll<T, P, S, R>>),
@@ -1061,6 +1068,7 @@ pub struct PairDynSavePoll<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean> {
     left: PerfectTreeDynSavePoll<Q, R, T, P>,
     right: PerfectTreeDynSavePoll<Q, R, T, P>,
 }
+*/
 
 /*
 #[doc(hidden)]
@@ -1125,6 +1133,7 @@ impl<T: SavePoll, P: PtrConst> PairDynSavePoll<T, P> {
 }
 */
 
+/*
 impl<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean> SaveRefPoll<Q, R> for PairDynSavePoll<Q, R, T, P>
 {
     type DstBlob = PairDyn<T::DstBlob, R>;
@@ -1151,6 +1160,7 @@ impl<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean> SaveRefPoll<Q, R> for PairDynSav
         */ todo!()
     }
 }
+*/
 
 /*
 impl<Q, R: PtrBlob, T, P: Ptr> SaveRefPoll<Q, R> for PerfectTreeDynSavePoll<T, P, T::SavePoll, R>

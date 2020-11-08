@@ -6,7 +6,7 @@ use std::error;
 use thiserror::Error;
 
 use hoard::blob::{Blob, Bytes, BytesUninit};
-use hoard::load::{Load, LoadRef, LoadRefIn, MaybeValid};
+use hoard::load::{Load, LoadRef, MaybeValid};
 use hoard::owned::Ref;
 use hoard::ptr::{Get, GetMut, TryGet, TryGetMut, Zone, AsZone, Ptr, PtrClean};
 use hoard::pointee::Pointee;
@@ -60,14 +60,16 @@ impl<T, P> Node<T, P> {
 
 impl<T, P: Ptr> Node<T, P> {
     pub unsafe fn get<U: ?Sized>(&self, metadata: U::Metadata) -> MaybeValid<Ref<U>>
-        where U: LoadRefIn<P::Zone>,
+        where U: LoadRef,
+              P::Zone: AsZone<U::Zone>,
               P: Get
     {
         self.ptr.get::<U>(metadata)
     }
 
     pub unsafe fn get_mut<U: ?Sized + LoadRef>(&mut self, metadata: U::Metadata) -> MaybeValid<&mut U>
-        where U: LoadRefIn<P::Zone>,
+        where U: LoadRef,
+              P::Zone: AsZone<U::Zone>,
               P: GetMut
     {
         let r = self.ptr.get_mut::<U>(metadata);
@@ -76,7 +78,8 @@ impl<T, P: Ptr> Node<T, P> {
     }
 
     pub unsafe fn take<U: ?Sized + LoadRef>(self, metadata: U::Metadata) -> MaybeValid<U::Owned>
-        where U: LoadRefIn<P::Zone>,
+        where U: LoadRef,
+              P::Zone: AsZone<U::Zone>,
               P: Get
     {
         self.ptr.take::<U>(metadata)
@@ -123,6 +126,7 @@ where T: Load,
       P: Ptr,
 {
     type Blob = Node<T::Blob, P::Blob>;
+    type Ptr = P;
     type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &P::Zone) -> Self {
@@ -173,6 +177,7 @@ where T: Load,
       P: Ptr,
 {
     type Blob = Pair<T::Blob, P::Blob>;
+    type Ptr = P;
     type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
