@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::pointee::Pointee;
 use crate::blob::*;
-use crate::load::{Load, LoadRefIn, MaybeValid};
+use crate::load::{Load, LoadRef, LoadRefIn, MaybeValid};
 use crate::owned::{Ref, Take, IntoOwned, RefOwn};
 use crate::ptr::{Ptr, PtrClean, PtrBlob, Get, TryGet, GetMut, TryGetMut, AsZone};
 use crate::save::{Save, SavePoll, SaveRef, SaveRefPoll, Saver};
@@ -209,9 +209,10 @@ where T: BlobDyn,
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> Load for Bag<T, P>
-where T: LoadRefIn<P::Zone>
+where T: LoadRef,
 {
     type Blob = Bag<T::BlobDyn, P::Blob>;
+    type Ptr = P;
     type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
@@ -223,71 +224,90 @@ where T: LoadRefIn<P::Zone>
     }
 }
 
-impl<Q: PtrClean, R: PtrBlob, T: ?Sized + Pointee, P: Ptr> Save<Q, R> for Bag<T, P>
-where T: SaveRef<Q, R>,
-      Q: From<P::Clean>,
-      Q::Zone: AsZone<P::Zone>,
+impl<Q: PtrBlob, T: ?Sized + SaveRef<Q>, P: Ptr> Save<Q> for Bag<T, P>
+where T: LoadRef,
+      P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type SrcBlob = Bag<T::SrcBlob, P::Blob>;
-    type DstBlob = Bag<T::DstBlob, R>;
-    type SavePoll = BagSavePoll<T, P::Clean, T::SavePoll, R>;
+    type DstBlob = Bag<T::DstBlob, Q>;
+    type SavePoll = BagSavePoll<Q, T, P>;
 
     fn init_save(&self) -> Self::SavePoll {
         BagSavePoll {
             metadata: self.metadata(),
             state: match self.try_get_dirty() {
                 Ok(dirty) => State::Dirty(dirty.init_save_ref()),
-                Err(p_clean) => State::Clean(p_clean.to_blob()),
+                Err(p_clean) => State::Clean(p_clean),
             }
         }
     }
+}
 
-    fn init_save_from_blob(blob: &Self::SrcBlob) -> Self::SavePoll {
-        BagSavePoll {
-            metadata: blob.metadata,
-            state: State::Clean(blob.ptr),
+pub struct BagSavePoll<Q, T: ?Sized + SaveRef<Q>, P: Ptr> {
+    metadata: T::Metadata,
+    state: State<Q, T, P>,
+}
+
+enum State<Q, T: ?Sized + SaveRef<Q>, P: Ptr> {
+    Clean(P::Clean),
+    Dirty(T::SaveRefPoll),
+    Done(Q),
+}
+
+impl<Q, T: ?Sized + SaveRef<Q>, P: Ptr> fmt::Debug for State<Q, T, P>
+where P::Clean: fmt::Debug,
+      T::SaveRefPoll: fmt::Debug,
+      Q: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            State::Clean(clean) => f.debug_tuple("Clean")
+                                    .field(clean)
+                                    .finish(),
+            State::Dirty(dirty) => f.debug_tuple("Dirty")
+                                    .field(dirty)
+                                    .finish(),
+            State::Done(done) => f.debug_tuple("Done")
+                                  .field(done)
+                                  .finish(),
         }
     }
 }
 
-pub struct BagSavePoll<T: ?Sized + Pointee, P: PtrClean, S, R> {
-    metadata: T::Metadata,
-    state: State<P, S, R>,
-}
-
-#[derive(Debug)]
-enum State<P: PtrClean, S, R> {
-    Clean(P::Blob),
-    Dirty(S),
-    Done(R),
-}
-
-impl<Q: PtrClean, R: PtrBlob, T: ?Sized + Pointee, P: PtrClean> SavePoll<Q, R> for BagSavePoll<T, P, T::SavePoll, R>
-where T: SaveRef<Q, R>,
-      Q: From<P>,
-      Q::Zone: AsZone<P::Zone>,
+impl<Q, T: ?Sized + SaveRef<Q>, P: Ptr> fmt::Debug for BagSavePoll<Q, T, P>
+where P::Clean: fmt::Debug,
+      T::SaveRefPoll: fmt::Debug,
+      Q: fmt::Debug,
 {
-    type DstBlob = Bag<T::DstBlob, R>;
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("BagSavePoll")
+            .field("metadata", &self.metadata)
+            .field("state", &self.state)
+            .finish()
+    }
+}
+
+impl<Q: PtrBlob, T: ?Sized + SaveRef<Q>, P: Ptr> SavePoll for BagSavePoll<Q, T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
+{
+    type SrcPtr = P::Clean;
+    type DstPtr = Q;
+    type DstBlob = Bag<T::DstBlob, Q>;
 
     fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<SrcPtr = Q, DstPtr = R>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
     {
         loop {
             self.state = match &mut self.state {
-                State::Clean(p_blob) => {
-                    match saver.try_save_ptr::<P, T>(*p_blob, self.metadata)? {
-                        Ok(r_ptr) => State::Done(r_ptr),
+                State::Clean(p_clean) => {
+                    match saver.save_ptr::<T>(*p_clean, self.metadata)? {
+                        Ok(q_ptr) => State::Done(q_ptr),
                         Err(target_poll) => State::Dirty(target_poll),
                     }
                 },
-                State::Dirty(target_poll) => {
-                    target_poll.save_ref_poll(saver)?;
-
-                    let r_ptr = saver.save_blob_with(self.metadata, |dst| {
-                        target_poll.encode_blob_dyn_bytes(dst)
-                    })?;
-
-                    State::Done(r_ptr)
+                State::Dirty(target) => {
+                    State::Done(saver.poll_ref(target)?)
                 },
                 State::Done(_) => break Ok(()),
             };

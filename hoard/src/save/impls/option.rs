@@ -1,27 +1,24 @@
 use super::*;
 
-impl<Q, R, T: Save<Q, R>> Save<Q, R> for Option<T> {
-    type SrcBlob = Option<T::SrcBlob>;
+impl<Q, T: Save<Q>> Save<Q> for Option<T> {
     type DstBlob = Option<T::DstBlob>;
     type SavePoll = OptionSavePoll<T::SavePoll>;
 
     fn init_save(&self) -> Self::SavePoll {
         OptionSavePoll(self.as_ref().map(|inner| inner.init_save()))
     }
-
-    fn init_save_from_blob(this: &Self::SrcBlob) -> Self::SavePoll {
-        OptionSavePoll(this.as_ref().map(|inner| T::init_save_from_blob(inner)))
-    }
 }
 
 #[derive(Debug)]
 pub struct OptionSavePoll<T>(Option<T>);
 
-impl<Q, R, T: SavePoll<Q, R>> SavePoll<Q, R> for OptionSavePoll<T> {
+impl<T: SavePoll> SavePoll for OptionSavePoll<T> {
+    type SrcPtr = T::SrcPtr;
+    type DstPtr = T::DstPtr;
     type DstBlob = Option<T::DstBlob>;
 
     fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<SrcPtr = Q, DstPtr = R>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
     {
         match &mut self.0 {
             None => Ok(()),

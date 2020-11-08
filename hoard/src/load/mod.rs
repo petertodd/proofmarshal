@@ -3,12 +3,15 @@ use std::task::Poll;
 use crate::blob::{Blob, BlobDyn, Bytes};
 use crate::pointee::Pointee;
 use crate::owned::{Ref, IntoOwned};
-use crate::ptr::AsZone;
+use crate::ptr::{Ptr, AsZone};
 
 pub use crate::maybevalid::MaybeValid;
 
+pub mod impls;
+
 pub trait Load : Sized {
     type Blob : Blob;
+    type Ptr : Ptr<Zone = Self::Zone>;
     type Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self;
@@ -61,6 +64,7 @@ where Z: AsZone<T::Zone>
 
 pub trait LoadRef : Pointee + IntoOwned {
     type BlobDyn : ?Sized + BlobDyn + Pointee<Metadata = <Self as Pointee>::Metadata>;
+    type Ptr : Ptr<Zone = Self::Zone>;
     type Zone;
 
     fn load_ref_from_bytes<'a>(bytes: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
@@ -77,6 +81,7 @@ pub trait LoadRef : Pointee + IntoOwned {
 
 impl<T: Load> LoadRef for T {
     type BlobDyn = T::Blob;
+    type Ptr = T::Ptr;
     type Zone = T::Zone;
 
     fn load_ref_from_bytes<'a>(bytes: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)

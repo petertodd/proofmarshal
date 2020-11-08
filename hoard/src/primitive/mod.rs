@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use crate::blob::*;
 use crate::load::Load;
 use crate::save::{Save, SavePoll, Saver};
@@ -27,6 +29,7 @@ impl<T: Primitive> Blob for T {
 }
 
 impl<T: Primitive> Load for T {
+    type Ptr = !;
     type Zone = ();
     type Blob = Self;
 
@@ -35,25 +38,28 @@ impl<T: Primitive> Load for T {
     }
 }
 
-impl<Q, R, T: Primitive> Save<Q, R> for T {
-    type SavePoll = PrimitiveSavePoll<T>;
-    type SrcBlob = T;
+impl<Q, T: Primitive> Save<Q> for T {
+    type SavePoll = PrimitiveSavePoll<Q, T>;
     type DstBlob = T;
 
     fn init_save(&self) -> Self::SavePoll {
-        PrimitiveSavePoll(*self)
-    }
-
-    fn init_save_from_blob(this: &Self) -> Self::SavePoll {
-        PrimitiveSavePoll(*this)
+        PrimitiveSavePoll {
+            marker: PhantomData,
+            value: *self,
+        }
     }
 }
 
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct PrimitiveSavePoll<T>(T);
+pub struct PrimitiveSavePoll<Q, T> {
+    marker: PhantomData<fn(Q)>,
+    value: T,
+}
 
-impl<Q, R, T: Primitive> SavePoll<Q, R> for PrimitiveSavePoll<T> {
+impl<Q, T: Primitive> SavePoll for PrimitiveSavePoll<Q, T> {
+    type SrcPtr = !;
+    type DstPtr = Q;
     type DstBlob = T;
 
     fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
@@ -63,6 +69,6 @@ impl<Q, R, T: Primitive> SavePoll<Q, R> for PrimitiveSavePoll<T> {
     }
 
     fn encode_blob(&self) -> Self::DstBlob {
-        self.0
+        self.value
     }
 }

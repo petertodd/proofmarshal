@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::load::*;
 use crate::blob::*;
 use crate::pointee::Pointee;
-use crate::ptr::{PtrClean, PtrBlob, AsZone};
+use crate::ptr::{Ptr, PtrClean, PtrBlob, AsZone};
 
 pub mod impls;
 
@@ -11,47 +11,47 @@ pub trait Saver {
     type Error;
 
     type SrcPtr : PtrClean;
+
     type DstPtr : PtrBlob;
 
-    fn try_save_ptr<P, T: ?Sized>(&mut self, ptr: P::Blob, metadata: T::Metadata)
-            -> Result<Result<Self::DstPtr, T::SavePoll>, Self::Error>
-        where T: SaveRef<Self::SrcPtr, Self::DstPtr>,
-              P: PtrClean + Into<Self::SrcPtr>,
-              <Self::SrcPtr as PtrClean>::Zone: AsZone<P::Zone>;
+    fn save_ptr<T: ?Sized>(&mut self, ptr: Self::SrcPtr, metadata: T::Metadata)
+        -> Result<Result<Self::DstPtr, T::SaveRefPoll>, Self::Error>
+        where T: SaveRef<Self::DstPtr>,
+              <Self::SrcPtr as Ptr>::Zone: AsZone<T::Zone>;
 
+    fn poll<T: ?Sized>(&mut self, poll: &mut T) -> Result<(), Self::Error>
+        where T: SaveRefPoll<DstPtr = Self::DstPtr>,
+              Self::SrcPtr: From<T::SrcPtr>,
+              <Self::SrcPtr as Ptr>::Zone: AsZone<<T::SrcPtr as Ptr>::Zone>;
 
-    fn save_blob_with<T: ?Sized, F>(&mut self, metadata: T::Metadata, f: F) -> Result<Self::DstPtr, Self::Error>
-        where T: BlobDyn,
-              F: for<'a> FnOnce(BytesUninit<'a, T>) -> Bytes<'a, T>;
-
-    fn save_blob<T: ?Sized + BlobDyn>(&mut self, blob: &T) -> Result<Self::DstPtr, Self::Error> {
-        self.save_blob_with(T::metadata(blob), |dst| {
-            blob.encode_bytes(dst)
-        })
-    }
+    fn poll_ref<T: ?Sized>(&mut self, poll: &mut T) -> Result<Self::DstPtr, Self::Error>
+        where T: SaveRefPoll<DstPtr = Self::DstPtr>,
+              Self::SrcPtr: From<T::SrcPtr>,
+              <Self::SrcPtr as Ptr>::Zone: AsZone<<T::SrcPtr as Ptr>::Zone>;
 }
 
-pub trait Save<SrcPtr, DstPtr = <SrcPtr as PtrClean>::Blob> {
-    type SrcBlob : Blob;
+pub trait Save<DstPtr> : Load {
     type DstBlob : Blob;
-    type SavePoll : SavePoll<SrcPtr, DstPtr, DstBlob = Self::DstBlob>;
+
+    type SavePoll : SavePoll<SrcPtr = <Self::Ptr as Ptr>::Clean, DstPtr = DstPtr, DstBlob = Self::DstBlob>;
 
     fn init_save(&self) -> Self::SavePoll;
 
-    fn init_save_from_blob(blob: &Self::SrcBlob) -> Self::SavePoll;
-
-    fn init_save_from_bytes(blob: Bytes<'_, Self::SrcBlob>)
-        -> Result<Self::SavePoll, <Self::SrcBlob as Blob>::DecodeBytesError>
+    fn init_save_from_bytes(bytes: Bytes<'_, Self::Blob>, zone: &Self::Zone)
+        -> Result<Self::SavePoll, <Self::Blob as Blob>::DecodeBytesError>
     {
-        todo!()
+        let this = Self::load_bytes(bytes, zone)?.trust();
+        Ok(this.init_save())
     }
 }
 
-pub trait SavePoll<SrcPtr, DstPtr> {
+pub trait SavePoll {
+    type SrcPtr : PtrClean;
+    type DstPtr;
     type DstBlob : Blob;
 
     fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<SrcPtr = SrcPtr, DstPtr = DstPtr>;
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>;
 
     fn encode_blob(&self) -> Self::DstBlob;
 
@@ -61,48 +61,55 @@ pub trait SavePoll<SrcPtr, DstPtr> {
     }
 }
 
-pub trait SaveRef<SrcPtr, DstPtr = <SrcPtr as PtrClean>::Blob> : Pointee {
-    type SrcBlob : ?Sized + BlobDyn<Metadata = Self::Metadata>;
+pub trait SaveRef<DstPtr> : LoadRef {
     type DstBlob : ?Sized + BlobDyn<Metadata = Self::Metadata>;
-    type SavePoll : SaveRefPoll<SrcPtr, DstPtr, DstBlob = Self::DstBlob>;
 
-    fn init_save_ref(&self) -> Self::SavePoll;
+    type SaveRefPoll : SaveRefPoll<SrcPtr = <Self::Ptr as Ptr>::Clean, DstPtr = DstPtr, DstBlob = Self::DstBlob>;
 
-    fn init_save_ref_from_bytes(blob: Bytes<'_, Self::SrcBlob>)
-        -> Result<Self::SavePoll, <Self::SrcBlob as BlobDyn>::DecodeBytesError>;
+    fn init_save_ref(&self) -> Self::SaveRefPoll;
+
+    fn init_save_ref_from_bytes(bytes: Bytes<'_, Self::BlobDyn>, zone: &Self::Zone)
+        -> Result<Self::SaveRefPoll, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    {
+        let this = Self::load_ref_from_bytes(bytes, zone)?.trust();
+        Ok(this.init_save_ref())
+    }
 }
 
-pub trait SaveRefPoll<SrcPtr, DstPtr> {
+pub trait SaveRefPoll {
+    type SrcPtr : PtrClean;
+    type DstPtr;
     type DstBlob : ?Sized + BlobDyn;
 
     fn save_ref_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<SrcPtr = SrcPtr, DstPtr = DstPtr>;
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>;
 
     fn blob_metadata(&self) -> <Self::DstBlob as Pointee>::Metadata;
     fn encode_blob_dyn_bytes<'a>(&self, dst: BytesUninit<'a, Self::DstBlob>) -> Bytes<'a, Self::DstBlob>;
 }
 
-impl<Q, R, T: Save<Q, R>> SaveRef<Q, R> for T {
-    type SrcBlob = T::SrcBlob;
+impl<Q, T: Save<Q>> SaveRef<Q> for T {
     type DstBlob = T::DstBlob;
-    type SavePoll = T::SavePoll;
+    type SaveRefPoll = T::SavePoll;
 
-    fn init_save_ref(&self) -> Self::SavePoll {
+    fn init_save_ref(&self) -> Self::SaveRefPoll {
         self.init_save()
     }
 
-    fn init_save_ref_from_bytes(blob: Bytes<'_, Self::SrcBlob>)
-        -> Result<Self::SavePoll, <Self::SrcBlob as BlobDyn>::DecodeBytesError>
+    fn init_save_ref_from_bytes(bytes: Bytes<'_, Self::BlobDyn>, zone: &Self::Zone)
+        -> Result<Self::SaveRefPoll, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
-        todo!()
+        Self::init_save_from_bytes(bytes, zone)
     }
 }
 
-impl<Q, R, T: SavePoll<Q, R>> SaveRefPoll<Q, R> for T {
+impl<T: SavePoll> SaveRefPoll for T {
+    type SrcPtr = T::SrcPtr;
+    type DstPtr = T::DstPtr;
     type DstBlob = T::DstBlob;
 
     fn save_ref_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<SrcPtr = Q, DstPtr = R>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
     {
         self.save_poll(saver)
     }
