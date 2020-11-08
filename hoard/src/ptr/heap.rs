@@ -155,7 +155,7 @@ impl Get for Heap {
     }
 
     unsafe fn take_then<T: ?Sized, F, R>(self, metadata: T::Metadata, f: F) -> R
-        where T: LoadRefIn<Self::Zone>,
+        where T: Pointee + IntoOwned,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
         todo!()

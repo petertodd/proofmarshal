@@ -51,10 +51,11 @@ impl<'a, M: ?Sized + Map> TryGet for Key<'a, M> {
     type Error = Error<M::Id, M::Error>;
 
     unsafe fn try_get<T: ?Sized>(&self, metadata: T::Metadata) -> Result<MaybeValid<Ref<T>>, Self::Error>
-        where T: LoadRefIn<Self::Zone>
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
     {
         self.map.get_blob_with(self.key, metadata, |bytes| {
-            T::load_owned_from_bytes_in(bytes, &self.map)
+            T::load_owned_from_bytes(bytes, (&self.map).as_zone())
         }).map_err(|err| Error::from_zone_error(self.map.id(), err))?
           .map_err(|err| Error::from_decode_error(self.map.id(), err))
           .map(|owned| {
@@ -63,7 +64,8 @@ impl<'a, M: ?Sized + Map> TryGet for Key<'a, M> {
     }
 
     unsafe fn try_take_then<T: ?Sized, F, R>(self, metadata: T::Metadata, f: F) -> Result<R, Self::Error>
-        where T: LoadRefIn<Self::Zone>,
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
         todo!()
@@ -72,14 +74,16 @@ impl<'a, M: ?Sized + Map> TryGet for Key<'a, M> {
 
 impl<'a, M: ?Sized + Map> Get for Key<'a, M> {
     unsafe fn get<T: ?Sized>(&self, metadata: T::Metadata) -> MaybeValid<Ref<T>>
-        where T: LoadRefIn<Self::Zone>
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
     {
         self.try_get::<T>(metadata)
             .expect("fixme")
     }
 
     unsafe fn take_then<T: ?Sized, F, R>(self, metadata: T::Metadata, f: F) -> R
-        where T: LoadRefIn<Self::Zone>,
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
         todo!()
@@ -159,7 +163,8 @@ impl<'a, M: ?Sized + Map> TryGet for KeyMut<'a, M> {
     type Error = Error<M::Id, M::Error>;
 
     unsafe fn try_get<T: ?Sized>(&self, metadata: T::Metadata) -> Result<MaybeValid<Ref<T>>, Self::Error>
-        where T: LoadRefIn<Self::Zone>
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
     {
         match self {
             KeyMut::Key(key) => key.try_get::<T>(metadata),
@@ -168,7 +173,8 @@ impl<'a, M: ?Sized + Map> TryGet for KeyMut<'a, M> {
     }
 
     unsafe fn try_take_then<T: ?Sized, F, R>(self, metadata: T::Metadata, f: F) -> Result<R, Self::Error>
-        where T: LoadRefIn<Self::Zone>,
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
         todo!()
@@ -177,14 +183,16 @@ impl<'a, M: ?Sized + Map> TryGet for KeyMut<'a, M> {
 
 impl<'a, M: ?Sized + Map> Get for KeyMut<'a, M> {
     unsafe fn get<T: ?Sized>(&self, metadata: T::Metadata) -> MaybeValid<Ref<T>>
-        where T: LoadRefIn<Self::Zone>
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
     {
         self.try_get::<T>(metadata)
             .expect("fixme")
     }
 
     unsafe fn take_then<T: ?Sized, F, R>(self, metadata: T::Metadata, f: F) -> R
-        where T: LoadRefIn<Self::Zone>,
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
         todo!()
@@ -195,7 +203,8 @@ impl<'a, M: ?Sized + Map> Get for KeyMut<'a, M> {
 impl<'a, M: ?Sized + Map> KeyMut<'a, M> {
     unsafe fn try_make_dirty<T: ?Sized>(&mut self, key: Key<'a, M>, metadata: T::Metadata)
         -> Result<MaybeValid<&mut T>, Error<M::Id, M::Error>>
-    where T: LoadRefIn<&'a M>
+        where T: LoadRef,
+              &'a M: AsZone<T::Zone>,
     {
         let owned: T::Owned = key.try_take::<T>(metadata)?.trust();
         let bag: Bag<T, Heap> = Heap::alloc(owned);
@@ -207,7 +216,8 @@ impl<'a, M: ?Sized + Map> KeyMut<'a, M> {
 
 impl<'a, M: ?Sized + Map> TryGetMut for KeyMut<'a, M> {
     unsafe fn try_get_mut<T: ?Sized>(&mut self, metadata: T::Metadata) -> Result<MaybeValid<&mut T>, Self::Error>
-        where T: LoadRefIn<Self::Zone>
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
     {
         match *self {
             KeyMut::Heap(ref mut ptr) => Ok(ptr.try_get_dirty_mut::<T>(metadata).into_ok()),
@@ -218,7 +228,8 @@ impl<'a, M: ?Sized + Map> TryGetMut for KeyMut<'a, M> {
 
 impl<'a, M: ?Sized + Map> GetMut for KeyMut<'a, M> {
     unsafe fn get_mut<T: ?Sized>(&mut self, metadata: T::Metadata) -> MaybeValid<&mut T>
-        where T: LoadRefIn<Self::Zone>
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
     {
         self.try_get_mut::<T>(metadata)
             .expect("fixme")

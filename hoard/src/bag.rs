@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::pointee::Pointee;
 use crate::blob::*;
-use crate::load::{Load, LoadRef, LoadRefIn, MaybeValid};
+use crate::load::{Load, LoadRef, MaybeValid};
 use crate::owned::{Ref, Take, IntoOwned, RefOwn};
 use crate::ptr::{Ptr, PtrClean, PtrBlob, Get, TryGet, GetMut, TryGetMut, AsZone};
 use crate::save::{Save, SavePoll, SaveRef, SaveRefPoll, Saver};
@@ -77,7 +77,8 @@ impl<T: ?Sized + Pointee, P: Ptr> Bag<T, P> {
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> Bag<T, P>
-where T: LoadRefIn<P::Zone>,
+where T: LoadRef,
+      P::Zone: AsZone<T::Zone>,
 {
     #[track_caller]
     pub fn get<'a>(&'a self) -> Ref<'a, T>

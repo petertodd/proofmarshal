@@ -5,7 +5,7 @@ use crate::pointee::Pointee;
 use crate::maybevalid::MaybeValid;
 use crate::owned::{Take, IntoOwned, Ref, RefOwn};
 use crate::bag::Bag;
-use crate::load::LoadRefIn;
+use crate::load::LoadRef;
 
 pub mod heap;
 pub use self::heap::Heap;
@@ -135,14 +135,17 @@ pub trait TryGet : Ptr {
     type Error;
 
     unsafe fn try_get<T: ?Sized>(&self, metadata: T::Metadata) -> Result<MaybeValid<Ref<T>>, Self::Error>
-        where T: LoadRefIn<Self::Zone>;
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>;
 
     unsafe fn try_take_then<T: ?Sized, F, R>(self, metadata: T::Metadata, f: F) -> Result<R, Self::Error>
-        where T: LoadRefIn<Self::Zone>,
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R;
 
     unsafe fn try_take<T: ?Sized>(self, metadata: T::Metadata) -> Result<MaybeValid<T::Owned>, Self::Error>
-        where T: LoadRefIn<Self::Zone>,
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
     {
         self.try_take_then(metadata, |src| T::into_owned(src.trust()).into())
     }
@@ -151,16 +154,19 @@ pub trait TryGet : Ptr {
 pub trait Get : TryGet {
     #[track_caller]
     unsafe fn get<T: ?Sized>(&self, metadata: T::Metadata) -> MaybeValid<Ref<T>>
-        where T: LoadRefIn<Self::Zone>;
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>;
 
     #[track_caller]
     unsafe fn take_then<T: ?Sized, F, R>(self, metadata: T::Metadata, f: F) -> R
-        where T: LoadRefIn<Self::Zone>,
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R;
 
     #[track_caller]
     unsafe fn take<T: ?Sized>(self, metadata: T::Metadata) -> MaybeValid<T::Owned>
-        where T: LoadRefIn<Self::Zone>
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>
     {
         self.take_then(metadata, |src| T::into_owned(src.trust()).into())
     }
@@ -168,12 +174,14 @@ pub trait Get : TryGet {
 
 pub trait TryGetMut : TryGet {
     unsafe fn try_get_mut<T: ?Sized>(&mut self, metadata: T::Metadata) -> Result<MaybeValid<&mut T>, Self::Error>
-        where T: LoadRefIn<Self::Zone>;
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>;
 }
 
 pub trait GetMut : TryGetMut {
     #[track_caller]
     unsafe fn get_mut<T: ?Sized>(&mut self, metadata: T::Metadata) -> MaybeValid<&mut T>
-        where T: LoadRefIn<Self::Zone>;
+        where T: LoadRef,
+              Self::Zone: AsZone<T::Zone>;
 }
 
