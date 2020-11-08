@@ -25,7 +25,7 @@ use crate::unreachable_unchecked;
 use super::height::*;
 use super::length::*;
 use super::raw;
-use super::leaf::Leaf;
+use super::leaf::{Leaf, LeafSavePoll};
 
 #[repr(C)]
 pub struct Pair<T, P: Ptr> {
@@ -612,7 +612,7 @@ where T: 'static,
     type DecodeBytesError = DecodePerfectTreeDynBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError>;
 
     fn try_size(_height: Self::Metadata) -> Result<usize, !> {
-        Ok(<PerfectTree<T, P> as Blob>::SIZE)
+        Ok(<raw::Node<T, P> as Blob>::SIZE)
     }
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -704,7 +704,7 @@ where T: 'static,
     type DecodeBytesError = DecodeTipDynBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError>;
 
     fn try_size(_height: Self::Metadata) -> Result<usize, !> {
-        Ok(<Tip<T, P> as Blob>::SIZE)
+        Ok(<raw::Node<T, P> as Blob>::SIZE)
     }
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -796,7 +796,7 @@ where T: 'static,
     type DecodeBytesError = DecodePairDynBytesError<<raw::Pair<T, P> as Blob>::DecodeBytesError>;
 
     fn try_size(_height: Self::Metadata) -> Result<usize, !> {
-        Ok(<Pair<T, P> as Blob>::SIZE)
+        Ok(<raw::Pair<T, P> as Blob>::SIZE)
     }
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -1036,77 +1036,39 @@ where T: Commit,
 
 // --------- save impls ------------
 
-/*
 #[doc(hidden)]
-pub enum PerfectTreeDynSavePoll<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean> {
-    //Leaf(Box<LeafSavePoll<T, P, S, R>>),
-    Tip(Box<TipDynSavePoll<Q, R, T, P>>),
+pub enum PerfectTreeDynSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
+    Leaf(Box<LeafSavePoll<Q, T, P>>),
+    Tip(Box<TipDynSavePoll<Q, T, P>>),
 }
 
 #[doc(hidden)]
-pub struct PerfectTreeSavePoll<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean>(
-    PerfectTreeDynSavePoll<Q, R, T, P>
+pub struct PerfectTreeSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr>(
+    PerfectTreeDynSavePoll<Q, T, P>
 );
 
 #[doc(hidden)]
-pub struct TipDynSavePoll<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean> {
-    marker: PhantomData<fn(Q) -> T>,
+pub struct TipDynSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
     height: NonZeroHeight,
     digest: Digest,
-    state: State<Q, R, T, P>,
+    state: State<Q, T, P>,
 }
 
-enum State<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean> {
-    Clean(P::Blob),
-    Dirty(PairDynSavePoll<Q, R, T, P>),
-    Done(R),
-}
-
-
-#[doc(hidden)]
-pub struct PairDynSavePoll<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean> {
-    left: PerfectTreeDynSavePoll<Q, R, T, P>,
-    right: PerfectTreeDynSavePoll<Q, R, T, P>,
-}
-*/
-
-/*
-#[doc(hidden)]
-pub enum PerfectTreeDynSavePoll<T, P: PtrClean, S, R> {
-    Leaf(Box<LeafSavePoll<T, P, S, R>>),
-    Tip(Box<TipDynSavePoll<T, P, S, R>>),
-}
-
-#[doc(hidden)]
-pub struct PerfectTreeSavePoll<T, P: PtrClean, S, R>(
-    PerfectTreeDynSavePoll<T, P, S, R>
-);
-
-#[doc(hidden)]
-pub struct TipDynSavePoll<T, P: PtrClean, S, R> {
-    marker: PhantomData<T>,
-    height: NonZeroHeight,
-    digest: Digest,
-    state: State<T, P, S, R>,
-}
-
-enum State<T, P: PtrClean, S, R> {
-    Clean(P::Blob),
-    Dirty(PairDynSavePoll<T, P, S, R>),
-    Done(R),
+enum State<Q: PtrBlob, T: Save<Q>, P: Ptr> {
+    Clean(P::Clean),
+    Dirty(PairDynSavePoll<Q, T, P>),
+    Done(Q),
 }
 
 
 #[doc(hidden)]
-pub struct PairDynSavePoll<T, P: PtrClean, S, R> {
-    left: PerfectTreeDynSavePoll<T, P, S, R>,
-    right: PerfectTreeDynSavePoll<T, P, S, R>,
+pub struct PairDynSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
+    left: PerfectTreeDynSavePoll<Q, T, P>,
+    right: PerfectTreeDynSavePoll<Q, T, P>,
 }
-*/
 
-/*
-impl<T: SavePoll, P: PtrConst> PerfectTreeDynSavePoll<T, P> {
-    fn encode_raw_node_blob(&self) -> raw::Node<T::SavedBlob, (), P::Blob> {
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> PerfectTreeDynSavePoll<Q, T, P> {
+    fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q> {
         match self {
             Self::Leaf(leaf) => leaf.encode_raw_node_blob(),
             Self::Tip(tip) => tip.encode_raw_node_blob(),
@@ -1114,29 +1076,31 @@ impl<T: SavePoll, P: PtrConst> PerfectTreeDynSavePoll<T, P> {
     }
 }
 
-impl<T: SavePoll, P: PtrConst> TipDynSavePoll<T, P> {
-    fn encode_raw_node_blob(&self) -> raw::Node<T::SavedBlob, (), P::Blob> {
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> TipDynSavePoll<Q, T, P> {
+    fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q> {
         match self.state {
-            State::Done(ptr) => raw::Node::new(Some(self.digest), (), ptr),
-            State::(_) => panic!(),
+            State::Done(ptr) => raw::Node::new(Some(self.digest), ptr),
+            State::Clean(_) | State::Dirty(_) => panic!(),
         }
     }
 }
 
-impl<T: SavePoll, P: PtrConst> PairDynSavePoll<T, P> {
-    fn encode_raw_pair_blob(&self) -> raw::Pair<T::SavedBlob, (), P::Blob> {
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> PairDynSavePoll<Q, T, P> {
+    fn encode_raw_pair_blob(&self) -> raw::Pair<T::DstBlob, Q> {
         raw::Pair {
             left: self.left.encode_raw_node_blob(),
             right: self.right.encode_raw_node_blob(),
         }
     }
 }
-*/
 
-/*
-impl<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean> SaveRefPoll<Q, R> for PairDynSavePoll<Q, R, T, P>
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRefPoll for PairDynSavePoll<Q, T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type DstBlob = PairDyn<T::DstBlob, R>;
+    type SrcPtr = P::Clean;
+    type DstPtr = Q;
+    type DstBlob = PairDyn<T::DstBlob, Q>;
 
     fn blob_metadata(&self) -> NonZeroHeight {
         self.left.blob_metadata()
@@ -1144,29 +1108,26 @@ impl<Q, R: PtrBlob, T: Save<Q, R>, P: PtrClean> SaveRefPoll<Q, R> for PairDynSav
     }
 
     fn save_ref_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<SrcPtr = Q, DstPtr = R>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
     {
-        /*
-        self.left.save_dirty_ref_poll_impl(saver)?;
-        self.right.save_dirty_ref_poll_impl(saver)
-        */ todo!()
+        self.left.save_ref_poll(saver)?;
+        self.right.save_ref_poll(saver)
     }
 
     fn encode_blob_dyn_bytes<'a>(&self, dst: BytesUninit<'a, Self::DstBlob>) -> Bytes<'a, Self::DstBlob> {
-        /*
         dst.write_struct()
            .write_field(&self.encode_raw_pair_blob())
            .done()
-        */ todo!()
     }
 }
-*/
 
-/*
-impl<Q, R: PtrBlob, T, P: Ptr> SaveRefPoll<Q, R> for PerfectTreeDynSavePoll<T, P, T::SavePoll, R>
-where T: Save<Q, R>
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRefPoll for PerfectTreeDynSavePoll<Q, T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type DstBlob = PerfectTreeDyn<T::DstBlob, R>;
+    type SrcPtr = P::Clean;
+    type DstPtr = Q;
+    type DstBlob = PerfectTreeDyn<T::DstBlob, Q>;
 
     fn blob_metadata(&self) -> Height {
         match self {
@@ -1176,177 +1137,191 @@ where T: Save<Q, R>
     }
 
     fn save_ref_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<SrcPtr = Q, DstPtr = R>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
     {
-        /*
         match self {
-            Self::Leaf(leaf) => leaf.save_dirty_ref_poll_impl(saver),
-            Self::Tip(tip) => tip.save_dirty_ref_poll_impl(saver),
+            Self::Leaf(leaf) => leaf.save_poll(saver),
+            Self::Tip(tip) => tip.save_ref_poll(saver),
         }
-        */ todo!()
     }
 
     fn encode_blob_dyn_bytes<'a>(&self, dst: BytesUninit<'a, Self::DstBlob>) -> Bytes<'a, Self::DstBlob> {
-        /*
         dst.write_struct()
            .write_field(&self.encode_raw_node_blob())
            .done()
-        */ todo!()
     }
 }
-*/
 
-/*
-impl<T: SavePoll, P: PtrConst> SaveRefPoll for TipDynSavePoll<T, P>
-where T::CleanPtr: FromPtr<P>
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRefPoll for TipDynSavePoll<Q, T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type CleanPtr = P;
-    type SavedBlobDyn = TipDyn<T::SavedBlob, (), P::Blob>;
+    type SrcPtr = P::Clean;
+    type DstPtr = Q;
+    type DstBlob = TipDyn<T::DstBlob, Q>;
 
     fn blob_metadata(&self) -> NonZeroHeight {
         self.height
     }
 
-    fn save_dirty_ref_poll_impl<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: BlobSaver<CleanPtr = Self::CleanPtr>
+    fn save_ref_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver<SrcPtr = P::Clean, DstPtr = Q>
     {
         loop {
             self.state = match &mut self.state {
-                State::(dirty) => {
-                    dirty.save_dirty_ref_poll_impl(saver)?;
+                State::Clean(p_clean) => {
+                    match saver.save_ptr::<PairDyn<T, P>>(*p_clean, self.height)? {
+                        Ok(q_ptr) => State::Done(q_ptr),
+                        Err(target_poll) => State::Dirty(target_poll),
+                    }
+                },
+                State::Dirty(target) => {
+                    target.save_ref_poll(saver)?;
 
-                    let q_blob = saver.save_bytes(self.height, |dst| {
-                        dirty.encode_blob_dyn_bytes(dst)
+                    let q_ptr = saver.save_blob_with(target.blob_metadata(), |dst| {
+                        target.encode_blob_dyn_bytes(dst)
                     })?;
-
-                    State::Done(q_blob)
+                    State::Done(q_ptr)
                 },
                 State::Done(_) => break Ok(()),
             };
         }
     }
 
-    fn encode_blob_dyn_bytes<'a>(&self, dst: BytesUninit<'a, Self::SavedBlobDyn>) -> Bytes<'a, Self::SavedBlobDyn> {
+    fn encode_blob_dyn_bytes<'a>(&self, dst: BytesUninit<'a, Self::DstBlob>) -> Bytes<'a, Self::DstBlob> {
         dst.write_struct()
            .write_field(&self.encode_raw_node_blob())
            .done()
     }
 }
-*/
 
-/*
-impl<Q, R: PtrBlob, T, P: Ptr> SaveRef<Q, R> for PerfectTreeDyn<T, P>
-where T: Save<Q, R>
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRef<Q> for PerfectTreeDyn<T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type SrcBlob = PerfectTreeDyn<T::SrcBlob, P::Blob>;
-    type DstBlob = PerfectTreeDyn<T::DstBlob, R>;
-    type SavePoll = PerfectTreeDynSavePoll<T, P::Clean, T::SavePoll, R>;
+    type DstBlob = PerfectTreeDyn<T::DstBlob, Q>;
+    type SaveRefPoll = PerfectTreeDynSavePoll<Q, T, P>;
 
-    fn init_save_ref(&self) -> Self::SavePoll {
-        /*
+    fn init_save_ref(&self) -> Self::SaveRefPoll {
         match self.kind() {
-            Kind::Leaf(leaf) => PerfectTreeDynSavePoll::Leaf(leaf.init_save_dirty().into()),
-            Kind::Tip(tip) => PerfectTreeDynSavePoll::Tip(tip.init_save_dirty_ref().into()),
+            Kind::Leaf(leaf) => PerfectTreeDynSavePoll::Leaf(leaf.init_save().into()),
+            Kind::Tip(tip) => PerfectTreeDynSavePoll::Tip(tip.init_save_ref().into()),
         }
-        */ todo!()
-    }
-
-    fn init_save_ref_from_bytes(_: Bytes<'_, Self::SrcBlob>)
-        -> Result<Self::SavePoll,
-                  <Self::SrcBlob as BlobDyn>::DecodeBytesError>
-    {
-        todo!()
     }
 }
-*/
 
-/*
-impl<T, Z: Zone, P: Ptr> SaveRef for TipDyn<T, P>
-where T: Commit + Save,
-      T::CleanPtr: FromPtr<P::Clean>
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRef<Q> for TipDyn<T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type CleanPtr = P::Clean;
-    type SaveRefPoll = TipDynSavePoll<T::SavePoll, P::Clean>;
+    type DstBlob = TipDyn<T::DstBlob, Q>;
+    type SaveRefPoll = TipDynSavePoll<Q, T, P>;
 
-    fn init_save_dirty_ref(&self) -> Self::SaveRefPoll {
+    fn init_save_ref(&self) -> Self::SaveRefPoll {
         TipDynSavePoll {
             height: self.height(),
             digest: Digest::default(),
             state: match self.try_get_dirty_pair() {
-                Ok(pair) => State::(pair.init_save_dirty_ref()),
-                Err(p_clean) => State::Done(p_clean.to_blob()),
+                Ok(pair) => State::Dirty(pair.init_save_ref()),
+                Err(p_clean) => State::Clean(p_clean),
             }
         }
     }
 }
 
-impl<T, Z: Zone, P: Ptr> SaveRef for PairDyn<T, P>
-where T: Commit + Save,
-      T::CleanPtr: FromPtr<P::Clean>
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRef<Q> for PairDyn<T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type CleanPtr = P::Clean;
-    type SaveRefPoll = PairDynSavePoll<T::SavePoll, P::Clean>;
+    type DstBlob = PairDyn<T::DstBlob, Q>;
+    type SaveRefPoll = PairDynSavePoll<Q, T, P>;
 
-    fn init_save_dirty_ref(&self) -> Self::SaveRefPoll {
+    fn init_save_ref(&self) -> Self::SaveRefPoll {
         PairDynSavePoll {
-            left: self.left().init_save_dirty_ref(),
-            right: self.right().init_save_dirty_ref(),
+            left: self.left().init_save_ref(),
+            right: self.right().init_save_ref(),
         }
     }
 }
-*/
 
-/*
-impl<Q, R: PtrBlob, T, P: PtrClean> SavePoll<Q, R> for PerfectTreeSavePoll<T, P, T::SavePoll, R>
-where T: Save<Q, R>
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SavePoll for PerfectTreeSavePoll<Q, T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type DstBlob = PerfectTree<T::DstBlob, R>;
+    type SrcPtr = P::Clean;
+    type DstPtr = Q;
+    type DstBlob = PerfectTree<T::DstBlob, Q>;
 
     fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<SrcPtr = Q, DstPtr = R>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
     {
-        //self.0.save_ref_poll_impl(saver)
-        todo!()
+        self.0.save_ref_poll(saver)
     }
 
     fn encode_blob(&self) -> Self::DstBlob {
-        /*
         let raw = self.0.encode_raw_node_blob();
         let height = self.0.blob_metadata();
 
         unsafe {
             PerfectTree::from_raw_node(raw, height)
         }
-        */ todo!()
     }
 }
 
-impl<Q, R: PtrBlob, T, P: Ptr> Save<Q, R> for PerfectTree<T, P>
-where T: Save<Q, R>
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> Save<Q> for PerfectTree<T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type SrcBlob = PerfectTree<T::SrcBlob, P::Blob>;
-    type DstBlob = PerfectTree<T::DstBlob, R>;
-    type SavePoll = PerfectTreeSavePoll<T, P::Clean, T::SavePoll, R>;
+    type DstBlob = PerfectTree<T::DstBlob, Q>;
+    type SavePoll = PerfectTreeSavePoll<Q, T, P>;
 
     fn init_save(&self) -> Self::SavePoll {
-        /*
         PerfectTreeSavePoll(
-            self.deref().init_save_dirty_ref()
+            self.deref().init_save_ref()
         )
-        */ todo!()
-    }
-
-    fn init_save_from_blob(blob: &Self::SrcBlob) -> Self::SavePoll {
-        todo!()
     }
 }
-*/
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use hoard::ptr::Heap;
+    use hoard::{
+        ptr::{
+            Heap,
+            key::{
+                Map,
+                offset::OffsetSaver,
+            },
+        },
+    };
+
+    #[test]
+    fn save() {
+        let leaf0 = PerfectTree::<u8, Heap>::new_leaf(0u8);
+        let leaf1 = PerfectTree::<u8, Heap>::new_leaf(1u8);
+        let tree0 = PerfectTree::try_join(leaf0, leaf1).unwrap();
+
+        let saver = OffsetSaver::new(&[][..]);
+        let (offset, buf) = saver.try_save(&tree0).unwrap();
+        assert_eq!(offset, 82);
+        assert_eq!(buf, vec![
+            0, // u8
+            1, // u8
+
+            // leaf 0
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+
+            // leaf 1
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            1, 0, 0, 0, 0, 0, 0, 0,
+
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            2, 0, 0, 0, 0, 0, 0, 0,
+            1 // height
+        ]);
+    }
 
     #[test]
     fn test_get() {

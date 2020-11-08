@@ -319,10 +319,21 @@ where S::Key: From<P>,
         let coerced: &mut Wrapper<Self, T::SrcPtr> = Wrapper::new(self);
         value.save_ref_poll(coerced)?;
 
-        let offset = self.save_blob_with(value.blob_metadata(), |dst| {
+        let offset = Saver::save_blob_with(self, value.blob_metadata(), |dst| {
             value.encode_blob_dyn_bytes(dst)
         })?;
         Ok(offset)
+    }
+
+    fn save_blob_with<T: ?Sized, F>(
+        &mut self,
+        metadata: T::Metadata,
+        f: F,
+    ) -> Result<Offset, Self::Error>
+        where T: BlobDyn,
+              F: for<'a> FnOnce(BytesUninit<'a, T>) -> Bytes<'a, T>
+    {
+        Ok(BlobSaver::save_blob_with(self, metadata, f)?)
     }
 }
 

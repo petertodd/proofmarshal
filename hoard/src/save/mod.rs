@@ -19,15 +19,23 @@ pub trait Saver {
         where T: SaveRef<Self::DstPtr>,
               <Self::SrcPtr as Ptr>::Zone: AsZone<T::Zone>;
 
-    fn poll<T: ?Sized>(&mut self, poll: &mut T) -> Result<(), Self::Error>
+    fn poll<T>(&mut self, poll: &mut T) -> Result<(), Self::Error>
         where T: SaveRefPoll<DstPtr = Self::DstPtr>,
               Self::SrcPtr: From<T::SrcPtr>,
               <Self::SrcPtr as Ptr>::Zone: AsZone<<T::SrcPtr as Ptr>::Zone>;
 
-    fn poll_ref<T: ?Sized>(&mut self, poll: &mut T) -> Result<Self::DstPtr, Self::Error>
+    fn poll_ref<T>(&mut self, poll: &mut T) -> Result<Self::DstPtr, Self::Error>
         where T: SaveRefPoll<DstPtr = Self::DstPtr>,
               Self::SrcPtr: From<T::SrcPtr>,
               <Self::SrcPtr as Ptr>::Zone: AsZone<<T::SrcPtr as Ptr>::Zone>;
+
+    fn save_blob_with<T: ?Sized, F>(&mut self, metadata: T::Metadata, f: F) -> Result<Self::DstPtr, Self::Error>
+        where T: BlobDyn,
+              F: for<'a> FnOnce(BytesUninit<'a, T>) -> Bytes<'a, T>
+    {
+        todo!()
+    }
+
 }
 
 pub trait Save<DstPtr> : Load {

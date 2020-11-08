@@ -213,15 +213,12 @@ where T: Load,
 
 // ----- save impls ---------
 
-/*
-impl<Q: PtrClean, R: PtrBlob, T, P: Ptr> Save<Q, R> for Leaf<T, P>
-where T: Save<Q, R>,
-      Q: From<P::Clean>,
-      Q::Zone: AsZone<P::Zone>,
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> Save<Q> for Leaf<T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type SrcBlob = Leaf<T::SrcBlob, P::Blob>;
-    type DstBlob = Leaf<T::DstBlob, R>;
-    type SavePoll = LeafSavePoll<T, P::Clean, T::SavePoll, R>;
+    type DstBlob = Leaf<T::DstBlob, Q>;
+    type SavePoll = LeafSavePoll<Q, T, P>;
 
     fn init_save(&self) -> Self::SavePoll {
         LeafSavePoll {
@@ -229,67 +226,56 @@ where T: Save<Q, R>,
             digest: Digest::default(), //self.digest().cast(),
             state: match self.try_get_dirty() {
                 Ok(dirty) => State::Dirty(dirty.init_save()),
-                Err(p_clean) => State::Clean(p_clean.to_blob()),
+                Err(p_clean) => State::Clean(p_clean),
             }
         }
-    }
-
-    fn init_save_from_blob(_blob: &Self::SrcBlob) -> Self::SavePoll {
-        todo!()
     }
 }
 
 #[doc(hidden)]
-pub struct LeafSavePoll<T, P: PtrClean, S, R> {
+pub struct LeafSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
     marker: PhantomData<fn(T)>,
     digest: Digest,
-    state: State<P, S, R>,
+    state: State<Q, T, P>,
 }
 
 #[derive(Debug)]
-enum State<P: PtrClean, S, R> {
-    Clean(P::Blob),
-    Dirty(S),
-    Done(R),
+enum State<Q: PtrBlob, T: Save<Q>, P: Ptr> {
+    Clean(P::Clean),
+    Dirty(T::SavePoll),
+    Done(Q),
 }
 
-/*
-impl<T: SaveDirtyPoll, P: PtrConst> LeafSaveDirtyPoll<T, P> {
-    pub(crate) fn encode_raw_node_blob(&self) -> raw::Node<T::SavedBlob, (), P::Blob> {
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> LeafSavePoll<Q, T, P> {
+    pub(crate) fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q> {
         match self.state {
-            State::Done(ptr) => raw::Node::new(Some(self.digest), (), ptr),
-            State::Dirty(_) => panic!(),
+            State::Done(q_ptr) => raw::Node::new(Some(self.digest), q_ptr),
+            State::Dirty(_) | State::Clean(_) => panic!(),
         }
     }
 }
-*/
 
-impl<Q: PtrClean, R: PtrBlob, T, P: PtrClean> SavePoll<Q, R> for LeafSavePoll<T, P, T::SavePoll, R>
-where T: Save<Q, R>,
-      Q: From<P>,
-      Q::Zone: AsZone<P::Zone>,
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SavePoll for LeafSavePoll<Q, T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type DstBlob = Leaf<T::DstBlob, R>;
+    type SrcPtr = P::Clean;
+    type DstPtr = Q;
+    type DstBlob = Leaf<T::DstBlob, Q>;
 
     fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
-        where S: Saver<SrcPtr = Q, DstPtr = R>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
     {
         loop {
             self.state = match &mut self.state {
-                State::Clean(p_blob) => {
-                    match saver.try_save_ptr::<P, T>(*p_blob, ())? {
-                        Ok(r_ptr) => State::Done(r_ptr),
+                State::Clean(p_clean) => {
+                    match saver.save_ptr::<T>(*p_clean, ())? {
+                        Ok(q_ptr) => State::Done(q_ptr),
                         Err(target_poll) => State::Dirty(target_poll),
                     }
                 },
                 State::Dirty(target_poll) => {
-                    target_poll.save_poll(saver)?;
-
-                    let r_ptr = saver.save_blob_with((), |dst| {
-                        target_poll.encode_blob_bytes(dst)
-                    })?;
-
-                    State::Done(r_ptr)
+                    State::Done(saver.poll_ref(target_poll)?)
                 },
                 State::Done(_) => break Ok(()),
             }
@@ -297,17 +283,41 @@ where T: Save<Q, R>,
     }
 
     fn encode_blob(&self) -> Self::DstBlob {
-        todo!()
+        let raw = self.encode_raw_node_blob();
+        unsafe { Leaf::from_raw(raw) }
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use hoard::zone::heap::Heap;
+    use hoard::{
+        ptr::{
+            Heap,
+            key::{
+                Map,
+                offset::OffsetSaver,
+            },
+        },
+    };
 
+    #[test]
+    fn save() {
+        let n = 42u8;
+        let leaf = Leaf::<u8, Heap>::new(n);
+
+        let saver = OffsetSaver::new(&[][..]);
+        let (offset, buf) = saver.try_save(&leaf).unwrap();
+        assert_eq!(offset, 1);
+        assert_eq!(buf, vec![
+            42,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0
+        ]);
+    }
+
+    /*
     #[test]
     fn test_commit() {
         let n = 42u8;
@@ -340,6 +350,5 @@ mod tests {
         assert_eq!(leaf_n.digest(), 3u8.commit());
         assert!(leaf_n.try_digest().is_some());
     }
+    */
 }
-*/
-*/
