@@ -178,7 +178,7 @@ pub trait TryGetMut : TryGet {
               Self::Zone: AsZone<T::Zone>;
 }
 
-pub trait GetMut : TryGetMut {
+pub trait GetMut : Get + TryGetMut {
     #[track_caller]
     unsafe fn get_mut<T: ?Sized>(&mut self, metadata: T::Metadata) -> MaybeValid<&mut T>
         where T: LoadRef,
