@@ -637,12 +637,12 @@ where T: Load
     type Ptr = P;
     type Zone = P::Zone;
 
-    fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
-        -> Result<MaybeValid<Ref<'a, Self>>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    fn load_owned_from_bytes(src: Bytes<'_, Self::BlobDyn>, zone: &Self::Zone)
+        -> Result<MaybeValid<Self::Owned>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
         let blob = <Self::BlobDyn as BlobDyn>::decode_bytes(src)?;
         let owned = PerfectTree::<T, P>::load_maybe_valid(blob, zone).trust();
-        Ok(MaybeValid::from(Ref::Owned(owned)))
+        Ok(MaybeValid::from(owned))
     }
 }
 
@@ -729,12 +729,12 @@ where T: Load
     type Ptr = P;
     type Zone = P::Zone;
 
-    fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
-        -> Result<MaybeValid<Ref<'a, Self>>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    fn load_owned_from_bytes(src: Bytes<'_, Self::BlobDyn>, zone: &Self::Zone)
+        -> Result<MaybeValid<Self::Owned>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
         let blob = <Self::BlobDyn as BlobDyn>::decode_bytes(src)?;
         let owned = Tip::<T, P>::load_maybe_valid(blob, zone).trust();
-        Ok(MaybeValid::from(Ref::Owned(owned)))
+        Ok(MaybeValid::from(owned))
     }
 }
 
@@ -821,13 +821,13 @@ where T: Load
     type Ptr = P;
     type Zone = P::Zone;
 
-    fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
-        -> Result<MaybeValid<Ref<'a, Self>>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
+    fn load_owned_from_bytes(src: Bytes<'_, Self::BlobDyn>, zone: &Self::Zone)
+        -> Result<MaybeValid<Self::Owned>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
         let blob = <Self::BlobDyn as BlobDyn>::decode_bytes(src)?;
 
         let owned = Pair::<T, P>::load_maybe_valid(blob, zone).trust();
-        Ok(MaybeValid::from(Ref::Owned(owned)))
+        Ok(MaybeValid::from(owned))
     }
 }
 

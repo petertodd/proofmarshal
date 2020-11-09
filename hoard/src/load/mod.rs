@@ -37,15 +37,16 @@ pub trait LoadRef : Pointee + IntoOwned {
     type Ptr : Ptr<Zone = Self::Zone>;
     type Zone;
 
-    fn load_ref_from_bytes<'a>(bytes: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
-        -> Result<MaybeValid<Ref<'a, Self>>,
-                  <Self::BlobDyn as BlobDyn>::DecodeBytesError>;
-
     fn load_owned_from_bytes(bytes: Bytes<'_, Self::BlobDyn>, zone: &Self::Zone)
         -> Result<MaybeValid<Self::Owned>,
+                  <Self::BlobDyn as BlobDyn>::DecodeBytesError>;
+
+    fn load_ref_from_bytes<'a>(bytes: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
+        -> Result<MaybeValid<Ref<'a, Self>>,
                   <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
-        todo!()
+        Self::load_owned_from_bytes(bytes, zone)
+             .map(|owned| MaybeValid::from(Ref::Owned(owned.trust())))
     }
 }
 
