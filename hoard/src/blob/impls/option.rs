@@ -13,29 +13,46 @@ impl<T: Blob> Blob for Option<T> {
 
     type DecodeBytesError = DecodeOptionBytesError<T::DecodeBytesError>;
 
-    fn decode_bytes(_src: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
-        todo!()
+    fn decode_bytes(src: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
+        let mut fields = src.struct_fields();
+
+        match fields.trust_field::<u8>().into_ok() {
+            0 => {
+                // FIXME: check padding
+                Ok(MaybeValid::from(None))
+            },
+            1 => {
+                let inner = fields.trust_field::<T>().map_err(DecodeOptionBytesError::Value)?;
+                Ok(MaybeValid::from(Some(inner)))
+            },
+            _ => Err(DecodeOptionBytesError::Discriminant),
+        }
     }
 
-    fn encode_bytes<'a>(&self, _dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
-        todo!()
-    }
-}
-
-/*
-pub struct OptionValidator<T>(Option<T>);
-
-impl<T: ValidatePoll> ValidatePoll for OptionValidator<T> {
-    type Ptr = T::Ptr;
-    type Error = T::Error;
-
-    fn validate_poll_impl<V>(&mut self, validator: &mut V) -> Poll<Result<(), Self::Error>>
-        where V: Validator<Ptr = Self::Ptr>
-    {
-        match &mut self.0 {
-            None => Ok(()).into(),
-            Some(inner) => inner.validate_poll_impl(validator),
+    fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        let dst = dst.write_struct();
+        match self {
+            None => {
+                dst.write_field(&0u8)
+                   .write_padding(T::SIZE)
+                   .done()
+            },
+            Some(inner) => {
+                dst.write_field(&1u8)
+                   .write_field(inner)
+                   .done()
+            },
         }
     }
 }
-*/
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test() {
+        let opt: Option<u8> = Some(23);
+        assert_eq!(opt.to_blob_bytes(), &[1,23]);
+    }
+}
