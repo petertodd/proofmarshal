@@ -1068,7 +1068,7 @@ pub struct PairDynSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
 }
 
 impl<Q: PtrBlob, T: Save<Q>, P: Ptr> PerfectTreeDynSavePoll<Q, T, P> {
-    fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q> {
+    pub(crate) fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q> {
         match self {
             Self::Leaf(leaf) => leaf.encode_raw_node_blob(),
             Self::Tip(tip) => tip.encode_raw_node_blob(),

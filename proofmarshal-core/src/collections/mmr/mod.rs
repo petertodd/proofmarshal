@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::convert::TryFrom;
 use std::marker::PhantomData;
 use std::error;
@@ -16,6 +15,7 @@ use hoard::owned::{IntoOwned, Take, Ref, RefOwn};
 use hoard::pointee::Pointee;
 use hoard::ptr::{Get, GetMut, Ptr, PtrBlob, Zone, AsZone};
 use hoard::load::{Load, LoadRef, MaybeValid};
+use hoard::save::{Save, SavePoll, Saver};
 
 use crate::collections::leaf::Leaf;
 use crate::collections::length::*;
@@ -23,7 +23,7 @@ use crate::collections::height::Height;
 use crate::collections::perfecttree::PerfectTree;
 
 pub mod peaktree;
-use self::peaktree::PeakTree;
+use self::peaktree::{PeakTree, PeakTreeDyn, DecodePeakTreeBytesError, DecodePeakTreeDynBytesError, PeakTreeSavePoll};
 
 #[derive(Debug)]
 pub struct MMR<T, P: Ptr> {
@@ -199,11 +199,126 @@ fn idx_to_containing_height(len: NonZeroLength, idx: usize) -> Option<(Height, u
     }
 }
 
+
+#[derive(Debug, Error)]
+#[error("FIXME")]
+#[doc(hidden)]
+pub enum DecodeMMRBytesError<Peaks: error::Error, Len: error::Error> {
+    Peaks(Peaks),
+    Len(Len),
+    NonZeroPadding,
+}
+
+impl<T, P: Ptr> Blob for MMR<T, P>
+where T: 'static,
+      P: Blob,
+{
+    const SIZE: usize = <PeakTree<T, P> as Blob>::SIZE;
+    type DecodeBytesError = DecodeMMRBytesError<<PeakTreeDyn<T, P> as BlobDyn>::DecodeBytesError,
+                                                <Length as Blob>::DecodeBytesError>;
+
+    fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
+        if let Some(peaks) = &self.peaks {
+            dst.write_struct()
+               .write_field(peaks)
+               .done()
+        } else {
+            dst.write_struct()
+               .write_padding(<PeakTree<T, P> as Blob>::SIZE - <Length as Blob>::SIZE)
+               .write_field(&Length::ZERO)
+               .done()
+        }
+    }
+
+    fn decode_bytes(src: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
+        let mut fields = src.struct_fields();
+
+        let peaks = match fields.trust_field::<PeakTree<T, P>>() {
+            Ok(peaks) => Ok(Some(peaks)),
+            Err(DecodePeakTreeBytesError::Raw(raw)) => Err(DecodeMMRBytesError::Peaks(DecodePeakTreeDynBytesError(raw))),
+            Err(DecodePeakTreeBytesError::NonZeroLength(err)) if err.0 == 0 => {
+                // FIXME: check for non-zero padding
+                Ok(None)
+            },
+            Err(DecodePeakTreeBytesError::NonZeroLength(_err)) => Err(DecodeMMRBytesError::Len(LengthError)),
+        }?;
+
+        fields.assert_done();
+        Ok(Self { peaks }.into())
+    }
+}
+
+impl<T, P: Ptr> Load for MMR<T, P>
+where T: Load
+{
+    type Blob = MMR<T::Blob, P::Blob>;
+    type Ptr = P;
+    type Zone = P::Zone;
+
+    fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
+        Self {
+            peaks: Load::load(blob.peaks, zone),
+        }
+    }
+}
+
+#[doc(hidden)]
+pub struct MMRSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
+    peaks: Option<PeakTreeSavePoll<Q, T, P>>,
+}
+
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SavePoll for MMRSavePoll<Q, T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
+{
+    type SrcPtr = P::Clean;
+    type DstPtr = Q;
+    type DstBlob = MMR<T::DstBlob, Q>;
+
+    fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
+        where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
+    {
+        match &mut self.peaks {
+            None => Ok(()),
+            Some(peaks) => peaks.save_poll(saver),
+        }
+    }
+
+    fn encode_blob(&self) -> Self::DstBlob {
+        MMR {
+            peaks: self.peaks.as_ref().map(SavePoll::encode_blob),
+        }
+    }
+}
+
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr> Save<Q> for MMR<T, P>
+where P::Zone: AsZone<T::Zone>,
+      P::Clean: From<<T::Ptr as Ptr>::Clean>,
+{
+    type DstBlob = MMR<T::DstBlob, Q>;
+    type SavePoll = MMRSavePoll<Q, T, P>;
+
+    fn init_save(&self) -> Self::SavePoll {
+        MMRSavePoll {
+            peaks: self.peaks.as_ref().map(Save::init_save),
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use hoard::ptr::Heap;
+    use hoard::{
+        ptr::{
+            Heap,
+            key::{
+                Map,
+                offset::OffsetSaver,
+            },
+        },
+    };
 
     #[test]
     fn test_idx_to_containing_height() {
@@ -272,8 +387,8 @@ mod tests {
 
 
     #[test]
-    fn test_get() {
-        let mut mmr = MMR::<u32,Heap>::default();
+    fn heap_get() {
+        let mut mmr = MMR::<u32,Heap>::new();
 
         assert_eq!(mmr.get(0), None);
         assert_eq!(mmr.get(1), None);
@@ -287,5 +402,42 @@ mod tests {
             }
             assert_eq!(mmr.get(i as usize + 1), None);
         }
+    }
+
+    #[test]
+    fn save() {
+        let mut mmr = MMR::<u8, Heap>::new();
+
+        #[track_caller]
+        fn t(mmr: &MMR<u8, Heap>, expected_offset: u64, expected_buf: &[u8]) {
+            let saver = OffsetSaver::new(&[][..]);
+            let (offset, buf) = saver.try_save(mmr).unwrap();
+            assert_eq!(offset, expected_offset);
+            assert_eq!(buf, expected_buf);
+        }
+
+        t(&mmr, 0, &[
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]);
+
+        mmr.try_push(42).unwrap();
+        t(&mmr, 1, &[
+            42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0
+        ]);
+
+        mmr.try_push(43).unwrap();
+        t(&mmr, 82, &[
+            42, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0
+        ]);
+
+        mmr.try_push(44).unwrap();
+        t(&mmr, 163, &[
+            42, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 83, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0
+        ]);
+
+        mmr.try_push(45).unwrap();
+        t(&mmr, 244, &[
+            42, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 44, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 83, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 84, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 164, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0
+        ]);
     }
 }

@@ -64,6 +64,7 @@ impl Length {
 
     /// The smallest possible value.
     pub const MIN: Self = Length(0);
+    pub const ZERO: Self = Length(0);
 
     pub fn from_height(height: impl Into<Height>) -> Self {
         let height = height.into();
@@ -533,18 +534,18 @@ impl From<InnerLength> for usize {
 }
 
 impl TryFrom<usize> for NonZeroLength {
-    type Error = NonZeroLengthError;
+    type Error = NonZeroLengthError<usize>;
 
     fn try_from(len: usize) -> Result<Self, Self::Error> {
-        Self::new(len).ok_or(NonZeroLengthError)
+        Self::new(len).ok_or(NonZeroLengthError(len))
     }
 }
 
 impl TryFrom<Length> for NonZeroLength {
-    type Error = NonZeroLengthError;
+    type Error = NonZeroLengthError<Length>;
 
     fn try_from(len: Length) -> Result<Self, Self::Error> {
-        len.0.try_into()
+        len.0.try_into().ok().ok_or(NonZeroLengthError(len))
     }
 }
 
@@ -675,10 +676,10 @@ impl Primitive for InnerLength {
 
 #[derive(Debug, Error)]
 #[error("FIXME")]
-pub struct NonZeroLengthError;
+pub struct NonZeroLengthError<T: fmt::Debug>(pub T);
 
 impl Primitive for NonZeroLength {
-    type DecodeBytesError = NonZeroLengthError;
+    type DecodeBytesError = NonZeroLengthError<u64>;
 
     const BLOB_SIZE: usize = 8;
 
@@ -689,10 +690,10 @@ impl Primitive for NonZeroLength {
 
     fn decode_blob_bytes(src: Bytes<'_, Self>) -> Result<Self, Self::DecodeBytesError> {
         let mut fields = src.struct_fields();
-        let len = fields.trust_field::<u64>()?;
+        let raw_len = fields.trust_field::<u64>()?;
         fields.assert_done();
-        let len = usize::try_from(len).ok().ok_or(NonZeroLengthError)?;
-        let len = NonZeroUsize::new(len).ok_or(NonZeroLengthError)?;
+        let len = usize::try_from(raw_len).ok().ok_or(NonZeroLengthError(raw_len))?;
+        let len = NonZeroUsize::new(len).ok_or(NonZeroLengthError(raw_len))?;
         Ok(Self(len))
     }
 }
