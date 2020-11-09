@@ -6,13 +6,11 @@ edition = "2018"
 
 [dependencies]
 hoard = { path = "../hoard" }
-anyref = { path = "../anyref" }
 
 thiserror = "1.0.9"
 static_assertions = "1.1.0"
 sha2 = "0.8.0"
 hex-literal = "0.2.1"
-bitflags = "1.2.1"
 
 [dev-dependencies]
 dropcheck = "0.1.1"

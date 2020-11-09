@@ -1,14 +1,5 @@
 [workspace]
 members = [
-	"anyref",
-	"singlelife",
-	"leint",
-	"owned",
-
-	"sliceinit",
-
 	"hoard",
-
 	"proofmarshal-core",
-	"proofmarshal-collections",
 ]
