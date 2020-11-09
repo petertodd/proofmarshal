@@ -124,6 +124,27 @@ impl<T, P: Ptr> PerfectTree<T, P> {
     }
 }
 
+impl<T, P: Ptr> PerfectTree<T, P>
+where T: Load,
+      P::Zone: AsZone<T::Zone>,
+{
+    pub fn into_get(self, idx: usize) -> Option<T>
+        where P: Get
+    {
+        self.into_get_leaf(idx).map(|leaf| leaf.take())
+    }
+
+    pub fn into_get_leaf(self, idx: usize) -> Option<Leaf<T, P>>
+        where P: Get
+    {
+        match self.into_kind() {
+            Kind::Leaf(leaf) if idx == 0 => Some(leaf),
+            Kind::Leaf(_) => None,
+            Kind::Tip(tip) => tip.into_get_leaf(idx),
+        }
+    }
+}
+
 impl<T, P: Ptr> PerfectTreeDyn<T, P>
 where T: Load,
       P::Zone: AsZone<T::Zone>,
@@ -223,6 +244,28 @@ impl<T, P: Ptr> Tip<T, P> {
     }
 }
 
+impl<T, P: Ptr> Tip<T, P>
+where T: Load,
+      P::Zone: AsZone<T::Zone>,
+{
+    pub fn into_get_leaf(self, idx: usize) -> Option<Leaf<T, P>>
+        where P: Get
+    {
+        self.into_get_pair().into_get_leaf(idx)
+    }
+
+    pub fn into_get_pair(self) -> Pair<T, P>
+        where P: Get
+    {
+        let height = self.height();
+        let raw = self.into_raw_node();
+        unsafe {
+            raw.take::<PairDyn<T, P>>(height)
+               .trust()
+        }
+    }
+}
+
 impl<T, P: Ptr> TipDyn<T, P>
 where T: Load,
       P::Zone: AsZone<T::Zone>,
@@ -232,7 +275,8 @@ where T: Load,
     {
         match self.get_pair() {
             Ref::Borrowed(pair) => pair.get_leaf(idx),
-            Ref::Owned(_owned) => todo!(),
+            Ref::Owned(owned) => owned.into_get_leaf(idx)
+                                      .map(Ref::Owned)
         }
     }
 
@@ -304,6 +348,25 @@ impl<T, P: Ptr> Pair<T, P> {
     }
 }
 
+impl<T, P: Ptr> Pair<T, P>
+where T: Load,
+      P::Zone: AsZone<T::Zone>,
+{
+    pub fn into_get_leaf(self, idx: usize) -> Option<Leaf<T, P>>
+        where P: Get
+    {
+        let len = usize::from(self.len());
+        let (left, right) = self.into_split();
+        if idx < len / 2 {
+            left.into_get_leaf(idx)
+        } else if idx < len {
+            right.into_get_leaf(idx - (len / 2))
+        } else {
+            None
+        }
+    }
+}
+
 impl<T, P: Ptr> PairDyn<T, P>
 where T: Load,
       P::Zone: AsZone<T::Zone>,
@@ -318,6 +381,17 @@ where T: Load,
             self.right().get_leaf(idx - (len / 2))
         } else {
             None
+        }
+    }
+}
+
+impl<T, P: Ptr> Pair<T, P> {
+    pub fn into_split(self) -> (PerfectTree<T, P>, PerfectTree<T, P>) {
+        let height = self.height().decrement();
+        let raw = self.into_raw_pair();
+        unsafe {
+            (PerfectTree::from_raw_node(raw.left, height),
+             PerfectTree::from_raw_node(raw.right, height))
         }
     }
 }

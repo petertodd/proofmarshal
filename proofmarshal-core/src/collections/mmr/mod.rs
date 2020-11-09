@@ -50,6 +50,14 @@ impl<T, P: Ptr> MMR<T, P> {
                 peaks.len().into()
             }).unwrap_or(Length(0))
     }
+
+    pub fn peaks(&self) -> Option<&PeakTree<T, P>> {
+        self.peaks.as_ref()
+    }
+
+    pub fn peaks_mut(&mut self) -> Option<&mut PeakTree<T, P>> {
+        self.peaks.as_mut()
+    }
 }
 
 impl<T, P: Ptr> MMR<T, P>
@@ -92,7 +100,7 @@ where T: Load,
         self.get_leaf(idx).map(|leaf| {
             match leaf {
                 Ref::Borrowed(leaf) => leaf.get(),
-                Ref::Owned(_leaf) => todo!(),
+                Ref::Owned(leaf) => Ref::Owned(leaf.take()),
             }
         })
     }
@@ -106,7 +114,8 @@ where T: Load,
                     peaks.get(height).and_then(|peak| {
                         match peak {
                             Ref::Borrowed(peak) => peak.get_leaf(idx_in_peak),
-                            Ref::Owned(_peak) => todo!(),
+                            Ref::Owned(peak) => peak.into_get_leaf(idx_in_peak)
+                                                    .map(Ref::Owned)
                         }
                     })
                 } else {
@@ -313,8 +322,9 @@ mod tests {
     use hoard::{
         ptr::{
             Heap,
+            PtrClean,
             key::{
-                Map,
+                Key, KeyMut, Map,
                 offset::OffsetSaver,
             },
         },
@@ -439,5 +449,59 @@ mod tests {
         t(&mmr, 244, &[
             42, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 44, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 83, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 84, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 164, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0
         ]);
+    }
+
+    #[test]
+    fn save_then_get() {
+        let mut mmr = MMR::<u16, Heap>::new();
+
+        for i in 0 .. 255 {
+            mmr.try_push(i).unwrap();
+        }
+
+        let saver = OffsetSaver::new(&[][..]);
+        let (offset, buf) = saver.try_save(&mmr).unwrap();
+        assert_eq!(offset, 20830);
+
+        let map: &[u8] = &buf;
+        let key = Key::<[u8]>::from_blob(offset, &map);
+
+        let bag: Bag<MMR<u16, Key<[u8]>>, _> = unsafe { Bag::from_raw_parts(key, ()) };
+
+        let mmr = bag.get();
+        assert_eq!(mmr.len(), 255);
+
+        for i in 0u16 .. 255 {
+            assert_eq!(mmr.get(i as usize).unwrap(), &i);
+        }
+
+        let keymut = KeyMut::Key(key);
+        let mut bag: Bag<MMR<u16, KeyMut<[u8]>>, _> = unsafe { Bag::from_raw_parts(keymut, ()) };
+        let mmr = bag.get_mut();
+
+        mmr.try_push(255).unwrap();
+        assert_eq!(mmr.len(), 256);
+
+        for i in 256 .. 511 {
+            mmr.try_push(i).unwrap();
+        }
+
+        // verify in dirty state
+        for i in 0 .. 511 {
+            assert_eq!(mmr.get(i as usize).unwrap(), &i);
+        }
+
+        let saver = OffsetSaver::new(map);
+        let (offset, buf) = saver.try_save(mmr).unwrap();
+        assert_eq!(offset, 41822);
+
+        let map: &[u8] = &buf;
+        let key = Key::<[u8]>::from_blob(offset, &map);
+        let bag: Bag<MMR<u16, Key<[u8]>>, _> = unsafe { Bag::from_raw_parts(key, ()) };
+
+        // verify in clean state
+        for i in 0 .. 511 {
+            assert_eq!(bag.get().get(i as usize).unwrap(), &i);
+        }
     }
 }

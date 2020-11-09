@@ -148,6 +148,20 @@ impl<T, P: Ptr> PeakTree<T, P> {
     }
 }
 
+impl<T, P: Ptr> PeakTree<T, P>
+where T: Load
+{
+    pub fn into_get(self, height: Height) -> Option<PerfectTree<T, P>>
+        where P: Get
+    {
+        match self.into_kind() {
+            Kind::Peak(peak) if peak.height() == height => Some(peak),
+            Kind::Peak(_) => None,
+            Kind::Inner(inner) => inner.into_get(height),
+        }
+    }
+}
+
 impl<T, P: Ptr> PeakTreeDyn<T, P>
 where T: Load
 {
@@ -318,6 +332,16 @@ where T: Load
     }
     */
 
+    pub fn into_get(self, height: Height) -> Option<PerfectTree<T, P>>
+        where P: Get
+    {
+        if self.len().contains(height) {
+            self.into_pair().into_get(height)
+        } else {
+            None
+        }
+    }
+
     pub fn into_pair(self) -> Pair<T, P>
         where P: Get
     {
@@ -339,7 +363,8 @@ where T: Load
         if self.len().contains(height) {
             match self.get_pair() {
                 Ref::Borrowed(pair) => pair.get(height),
-                Ref::Owned(_pair) => todo!(),
+                Ref::Owned(pair) => pair.into_get(height)
+                                        .map(Ref::Owned)
             }
         } else {
             None
@@ -452,6 +477,25 @@ impl<T, P: Ptr> Pair<T, P>
         unsafe {
             (PeakTree::from_raw_node(raw.left, left_len),
              PeakTree::from_raw_node(raw.right, right_len))
+        }
+    }
+}
+
+impl<T, P: Ptr> Pair<T, P>
+where T: Load
+{
+    pub fn into_get(self, height: Height) -> Option<PerfectTree<T, P>>
+        where P: Get
+    {
+        if self.len().contains(height) {
+            let (left, right) = self.into_split();
+            if left.len().contains(height) {
+                left.into_get(height)
+            } else {
+                right.into_get(height)
+            }
+        } else {
+            None
         }
     }
 }

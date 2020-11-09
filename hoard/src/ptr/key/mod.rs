@@ -1,4 +1,5 @@
 use std::error;
+use std::mem::ManuallyDrop;
 
 use super::*;
 
@@ -68,7 +69,15 @@ impl<'a, M: ?Sized + Map> TryGet for Key<'a, M> {
               Self::Zone: AsZone<T::Zone>,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
-        todo!()
+        self.try_get::<T>(metadata).map(|r| {
+            if let Ref::Owned(owned) = r.trust() {
+                owned.take_unsized(|ref_t: RefOwn<T>|
+                    f(MaybeValid::from(ref_t))
+                )
+            } else {
+                unreachable!()
+            }
+        })
     }
 }
 
@@ -86,7 +95,8 @@ impl<'a, M: ?Sized + Map> Get for Key<'a, M> {
               Self::Zone: AsZone<T::Zone>,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
-        todo!()
+        self.try_take_then(metadata, f)
+            .expect("fixme")
     }
 }
 
@@ -177,7 +187,10 @@ impl<'a, M: ?Sized + Map> TryGet for KeyMut<'a, M> {
               Self::Zone: AsZone<T::Zone>,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
-        todo!()
+        match self {
+            KeyMut::Key(key) => key.try_take_then(metadata, f),
+            KeyMut::Heap(ptr) => Ok(ptr.try_take_dirty_then(metadata, f).into_ok()),
+        }
     }
 }
 
@@ -195,7 +208,8 @@ impl<'a, M: ?Sized + Map> Get for KeyMut<'a, M> {
               Self::Zone: AsZone<T::Zone>,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
-        todo!()
+        self.try_take_then(metadata, f)
+            .expect("fixme")
     }
 }
 
