@@ -274,6 +274,15 @@ impl<'a, T: ?Sized + BlobDyn> WriteStruct<'a, T> {
     }
 
     #[track_caller]
+    pub fn write_padding(mut self, len: usize) -> Self {
+        for b in self.bytes.get_mut(self.written .. self.written + len).expect("overflow") {
+            *b = MaybeUninit::new(0);
+        }
+        self.written += len;
+        self
+    }
+
+    #[track_caller]
     pub fn done(self) -> Bytes<'a, T> {
         assert_eq!(self.bytes.len(), self.written, "not all bytes written");
 
