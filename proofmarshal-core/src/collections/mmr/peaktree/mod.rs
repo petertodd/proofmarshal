@@ -12,10 +12,10 @@ use thiserror::Error;
 use hoard::primitive::Primitive;
 use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
 use hoard::load::{MaybeValid, Load, LoadRef};
-use hoard::save::{SaveDirty, SaveDirtyPoll, SaveDirtyRef, SaveDirtyRefPoll, BlobSaver};
-use hoard::zone::{Alloc, AsZone, Zone, Get, GetMut, Ptr, PtrConst, PtrBlob, FromPtr};
+use hoard::save::{Save, SavePoll, SaveRef, SaveRefPoll, Saver};
+use hoard::ptr::{AsZone, Zone, Get, GetMut, Ptr, PtrClean, PtrBlob};
 use hoard::pointee::Pointee;
-use hoard::owned::{IntoOwned, Take, Own, Ref};
+use hoard::owned::{IntoOwned, Take, RefOwn, Ref};
 use hoard::bag::Bag;
 
 use crate::commit::{Commit, WriteVerbatim, Digest};
@@ -29,44 +29,44 @@ use crate::collections::{
 };
 
 #[repr(C)]
-pub struct Pair<T, Z = (), P: Ptr = <Z as Zone>::Ptr> {
+pub struct Pair<T, P: Ptr> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Pair<T, Z, P>>,
+    raw: ManuallyDrop<raw::Pair<T, P>>,
     len: InnerLength,
 }
 
 #[repr(C)]
-pub struct PairDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+pub struct PairDyn<T, P: Ptr> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Pair<T, Z, P>>,
+    raw: ManuallyDrop<raw::Pair<T, P>>,
     len: InnerLengthDyn,
 }
 
 #[repr(C)]
-pub struct Inner<T, Z = (), P: Ptr = <Z as Zone>::Ptr> {
+pub struct Inner<T, P: Ptr> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Node<T, Z, P>>,
+    raw: ManuallyDrop<raw::Node<T, P>>,
     len: InnerLength,
 }
 
 #[repr(C)]
-pub struct InnerDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+pub struct InnerDyn<T, P: Ptr> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Node<T, Z, P>>,
+    raw: ManuallyDrop<raw::Node<T, P>>,
     len: InnerLengthDyn,
 }
 
 #[repr(C)]
-pub struct PeakTree<T, Z = (), P: Ptr = <Z as Zone>::Ptr> {
+pub struct PeakTree<T, P: Ptr> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Node<T, Z, P>>,
+    raw: ManuallyDrop<raw::Node<T, P>>,
     len: NonZeroLength,
 }
 
 #[repr(C)]
-pub struct PeakTreeDyn<T, Z, P: Ptr = <Z as Zone>::Ptr> {
+pub struct PeakTreeDyn<T, P: Ptr> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Node<T, Z, P>>,
+    raw: ManuallyDrop<raw::Node<T, P>>,
     len: NonZeroLengthDyn,
 }
 
@@ -76,8 +76,8 @@ pub enum Kind<Peak, Inner> {
     Inner(Inner),
 }
 
-impl<T, Z, P: Ptr> From<PerfectTree<T, Z, P>> for PeakTree<T, Z, P> {
-    fn from(peak: PerfectTree<T, Z, P>) -> Self {
+impl<T, P: Ptr> From<PerfectTree<T, P>> for PeakTree<T, P> {
+    fn from(peak: PerfectTree<T, P>) -> Self {
         let len = NonZeroLength::from_height(peak.height());
         let raw = peak.into_raw_node();
         unsafe {
@@ -86,8 +86,8 @@ impl<T, Z, P: Ptr> From<PerfectTree<T, Z, P>> for PeakTree<T, Z, P> {
     }
 }
 
-impl<T, Z, P: Ptr> From<Inner<T, Z, P>> for PeakTree<T, Z, P> {
-    fn from(inner: Inner<T, Z, P>) -> Self {
+impl<T, P: Ptr> From<Inner<T, P>> for PeakTree<T, P> {
+    fn from(inner: Inner<T, P>) -> Self {
         let len = inner.len().into();
         let raw = inner.into_raw_node();
         unsafe {
@@ -96,11 +96,11 @@ impl<T, Z, P: Ptr> From<Inner<T, Z, P>> for PeakTree<T, Z, P> {
     }
 }
 
-impl<T, Z: Zone> PeakTree<T, Z>
+impl<T, P: Ptr> PeakTree<T, P>
 where T: Load
 {
-    pub(crate) fn try_push_peak(self, peak: PerfectTree<T, Z>) -> Result<Self, (Self, PerfectTree<T, Z>)>
-        where Z: Alloc + GetMut
+    pub(crate) fn try_push_peak(self, peak: PerfectTree<T, P>) -> Result<Self, (Self, PerfectTree<T, P>)>
+        where P: Default + GetMut
     {
         match self.into_kind() {
             Kind::Inner(inner) => {
@@ -120,8 +120,8 @@ where T: Load
         }
     }
 
-    fn merge_peak(self, right: PerfectTree<T, Z>) -> PerfectTree<T, Z>
-        where Z: Alloc + GetMut
+    fn merge_peak(self, right: PerfectTree<T, P>) -> PerfectTree<T, P>
+        where P: Default + GetMut
     {
         match self.into_kind() {
             Kind::Inner(inner) => inner.merge_peak(right),
@@ -130,8 +130,8 @@ where T: Load
     }
 }
 
-impl<T, Z, P: Ptr> PeakTree<T, Z, P> {
-    pub fn into_kind(self) -> Kind<PerfectTree<T, Z, P>, Inner<T, Z, P>> {
+impl<T, P: Ptr> PeakTree<T, P> {
+    pub fn into_kind(self) -> Kind<PerfectTree<T, P>, Inner<T, P>> {
         let len = self.len();
         let node = self.into_raw_node();
 
@@ -148,11 +148,11 @@ impl<T, Z, P: Ptr> PeakTree<T, Z, P> {
     }
 }
 
-impl<T, Z: Zone> PeakTreeDyn<T, Z>
+impl<T, P: Ptr> PeakTreeDyn<T, P>
 where T: Load
 {
-    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, Z>>>
-        where Z: Get
+    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, P>>>
+        where P: Get
     {
         match self.kind() {
             Kind::Peak(peak) if peak.height() == height => Some(Ref::Borrowed(peak)),
@@ -162,12 +162,12 @@ where T: Load
     }
 }
 
-impl<T, Z, P: Ptr> PeakTreeDyn<T, Z, P> {
+impl<T, P: Ptr> PeakTreeDyn<T, P> {
     pub fn len(&self) -> NonZeroLength {
         self.len.to_nonzero_length()
     }
 
-    pub fn kind(&self) -> Kind<&PerfectTreeDyn<T, Z, P>, &InnerDyn<T, Z, P>> {
+    pub fn kind(&self) -> Kind<&PerfectTreeDyn<T, P>, &InnerDyn<T, P>> {
         match self.len().try_into_inner_length() {
             Ok(len) => {
                 let inner = unsafe { InnerDyn::from_raw_node_ref(&self.raw, len) };
@@ -180,7 +180,7 @@ impl<T, Z, P: Ptr> PeakTreeDyn<T, Z, P> {
         }
     }
 
-    pub fn kind_mut(&mut self) -> Kind<&mut PerfectTreeDyn<T, Z, P>, &mut InnerDyn<T, Z, P>> {
+    pub fn kind_mut(&mut self) -> Kind<&mut PerfectTreeDyn<T, P>, &mut InnerDyn<T, P>> {
         match self.len().try_into_inner_length() {
             Ok(len) => {
                 let inner = unsafe { InnerDyn::from_raw_node_mut(&mut self.raw, len) };
@@ -210,34 +210,27 @@ impl<T, Z, P: Ptr> PeakTreeDyn<T, Z, P> {
             Kind::Inner(inner) => inner.try_pair_digest(),
         }
     }
-
-    pub fn zone(&self) -> Z
-        where Z: Copy
-    {
-        self.raw.zone
-    }
     */
 }
 
-impl<T, Z: Zone> Inner<T, Z> {
-    pub fn try_join_peaks(left: PerfectTree<T, Z>, right: PerfectTree<T, Z>)
-        -> Result<Self, (PerfectTree<T, Z>, PerfectTree<T, Z>)>
-        where Z: Alloc
+impl<T, P: Ptr> Inner<T, P> {
+    pub fn try_join_peaks(left: PerfectTree<T, P>, right: PerfectTree<T, P>)
+        -> Result<Self, (PerfectTree<T, P>, PerfectTree<T, P>)>
+        where P: Default
     {
         let pair = Pair::try_join_peaks(left, right)?;
         Ok(Self::new(pair))
     }
 
-    pub fn new(pair: Pair<T, Z>) -> Self
-        where Z: Alloc
+    pub fn new(pair: Pair<T, P>) -> Self
+        where P: Default
     {
-        let zone = pair.zone();
-        Self::new_unchecked(None, zone.alloc(pair))
+        Self::new_unchecked(None, P::alloc(pair))
     }
 
-    pub fn new_unchecked(digest: Option<Digest>, pair: Bag<PairDyn<T, Z>, Z>) -> Self {
-        let (ptr, len, zone) = pair.into_raw_parts();
-        let raw = raw::Node::new(digest, zone, ptr);
+    pub fn new_unchecked(digest: Option<Digest>, pair: Bag<PairDyn<T, P>, P>) -> Self {
+        let (ptr, len) = pair.into_raw_parts();
+        let raw = raw::Node::new(digest, ptr);
 
         unsafe {
             Self::from_raw_node(raw, len)
@@ -245,18 +238,18 @@ impl<T, Z: Zone> Inner<T, Z> {
     }
 }
 
-impl<T, Z: Zone> Inner<T, Z>
+impl<T, P: Ptr> Inner<T, P>
 where T: Load
 {
-    fn merge_peak(self, right: PerfectTree<T, Z>) -> PerfectTree<T, Z>
-        where Z: Alloc + GetMut
+    fn merge_peak(self, right: PerfectTree<T, P>) -> PerfectTree<T, P>
+        where P: Default + GetMut
     {
         let pair = self.into_pair();
         pair.merge_peak(right)
     }
 
-    pub(crate) fn try_push_peak(self, peak: PerfectTree<T, Z>) -> Result<PeakTree<T, Z>, (Self, PerfectTree<T, Z>)>
-        where Z: Alloc + GetMut
+    pub(crate) fn try_push_peak(self, peak: PerfectTree<T, P>) -> Result<PeakTree<T, P>, (Self, PerfectTree<T, P>)>
+        where P: Default + GetMut
     {
         match self.len().push_peak(peak.height()) {
             Ok(new_len) => {
@@ -293,8 +286,8 @@ where T: Load
     }
 
     /*
-    pub(crate) fn try_push_peak_impl(self, right: PerfectTree<T, Z>) -> Result<Self, Option<PeakTree<T, Z>>>
-        where Z: Alloc + GetMut
+    pub(crate) fn try_push_peak_impl(self, right: PerfectTree<T, P>) -> Result<Self, Option<PeakTree<T, P>>>
+        where P: Default + GetMut
     {
         todo!()
         /*
@@ -325,57 +318,55 @@ where T: Load
     }
     */
 
-    pub fn into_pair(self) -> Pair<T, Z>
-        where Z: Get
+    pub fn into_pair(self) -> Pair<T, P>
+        where P: Get
     {
         let len = self.len();
         let raw = self.into_raw_node();
         unsafe {
-            raw.take_unchecked::<PairDyn<T, Z>>(len)
+            raw.take::<PairDyn<T, P>>(len)
                .trust()
         }
     }
 }
 
-impl<T, Z: Zone> InnerDyn<T, Z>
+impl<T, P: Ptr> InnerDyn<T, P>
 where T: Load
 {
-    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, Z>>>
-        where Z: Get
+    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, P>>>
+        where P: Get
     {
         if self.len().contains(height) {
             match self.get_pair() {
                 Ref::Borrowed(pair) => pair.get(height),
-                Ref::Owned(_pair) => todo!()
+                Ref::Owned(_pair) => todo!(),
             }
         } else {
             None
         }
     }
 
-    pub fn get_pair(&self) -> Ref<PairDyn<T, Z>>
-        where Z: Get
+    pub fn get_pair(&self) -> Ref<PairDyn<T, P>>
+        where P: Get
     {
         unsafe {
-            self.raw.get_unchecked(self.len())
+            self.raw.get::<PairDyn<T, P>>(self.len())
                     .trust()
         }
     }
 
-    /*
-    pub fn get_pair_mut(&mut self) -> &mut PairDyn<T, Z>
-        where Z: GetMut
+    pub fn get_pair_mut(&mut self) -> &mut PairDyn<T, P>
+        where P: GetMut
     {
         let len = self.len();
         unsafe {
-            self.raw.get_unchecked_mut(len)
+            self.raw.get_mut::<PairDyn<T, P>>(len)
                     .trust()
         }
     }
-    */
 }
 
-impl<T, Z, P: Ptr> InnerDyn<T, Z, P> {
+impl<T, P: Ptr> InnerDyn<T, P> {
     pub fn len(&self) -> InnerLength {
         self.len.to_inner_length()
     }
@@ -403,20 +394,14 @@ impl<T, Z, P: Ptr> InnerDyn<T, Z, P> {
     {
         self.raw.digest()
     }
-
-    pub fn zone(&self) -> Z
-        where Z: Copy
-    {
-        self.raw.zone
-    }
     */
 }
 
-impl<T, Z: Zone> Pair<T, Z>
+impl<T, P: Ptr> Pair<T, P>
 where T: Load
 {
-    fn merge_peak(self, peak: PerfectTree<T, Z>) -> PerfectTree<T, Z>
-        where Z: Alloc + GetMut
+    fn merge_peak(self, peak: PerfectTree<T, P>) -> PerfectTree<T, P>
+        where P: Default + GetMut
     {
         let (left, right) = self.into_split();
         let peak = right.merge_peak(peak);
@@ -425,10 +410,10 @@ where T: Load
 }
 
 
-impl<T, Z, P: Ptr> Pair<T, Z, P>
+impl<T, P: Ptr> Pair<T, P>
 {
-    pub fn try_join_peaks(left: PerfectTree<T, Z, P>, right: PerfectTree<T, Z, P>)
-        -> Result<Self, (PerfectTree<T, Z, P>, PerfectTree<T, Z, P>)>
+    pub fn try_join_peaks(left: PerfectTree<T, P>, right: PerfectTree<T, P>)
+        -> Result<Self, (PerfectTree<T, P>, PerfectTree<T, P>)>
     {
         if left.height() > right.height() {
             let expected_len = (1 << left.height().get()) | (1 << right.height().get());
@@ -441,7 +426,7 @@ impl<T, Z, P: Ptr> Pair<T, Z, P>
         }
     }
 
-    pub fn new(left: PeakTree<T, Z, P>, right: PeakTree<T, Z, P>) -> Self {
+    pub fn new(left: PeakTree<T, P>, right: PeakTree<T, P>) -> Self {
         assert!(left.len().min_height() > right.len().max_height());
         let len = left.len().get() | right.len().get();
         let len = InnerLength::try_from(len.get()).unwrap();
@@ -453,14 +438,14 @@ impl<T, Z, P: Ptr> Pair<T, Z, P>
         }
     }
 
-    pub unsafe fn new_unchecked(left: raw::Node<T, Z, P>, right: raw::Node<T, Z, P>, len: InnerLength) -> Self {
+    pub unsafe fn new_unchecked(left: raw::Node<T, P>, right: raw::Node<T, P>, len: InnerLength) -> Self {
         Self::from_raw_pair(
             raw::Pair { left, right },
             len
         )
     }
 
-    pub fn into_split(self) -> (PeakTree<T, Z, P>, PeakTree<T, Z, P>) {
+    pub fn into_split(self) -> (PeakTree<T, P>, PeakTree<T, P>) {
         let (left_len, right_len) = self.len().split();
         let raw = self.into_raw_pair();
 
@@ -471,11 +456,11 @@ impl<T, Z, P: Ptr> Pair<T, Z, P>
     }
 }
 
-impl<T, Z: Zone> PairDyn<T, Z>
+impl<T, P: Ptr> PairDyn<T, P>
 where T: Load
 {
-    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, Z>>>
-        where Z: Get
+    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, P>>>
+        where P: Get
     {
         if self.len().contains(height) {
             let (left, right) = self.split();
@@ -490,18 +475,12 @@ where T: Load
     }
 }
 
-impl<T, Z, P: Ptr> PairDyn<T, Z, P> {
+impl<T, P: Ptr> PairDyn<T, P> {
     pub fn len(&self) -> InnerLength {
         self.len.to_inner_length()
     }
 
-    pub fn zone(&self) -> Z
-        where Z: Copy
-    {
-        self.raw.left.zone
-    }
-
-    pub fn split(&self) -> (&PeakTreeDyn<T, Z, P>, &PeakTreeDyn<T, Z, P>) {
+    pub fn split(&self) -> (&PeakTreeDyn<T, P>, &PeakTreeDyn<T, P>) {
         let (left_len, right_len) = self.len().split();
         unsafe {
             (PeakTreeDyn::from_raw_node_ref(&self.raw.left, left_len),
@@ -509,7 +488,7 @@ impl<T, Z, P: Ptr> PairDyn<T, Z, P> {
         }
     }
 
-    pub fn split_mut(&mut self) -> (&mut PeakTreeDyn<T, Z, P>, &mut PeakTreeDyn<T, Z, P>) {
+    pub fn split_mut(&mut self) -> (&mut PeakTreeDyn<T, P>, &mut PeakTreeDyn<T, P>) {
         let (left_len, right_len) = self.len().split();
         let (left, right) = self.raw.split_mut();
         unsafe {
@@ -518,19 +497,19 @@ impl<T, Z, P: Ptr> PairDyn<T, Z, P> {
         }
     }
 
-    pub fn left(&self) -> &PeakTreeDyn<T, Z, P> {
+    pub fn left(&self) -> &PeakTreeDyn<T, P> {
         self.split().0
     }
 
-    pub fn left_mut(&mut self) -> &mut PeakTreeDyn<T, Z, P> {
+    pub fn left_mut(&mut self) -> &mut PeakTreeDyn<T, P> {
         self.split_mut().0
     }
 
-    pub fn right(&self) -> &PeakTreeDyn<T, Z, P> {
+    pub fn right(&self) -> &PeakTreeDyn<T, P> {
         self.split().1
     }
 
-    pub fn right_mut(&mut self) -> &mut PeakTreeDyn<T, Z, P> {
+    pub fn right_mut(&mut self) -> &mut PeakTreeDyn<T, P> {
         self.split_mut().1
     }
 
@@ -538,8 +517,8 @@ impl<T, Z, P: Ptr> PairDyn<T, Z, P> {
 
 // --------- conversions from raw -------------
 
-impl<T, Z, P: Ptr> Pair<T, Z, P> {
-    pub unsafe fn from_raw_pair(raw: raw::Pair<T, Z, P>, len: InnerLength) -> Self {
+impl<T, P: Ptr> Pair<T, P> {
+    pub unsafe fn from_raw_pair(raw: raw::Pair<T, P>, len: InnerLength) -> Self {
         Self {
             marker: PhantomData,
             raw: ManuallyDrop::new(raw),
@@ -547,24 +526,24 @@ impl<T, Z, P: Ptr> Pair<T, Z, P> {
         }
     }
 
-    pub fn into_raw_pair(self) -> raw::Pair<T, Z, P> {
+    pub fn into_raw_pair(self) -> raw::Pair<T, P> {
         let this = ManuallyDrop::new(self);
         unsafe { ptr::read(&*this.raw) }
     }
 }
 
-impl<T, Z, P: Ptr> PairDyn<T, Z, P> {
-    pub unsafe fn from_raw_pair_ref(raw: &raw::Pair<T, Z, P>, len: InnerLength) -> &Self {
+impl<T, P: Ptr> PairDyn<T, P> {
+    pub unsafe fn from_raw_pair_ref(raw: &raw::Pair<T, P>, len: InnerLength) -> &Self {
         &*Self::make_fat_ptr(raw as *const _ as *const _, len)
     }
 
-    pub unsafe fn from_raw_pair_mut(raw: &mut raw::Pair<T, Z, P>, len: InnerLength) -> &mut Self {
+    pub unsafe fn from_raw_pair_mut(raw: &mut raw::Pair<T, P>, len: InnerLength) -> &mut Self {
         &mut *Self::make_fat_ptr_mut(raw as *mut _ as *mut _, len)
     }
 }
 
-impl<T, Z, P: Ptr> Inner<T, Z, P> {
-    pub unsafe fn from_raw_node(raw: raw::Node<T, Z, P>, len: InnerLength) -> Self {
+impl<T, P: Ptr> Inner<T, P> {
+    pub unsafe fn from_raw_node(raw: raw::Node<T, P>, len: InnerLength) -> Self {
         Self {
             marker: PhantomData,
             raw: ManuallyDrop::new(raw),
@@ -572,30 +551,31 @@ impl<T, Z, P: Ptr> Inner<T, Z, P> {
         }
     }
 
-    pub fn into_raw_node(self) -> raw::Node<T, Z, P> {
+    pub fn into_raw_node(self) -> raw::Node<T, P> {
         let this = ManuallyDrop::new(self);
         unsafe { ptr::read(&*this.raw) }
     }
 }
 
-impl<T, Z, P: Ptr> InnerDyn<T, Z, P> {
-    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, Z, P>, len: InnerLength) -> &Self {
+impl<T, P: Ptr> InnerDyn<T, P> {
+    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, P>, len: InnerLength) -> &Self {
         &*Self::make_fat_ptr(raw as *const _ as *const _, len)
     }
 
-    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, Z, P>, len: InnerLength) -> &mut Self {
+    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, P>, len: InnerLength) -> &mut Self {
         &mut *Self::make_fat_ptr_mut(raw as *mut _ as *mut _, len)
     }
 
-    pub fn try_get_dirty_pair(&self) -> Result<&PairDyn<T, Z, P>, P::Clean> {
+    pub fn try_get_dirty_pair(&self) -> Result<&PairDyn<T, P>, P::Clean> {
         unsafe {
             self.raw.try_get_dirty(self.len())
+                    .map(MaybeValid::trust)
         }
     }
 }
 
-impl<T, Z, P: Ptr> PeakTree<T, Z, P> {
-    pub unsafe fn from_raw_node(raw: raw::Node<T, Z, P>, len: NonZeroLength) -> Self {
+impl<T, P: Ptr> PeakTree<T, P> {
+    pub unsafe fn from_raw_node(raw: raw::Node<T, P>, len: NonZeroLength) -> Self {
         Self {
             marker: PhantomData,
             raw: ManuallyDrop::new(raw),
@@ -603,18 +583,18 @@ impl<T, Z, P: Ptr> PeakTree<T, Z, P> {
         }
     }
 
-    pub fn into_raw_node(self) -> raw::Node<T, Z, P> {
+    pub fn into_raw_node(self) -> raw::Node<T, P> {
         let this = ManuallyDrop::new(self);
         unsafe { ptr::read(&*this.raw) }
     }
 }
 
-impl<T, Z, P: Ptr> PeakTreeDyn<T, Z, P> {
-    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, Z, P>, len: NonZeroLength) -> &Self {
+impl<T, P: Ptr> PeakTreeDyn<T, P> {
+    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, P>, len: NonZeroLength) -> &Self {
         &*Self::make_fat_ptr(raw as *const _ as *const _, len)
     }
 
-    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, Z, P>, len: NonZeroLength) -> &mut Self {
+    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, P>, len: NonZeroLength) -> &mut Self {
         &mut *Self::make_fat_ptr_mut(raw as *mut _ as *mut _, len)
     }
 }
@@ -623,7 +603,7 @@ impl<T, Z, P: Ptr> PeakTreeDyn<T, Z, P> {
 
 macro_rules! impl_pointee {
     ($t:ident, $meta_ty:ty) => {
-        impl<T, Z, P: Ptr> Pointee for $t<T, Z, P> {
+        impl<T, P: Ptr> Pointee for $t<T, P> {
             type Metadata = $meta_ty;
             type LayoutError = !;
 
@@ -662,40 +642,40 @@ impl_pointee!(PairDyn, InnerLength);
 
 macro_rules! impl_deref {
     ($t:ident => $u:ident) => {
-        impl<T, Z, P: Ptr> Borrow<$u<T, Z, P>> for $t<T, Z, P> {
-            fn borrow(&self) -> &$u<T, Z, P> {
+        impl<T, P: Ptr> Borrow<$u<T, P>> for $t<T, P> {
+            fn borrow(&self) -> &$u<T, P> {
                 unsafe {
                     &*$u::make_fat_ptr(self as *const _ as *const (), self.len)
                 }
             }
         }
 
-        impl<T, Z, P: Ptr> BorrowMut<$u<T, Z, P>> for $t<T, Z, P> {
-            fn borrow_mut(&mut self) -> &mut $u<T, Z, P> {
+        impl<T, P: Ptr> BorrowMut<$u<T, P>> for $t<T, P> {
+            fn borrow_mut(&mut self) -> &mut $u<T, P> {
                 unsafe {
                     &mut *$u::make_fat_ptr_mut(self as *mut _ as *mut (), self.len)
                 }
             }
         }
 
-        unsafe impl<T, Z, P: Ptr> Take<$u<T, Z, P>> for $t<T, Z, P> {
+        unsafe impl<T, P: Ptr> Take<$u<T, P>> for $t<T, P> {
             fn take_unsized<F, R>(self, f: F) -> R
-                where F: FnOnce(Own<$u<T, Z, P>>) -> R
+                where F: FnOnce(RefOwn<$u<T, P>>) -> R
             {
                 let mut this = ManuallyDrop::new(self);
-                let this_dyn: &mut $u<T, Z, P> = this.deref_mut().borrow_mut();
+                let this_dyn: &mut $u<T, P> = this.deref_mut().borrow_mut();
 
                 unsafe {
-                    f(Own::new_unchecked(this_dyn))
+                    f(RefOwn::new_unchecked(this_dyn))
                 }
             }
         }
 
-        impl<T, Z, P: Ptr> IntoOwned for $u<T, Z, P> {
-            type Owned = $t<T, Z, P>;
+        impl<T, P: Ptr> IntoOwned for $u<T, P> {
+            type Owned = $t<T, P>;
 
-            fn into_owned(self: Own<'_, Self>) -> Self::Owned {
-                let this = Own::leak(self);
+            fn into_owned(self: RefOwn<'_, Self>) -> Self::Owned {
+                let this = RefOwn::leak(self);
                 unsafe {
                     $t {
                         marker: PhantomData,
@@ -706,15 +686,15 @@ macro_rules! impl_deref {
             }
         }
 
-        impl<T, Z, P: Ptr> Deref for $t<T, Z, P> {
-            type Target = $u<T, Z, P>;
+        impl<T, P: Ptr> Deref for $t<T, P> {
+            type Target = $u<T, P>;
 
             fn deref(&self) -> &Self::Target {
                 self.borrow()
             }
         }
 
-        impl<T, Z, P: Ptr> DerefMut for $t<T, Z, P> {
+        impl<T, P: Ptr> DerefMut for $t<T, P> {
             fn deref_mut(&mut self) -> &mut Self::Target {
                 self.borrow_mut()
             }
@@ -736,13 +716,12 @@ pub enum DecodePeakTreeBytesError<Raw: error::Error, NonZeroLength: error::Error
     NonZeroLength(NonZeroLength),
 }
 
-impl<T, Z, P: Ptr> Blob for PeakTree<T, Z, P>
+impl<T, P: Ptr> Blob for PeakTree<T, P>
 where T: 'static,
-      Z: Blob,
       P: Blob,
 {
-    const SIZE: usize = <raw::Node<T, Z, P> as Blob>::SIZE + <NonZeroLength as Blob>::SIZE;
-    type DecodeBytesError = DecodePeakTreeBytesError<<raw::Node<T, Z, P> as Blob>::DecodeBytesError, <NonZeroLength as Blob>::DecodeBytesError>;
+    const SIZE: usize = <raw::Node<T, P> as Blob>::SIZE + <NonZeroLength as Blob>::SIZE;
+    type DecodeBytesError = DecodePeakTreeBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError, <NonZeroLength as Blob>::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
@@ -760,11 +739,12 @@ where T: 'static,
     }
 }
 
-impl<T, Z: Zone, P: Ptr> Load for PeakTree<T, Z, P>
+impl<T, P: Ptr> Load for PeakTree<T, P>
 where T: Load
 {
-    type Blob = PeakTree<T::Blob, (), P::Blob>;
-    type Zone = Z;
+    type Blob = PeakTree<T::Blob, P::Blob>;
+    type Ptr = P;
+    type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
         let len = blob.len;
@@ -774,21 +754,19 @@ where T: Load
     }
 }
 
-
 #[derive(Debug, Error)]
 #[error("FIXME")]
 #[doc(hidden)]
 pub struct DecodePeakTreeDynBytesError<Raw: error::Error>(Raw);
 
-unsafe impl<T, Z, P: Ptr> BlobDyn for PeakTreeDyn<T, Z, P>
+unsafe impl<T, P: Ptr> BlobDyn for PeakTreeDyn<T, P>
 where T: 'static,
-      Z: Blob,
       P: Blob,
 {
-    type DecodeBytesError = DecodePeakTreeDynBytesError<<raw::Node<T, Z, P> as Blob>::DecodeBytesError>;
+    type DecodeBytesError = DecodePeakTreeDynBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError>;
 
     fn try_size(_len: Self::Metadata) -> Result<usize, !> {
-        Ok(<PeakTree<T, Z, P> as Blob>::SIZE)
+        Ok(<PeakTree<T, P> as Blob>::SIZE)
     }
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -806,17 +784,18 @@ where T: 'static,
     }
 }
 
-impl<T, Z: Zone, P: Ptr> LoadRef for PeakTreeDyn<T, Z, P>
+impl<T, P: Ptr> LoadRef for PeakTreeDyn<T, P>
 where T: Load
 {
-    type BlobDyn = PeakTreeDyn<T::Blob, (), P::Blob>;
-    type Zone = Z;
+    type BlobDyn = PeakTreeDyn<T::Blob, P::Blob>;
+    type Ptr = P;
+    type Zone = P::Zone;
 
-    fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Z)
+    fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
         -> Result<MaybeValid<Ref<'a, Self>>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
         let blob = <Self::BlobDyn as BlobDyn>::decode_bytes(src)?;
-        let owned = PeakTree::<T, Z, P>::load_maybe_valid(blob, zone).trust();
+        let owned = PeakTree::<T, P>::load_maybe_valid(blob, zone).trust();
         Ok(MaybeValid::from(Ref::Owned(owned)))
     }
 }
@@ -829,13 +808,12 @@ pub enum DecodeInnerBytesError<Raw: error::Error, NonZeroLength: error::Error> {
     NonZeroLength(NonZeroLength),
 }
 
-impl<T, Z, P: Ptr> Blob for Inner<T, Z, P>
+impl<T, P: Ptr> Blob for Inner<T, P>
 where T: 'static,
-      Z: Blob,
       P: Blob,
 {
-    const SIZE: usize = <raw::Node<T, Z, P> as Blob>::SIZE + <InnerLength as Blob>::SIZE;
-    type DecodeBytesError = DecodeInnerBytesError<<raw::Node<T, Z, P> as Blob>::DecodeBytesError, <InnerLength as Blob>::DecodeBytesError>;
+    const SIZE: usize = <raw::Node<T, P> as Blob>::SIZE + <InnerLength as Blob>::SIZE;
+    type DecodeBytesError = DecodeInnerBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError, <InnerLength as Blob>::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
@@ -853,11 +831,12 @@ where T: 'static,
     }
 }
 
-impl<T, Z: Zone, P: Ptr> Load for Inner<T, Z, P>
+impl<T, P: Ptr> Load for Inner<T, P>
 where T: Load
 {
-    type Blob = Inner<T::Blob, (), P::Blob>;
-    type Zone = Z;
+    type Blob = Inner<T::Blob, P::Blob>;
+    type Ptr = P;
+    type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
         let len = blob.len;
@@ -872,15 +851,14 @@ where T: Load
 #[doc(hidden)]
 pub struct DecodeInnerDynBytesError<Raw: error::Error>(Raw);
 
-unsafe impl<T, Z, P: Ptr> BlobDyn for InnerDyn<T, Z, P>
+unsafe impl<T, P: Ptr> BlobDyn for InnerDyn<T, P>
 where T: 'static,
-      Z: Blob,
       P: Blob,
 {
-    type DecodeBytesError = DecodeInnerDynBytesError<<raw::Node<T, Z, P> as Blob>::DecodeBytesError>;
+    type DecodeBytesError = DecodeInnerDynBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError>;
 
     fn try_size(_len: Self::Metadata) -> Result<usize, !> {
-        Ok(<Inner<T, Z, P> as Blob>::SIZE)
+        Ok(<Inner<T, P> as Blob>::SIZE)
     }
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -898,17 +876,18 @@ where T: 'static,
     }
 }
 
-impl<T, Z: Zone, P: Ptr> LoadRef for InnerDyn<T, Z, P>
+impl<T, P: Ptr> LoadRef for InnerDyn<T, P>
 where T: Load
 {
-    type BlobDyn = InnerDyn<T::Blob, (), P::Blob>;
-    type Zone = Z;
+    type BlobDyn = InnerDyn<T::Blob, P::Blob>;
+    type Ptr = P;
+    type Zone = P::Zone;
 
-    fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Z)
+    fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
         -> Result<MaybeValid<Ref<'a, Self>>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
         let blob = <Self::BlobDyn as BlobDyn>::decode_bytes(src)?;
-        let owned = Inner::<T, Z, P>::load_maybe_valid(blob, zone).trust();
+        let owned = Inner::<T, P>::load_maybe_valid(blob, zone).trust();
         Ok(MaybeValid::from(Ref::Owned(owned)))
     }
 }
@@ -921,13 +900,12 @@ pub enum DecodePairBytesError<Raw: error::Error, NonZeroLength: error::Error> {
     NonZeroLength(NonZeroLength),
 }
 
-impl<T, Z, P: Ptr> Blob for Pair<T, Z, P>
+impl<T, P: Ptr> Blob for Pair<T, P>
 where T: 'static,
-      Z: Blob,
       P: Blob,
 {
-    const SIZE: usize = <raw::Pair<T, Z, P> as Blob>::SIZE + <InnerLength as Blob>::SIZE;
-    type DecodeBytesError = DecodePairBytesError<<raw::Pair<T, Z, P> as Blob>::DecodeBytesError, <InnerLength as Blob>::DecodeBytesError>;
+    const SIZE: usize = <raw::Pair<T, P> as Blob>::SIZE + <InnerLength as Blob>::SIZE;
+    type DecodeBytesError = DecodePairBytesError<<raw::Pair<T, P> as Blob>::DecodeBytesError, <InnerLength as Blob>::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
@@ -945,11 +923,12 @@ where T: 'static,
     }
 }
 
-impl<T, Z: Zone, P: Ptr> Load for Pair<T, Z, P>
+impl<T, P: Ptr> Load for Pair<T, P>
 where T: Load
 {
-    type Blob = Pair<T::Blob, (), P::Blob>;
-    type Zone = Z;
+    type Blob = Pair<T::Blob, P::Blob>;
+    type Ptr = P;
+    type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
         let len = blob.len;
@@ -964,15 +943,14 @@ where T: Load
 #[doc(hidden)]
 pub struct DecodePairDynBytesError<Raw: error::Error>(Raw);
 
-unsafe impl<T, Z, P: Ptr> BlobDyn for PairDyn<T, Z, P>
+unsafe impl<T, P: Ptr> BlobDyn for PairDyn<T, P>
 where T: 'static,
-      Z: Blob,
       P: Blob,
 {
-    type DecodeBytesError = DecodePairDynBytesError<<raw::Pair<T, Z, P> as Blob>::DecodeBytesError>;
+    type DecodeBytesError = DecodePairDynBytesError<<raw::Pair<T, P> as Blob>::DecodeBytesError>;
 
     fn try_size(_len: Self::Metadata) -> Result<usize, !> {
-        Ok(<Pair<T, Z, P> as Blob>::SIZE)
+        Ok(<Pair<T, P> as Blob>::SIZE)
     }
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -990,24 +968,25 @@ where T: 'static,
     }
 }
 
-impl<T, Z: Zone, P: Ptr> LoadRef for PairDyn<T, Z, P>
+impl<T, P: Ptr> LoadRef for PairDyn<T, P>
 where T: Load
 {
-    type BlobDyn = PairDyn<T::Blob, (), P::Blob>;
-    type Zone = Z;
+    type BlobDyn = PairDyn<T::Blob, P::Blob>;
+    type Ptr = P;
+    type Zone = P::Zone;
 
-    fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Z)
+    fn load_ref_from_bytes<'a>(src: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
         -> Result<MaybeValid<Ref<'a, Self>>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
         let blob = <Self::BlobDyn as BlobDyn>::decode_bytes(src)?;
 
-        let owned = Pair::<T, Z, P>::load_maybe_valid(blob, zone).trust();
+        let owned = Pair::<T, P>::load_maybe_valid(blob, zone).trust();
         Ok(MaybeValid::from(Ref::Owned(owned)))
     }
 }
 
 // -------- drop impls ------------
-impl<T, Z, P: Ptr> Drop for PeakTreeDyn<T, Z, P> {
+impl<T, P: Ptr> Drop for PeakTreeDyn<T, P> {
     fn drop(&mut self) {
         match self.kind_mut() {
             Kind::Peak(peak) => unsafe { ptr::drop_in_place(peak) },
@@ -1016,28 +995,28 @@ impl<T, Z, P: Ptr> Drop for PeakTreeDyn<T, Z, P> {
     }
 }
 
-impl<T, Z, P: Ptr> Drop for PeakTree<T, Z, P> {
+impl<T, P: Ptr> Drop for PeakTree<T, P> {
     fn drop(&mut self) {
         unsafe { ptr::drop_in_place(self.deref_mut()) }
     }
 }
 
-impl<T, Z, P: Ptr> Drop for InnerDyn<T, Z, P> {
+impl<T, P: Ptr> Drop for InnerDyn<T, P> {
     fn drop(&mut self) {
         let len = self.len();
         unsafe {
-            self.raw.ptr.dealloc::<PairDyn<T, Z, P>>(len);
+            self.raw.ptr.dealloc::<PairDyn<T, P>>(len);
         }
     }
 }
 
-impl<T, Z, P: Ptr> Drop for Inner<T, Z, P> {
+impl<T, P: Ptr> Drop for Inner<T, P> {
     fn drop(&mut self) {
         unsafe { ptr::drop_in_place(self.deref_mut()) }
     }
 }
 
-impl<T, Z, P: Ptr> Drop for PairDyn<T, Z, P> {
+impl<T, P: Ptr> Drop for PairDyn<T, P> {
     fn drop(&mut self) {
         unsafe {
             ptr::drop_in_place(self.left_mut());
@@ -1046,7 +1025,7 @@ impl<T, Z, P: Ptr> Drop for PairDyn<T, Z, P> {
     }
 }
 
-impl<T, Z, P: Ptr> Drop for Pair<T, Z, P> {
+impl<T, P: Ptr> Drop for Pair<T, P> {
     fn drop(&mut self) {
         unsafe { ptr::drop_in_place(self.deref_mut()) }
     }
@@ -1054,29 +1033,28 @@ impl<T, Z, P: Ptr> Drop for Pair<T, Z, P> {
 
 // -------------- fmt::Debug impls ---------------
 
-impl<T, Z, P: Ptr> fmt::Debug for PeakTree<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr> fmt::Debug for PeakTree<T, P>
+where T: fmt::Debug, P: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind().fmt(f)
     }
 }
 
-impl<T, Z, P: Ptr> fmt::Debug for PeakTreeDyn<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr> fmt::Debug for PeakTreeDyn<T, P>
+where T: fmt::Debug, P: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind().fmt(f)
     }
 }
 
-impl<T, Z, P: Ptr> InnerDyn<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr> InnerDyn<T, P>
+where T: fmt::Debug, P: fmt::Debug,
 {
     fn fmt_debug_impl(&self, name: &'static str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(name)
             .field("digest", &self.raw.digest())
-            .field("zone", &self.raw.zone)
             .field("ptr", &self.try_get_dirty_pair()
                                .map_err(P::from_clean))
             .field("len", &self.len())
@@ -1084,24 +1062,24 @@ where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
     }
 }
 
-impl<T, Z, P: Ptr> fmt::Debug for Inner<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr> fmt::Debug for Inner<T, P>
+where T: fmt::Debug, P: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_debug_impl("Inner", f)
     }
 }
 
-impl<T, Z, P: Ptr> fmt::Debug for InnerDyn<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr> fmt::Debug for InnerDyn<T, P>
+where T: fmt::Debug, P: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_debug_impl("InnerDyn", f)
     }
 }
 
-impl<T, Z, P: Ptr> PairDyn<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr> PairDyn<T, P>
+where T: fmt::Debug, P: fmt::Debug,
 {
     fn fmt_debug_impl(&self, name: &'static str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(name)
@@ -1112,16 +1090,16 @@ where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
     }
 }
 
-impl<T, Z, P: Ptr> fmt::Debug for Pair<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr> fmt::Debug for Pair<T, P>
+where T: fmt::Debug, P: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_debug_impl("Pair", f)
     }
 }
 
-impl<T, Z, P: Ptr> fmt::Debug for PairDyn<T, Z, P>
-where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr> fmt::Debug for PairDyn<T, P>
+where T: fmt::Debug, P: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_debug_impl("PairDyn", f)
@@ -1132,11 +1110,12 @@ where T: fmt::Debug, Z: fmt::Debug, P: fmt::Debug,
 mod tests {
     use super::*;
 
-    use hoard::zone::heap::Heap;
+    use hoard::ptr::Heap;
 
     #[test]
     fn test() {
-        let peak = PerfectTree::new_leaf_in(42u8, Heap);
-        let _peaks = PeakTree::from(peak);
+        let peak = PerfectTree::<u8, Heap>::new_leaf(42);
+        let peaks = PeakTree::from(peak);
+        assert_eq!(peaks.len(), 1);
     }
 }

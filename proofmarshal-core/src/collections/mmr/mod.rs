@@ -12,9 +12,9 @@ use thiserror::Error;
 use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
 use hoard::bag::Bag;
 use hoard::primitive::Primitive;
-use hoard::owned::{IntoOwned, Take, Ref, Own};
+use hoard::owned::{IntoOwned, Take, Ref, RefOwn};
 use hoard::pointee::Pointee;
-use hoard::zone::{Alloc, Get, GetMut, Ptr, PtrBlob, Zone, AsZone};
+use hoard::ptr::{Get, GetMut, Ptr, PtrBlob, Zone, AsZone};
 use hoard::load::{Load, LoadRef, MaybeValid};
 
 use crate::collections::leaf::Leaf;
@@ -26,24 +26,21 @@ pub mod peaktree;
 use self::peaktree::PeakTree;
 
 #[derive(Debug)]
-pub struct MMR<T, Z = (), P: Ptr = <Z as Zone>::Ptr> {
-    peaks: Option<PeakTree<T, Z, P>>,
-    zone: Z,
+pub struct MMR<T, P: Ptr> {
+    peaks: Option<PeakTree<T, P>>,
 }
 
-impl<T, Z: Zone> Default for MMR<T, Z>
-where Z: Default
+impl<T, P: Ptr> Default for MMR<T, P>
 {
     fn default() -> Self {
-        Self::new_in(Z::default())
+        Self::new()
     }
 }
 
-impl<T, Z: Zone> MMR<T, Z> {
-    pub fn new_in(zone: Z) -> Self {
+impl<T, P: Ptr> MMR<T, P> {
+    pub fn new() -> Self {
         Self {
             peaks: None,
-            zone,
         }
     }
 
@@ -55,14 +52,15 @@ impl<T, Z: Zone> MMR<T, Z> {
     }
 }
 
-impl<T, Z: Zone> MMR<T, Z>
+impl<T, P: Ptr> MMR<T, P>
 where T: Load,
+      P::Zone: AsZone<T::Zone>
 {
     pub fn try_push(&mut self, value: T) -> Result<(), T>
-        where Z: GetMut + Alloc
+        where P: GetMut + Default
     {
         if self.len() < Length::MAX {
-            let leaf = Leaf::new_in(value, self.zone);
+            let leaf = Leaf::new(value);
             match self.try_push_leaf(leaf) {
                 Ok(()) => Ok(()),
                 Err(_overflow) => unreachable!("overflow condition already checked"),
@@ -72,8 +70,8 @@ where T: Load,
         }
     }
 
-    pub fn try_push_leaf(&mut self, leaf: Leaf<T, Z>) -> Result<(), Leaf<T, Z>>
-        where Z: GetMut + Alloc
+    pub fn try_push_leaf(&mut self, leaf: Leaf<T, P>) -> Result<(), Leaf<T, P>>
+        where P: GetMut + Default
     {
         if self.len() < Length::MAX {
             let new_peak = if let Some(peaks) = self.peaks.take() {
@@ -89,7 +87,7 @@ where T: Load,
     }
 
     pub fn get(&self, idx: usize) -> Option<Ref<T>>
-        where Z: Get + AsZone<T::Zone>
+        where P: Get,
     {
         self.get_leaf(idx).map(|leaf| {
             match leaf {
@@ -99,8 +97,8 @@ where T: Load,
         })
     }
 
-    pub fn get_leaf(&self, idx: usize) -> Option<Ref<Leaf<T, Z>>>
-        where Z: Get
+    pub fn get_leaf(&self, idx: usize) -> Option<Ref<Leaf<T, P>>>
+        where P: Get
     {
         match &self.peaks {
             Some(peaks) => {
@@ -205,7 +203,7 @@ fn idx_to_containing_height(len: NonZeroLength, idx: usize) -> Option<(Height, u
 mod tests {
     use super::*;
 
-    use hoard::zone::heap::Heap;
+    use hoard::ptr::Heap;
 
     #[test]
     fn test_idx_to_containing_height() {
