@@ -132,7 +132,7 @@ impl TryGet for Heap {
         where T: Pointee + IntoOwned,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
-        todo!()
+        self.try_take_dirty_then(metadata, f)
     }
 }
 
@@ -158,7 +158,7 @@ impl Get for Heap {
         where T: Pointee + IntoOwned,
               F: FnOnce(MaybeValid<RefOwn<T>>) -> R
     {
-        todo!()
+        self.try_take_dirty_then(metadata, f).into_ok()
     }
 }
 
