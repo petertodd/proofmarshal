@@ -105,6 +105,12 @@ where T: Load,
         })
     }
 
+    pub fn into_get(self, idx: usize) -> Option<T>
+        where P: Get,
+    {
+        self.into_get_leaf(idx).map(|leaf| leaf.take())
+    }
+
     pub fn get_leaf(&self, idx: usize) -> Option<Ref<Leaf<T, P>>>
         where P: Get
     {
@@ -118,6 +124,21 @@ where T: Load,
                                                     .map(Ref::Owned)
                         }
                     })
+                } else {
+                    None
+                }
+            },
+            None => None,
+        }
+    }
+
+    pub fn into_get_leaf(self, idx: usize) -> Option<Leaf<T, P>>
+        where P: Get
+    {
+        match self.peaks {
+            Some(peaks) => {
+                if let Some((height, idx_in_peak)) = idx_to_containing_height(peaks.len(), idx) {
+                    peaks.into_get(height).and_then(|peak| peak.into_get_leaf(idx_in_peak))
                 } else {
                     None
                 }
