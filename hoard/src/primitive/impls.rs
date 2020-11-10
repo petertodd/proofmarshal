@@ -36,7 +36,7 @@ impl Primitive for () {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 #[error("FIXME")]
 pub struct DecodeBoolError;
