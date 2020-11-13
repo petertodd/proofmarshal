@@ -1,3 +1,5 @@
+//! Tree lengths.
+
 use std::num::{NonZeroU8, NonZeroU64, NonZeroUsize};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;

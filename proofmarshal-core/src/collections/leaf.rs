@@ -1,3 +1,5 @@
+//! Leaf nodes in trees.
+
 use std::borrow::{Borrow, BorrowMut};
 use std::marker::PhantomData;
 use std::convert::TryFrom;

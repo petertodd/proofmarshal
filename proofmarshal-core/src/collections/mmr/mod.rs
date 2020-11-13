@@ -1,3 +1,5 @@
+//! Merkle Mountain Ranges: the merkelized equivalent of a `Vec`.
+
 use std::borrow::{Borrow, BorrowMut};
 use std::cmp;
 use std::convert::TryFrom;

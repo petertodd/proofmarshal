@@ -1,3 +1,5 @@
+//! Tree heights.
+
 use std::convert::TryFrom;
 use std::ops::Range;
 use std::num::NonZeroU8;

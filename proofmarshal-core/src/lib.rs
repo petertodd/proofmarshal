@@ -17,6 +17,8 @@ pub mod commit;
 
 pub mod collections;
 
+// FIXME: this shouldn't be public
+#[doc(hidden)]
 #[macro_export]
 macro_rules! unreachable_unchecked {
     ($($arg:tt)*) => {
