@@ -1,5 +1,7 @@
 use std::fmt;
-use std::ptr::NonNull;
+use std::ptr::{self, NonNull};
+
+use thiserror::Error;
 
 use crate::blob::Blob;
 
@@ -49,5 +51,28 @@ impl<T> Pointee for T {
 
     fn make_fat_ptr_mut(thin: *mut (), _: ()) -> *mut Self {
         thin.cast()
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("FIXME")]
+#[non_exhaustive]
+pub struct SliceLayoutError;
+
+impl<T> Pointee for [T] {
+    type Metadata = usize;
+
+    type LayoutError = SliceLayoutError;
+
+    fn metadata(this: *const Self) -> Self::Metadata {
+        this.len()
+    }
+
+    fn make_fat_ptr(thin: *const (), len: usize) -> *const Self {
+        ptr::slice_from_raw_parts(thin as *const T, len)
+    }
+
+    fn make_fat_ptr_mut(thin: *mut (), len: usize) -> *mut Self {
+        ptr::slice_from_raw_parts_mut(thin as *mut T, len)
     }
 }
