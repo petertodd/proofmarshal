@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 thiserror = "1.0.20"
+static_assertions = "1.1.0"
