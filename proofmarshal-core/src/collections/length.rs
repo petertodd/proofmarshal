@@ -10,7 +10,7 @@ use thiserror::Error;
 use hoard::blob::{Bytes, BytesUninit};
 use hoard::primitive::Primitive;
 
-use crate::unreachable_unchecked;
+use crate::{unreachable_unchecked, impl_commit};
 use crate::collections::height::{Height, NonZeroHeight};
 
 pub trait ToLength {
@@ -872,6 +872,11 @@ impl_fmts! {
     InnerLength,
 }
 
+impl_commit! {
+    Length,
+    NonZeroLength,
+    InnerLength,
+}
 
 #[cfg(test)]
 mod test {

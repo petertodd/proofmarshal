@@ -1,7 +1,8 @@
-use std::convert::TryFrom;
-use std::marker::PhantomData;
-use std::error;
 use std::borrow::{Borrow, BorrowMut};
+use std::cmp;
+use std::convert::TryFrom;
+use std::error;
+use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop, MaybeUninit};
 use std::ops::DerefMut;
 use std::ptr;
@@ -17,6 +18,10 @@ use hoard::ptr::{Get, GetMut, Ptr, PtrBlob, Zone, AsZone};
 use hoard::load::{Load, LoadRef, MaybeValid};
 use hoard::save::{Save, SavePoll, Saver};
 
+use crate::commit::{
+    Commit, Digest,
+    sha256::Sha256Digest,
+};
 use crate::collections::leaf::Leaf;
 use crate::collections::length::*;
 use crate::collections::height::Height;
@@ -26,18 +31,30 @@ pub mod peaktree;
 use self::peaktree::{PeakTree, PeakTreeDyn, DecodePeakTreeBytesError, DecodePeakTreeDynBytesError, PeakTreeSavePoll};
 
 #[derive(Debug)]
-pub struct MMR<T, P: Ptr> {
-    peaks: Option<PeakTree<T, P>>,
+pub struct MMR<T, P: Ptr, D: Digest = Sha256Digest> {
+    peaks: Option<PeakTree<T, P, D>>,
 }
 
-impl<T, P: Ptr> Default for MMR<T, P>
+impl<T: Commit, P: Ptr, D: Digest> Commit for MMR<T, P, D> {
+    type Commitment = MMR<T::Commitment, (), D>;
+
+    fn to_commitment(&self) -> Self::Commitment {
+        /*
+        MMR {
+            peaks: self.peaks.to_commitment(),
+        }
+        */ todo!()
+    }
+}
+
+impl<T, P: Ptr, D: Digest> Default for MMR<T, P, D>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T, P: Ptr> MMR<T, P> {
+impl<T, P: Ptr, D: Digest> MMR<T, P, D> {
     pub fn new() -> Self {
         Self {
             peaks: None,
@@ -51,16 +68,16 @@ impl<T, P: Ptr> MMR<T, P> {
             }).unwrap_or(Length(0))
     }
 
-    pub fn peaks(&self) -> Option<&PeakTree<T, P>> {
+    pub fn peaks(&self) -> Option<&PeakTree<T, P, D>> {
         self.peaks.as_ref()
     }
 
-    pub fn peaks_mut(&mut self) -> Option<&mut PeakTree<T, P>> {
+    pub fn peaks_mut(&mut self) -> Option<&mut PeakTree<T, P, D>> {
         self.peaks.as_mut()
     }
 }
 
-impl<T, P: Ptr> MMR<T, P>
+impl<T, P: Ptr, D: Digest> MMR<T, P, D>
 where T: Load,
       P::Zone: AsZone<T::Zone>
 {
@@ -78,7 +95,7 @@ where T: Load,
         }
     }
 
-    pub fn try_push_leaf(&mut self, leaf: Leaf<T, P>) -> Result<(), Leaf<T, P>>
+    pub fn try_push_leaf(&mut self, leaf: Leaf<T, P, D>) -> Result<(), Leaf<T, P, D>>
         where P: GetMut + Default
     {
         if self.len() < Length::MAX {
@@ -111,7 +128,7 @@ where T: Load,
         self.into_get_leaf(idx).map(|leaf| leaf.take())
     }
 
-    pub fn get_leaf(&self, idx: usize) -> Option<Ref<Leaf<T, P>>>
+    pub fn get_leaf(&self, idx: usize) -> Option<Ref<Leaf<T, P, D>>>
         where P: Get
     {
         match &self.peaks {
@@ -132,7 +149,7 @@ where T: Load,
         }
     }
 
-    pub fn into_get_leaf(self, idx: usize) -> Option<Leaf<T, P>>
+    pub fn into_get_leaf(self, idx: usize) -> Option<Leaf<T, P, D>>
         where P: Get
     {
         match self.peaks {
@@ -239,12 +256,12 @@ pub enum DecodeMMRBytesError<Peaks: error::Error, Len: error::Error> {
     NonZeroPadding,
 }
 
-impl<T, P: Ptr> Blob for MMR<T, P>
+impl<T, P: Ptr, D: Digest> Blob for MMR<T, P, D>
 where T: 'static,
       P: Blob,
 {
-    const SIZE: usize = <PeakTree<T, P> as Blob>::SIZE;
-    type DecodeBytesError = DecodeMMRBytesError<<PeakTreeDyn<T, P> as BlobDyn>::DecodeBytesError,
+    const SIZE: usize = <PeakTree<T, P, D> as Blob>::SIZE;
+    type DecodeBytesError = DecodeMMRBytesError<<PeakTreeDyn<T, P, D> as BlobDyn>::DecodeBytesError,
                                                 <Length as Blob>::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -254,7 +271,7 @@ where T: 'static,
                .done()
         } else {
             dst.write_struct()
-               .write_padding(<PeakTree<T, P> as Blob>::SIZE - <Length as Blob>::SIZE)
+               .write_padding(<PeakTree<T, P, D> as Blob>::SIZE - <Length as Blob>::SIZE)
                .write_field(&Length::ZERO)
                .done()
         }
@@ -263,7 +280,7 @@ where T: 'static,
     fn decode_bytes(src: Bytes<'_, Self>) -> Result<MaybeValid<Self>, Self::DecodeBytesError> {
         let mut fields = src.struct_fields();
 
-        let peaks = match fields.trust_field::<PeakTree<T, P>>() {
+        let peaks = match fields.trust_field::<PeakTree<T, P, D>>() {
             Ok(peaks) => Ok(Some(peaks)),
             Err(DecodePeakTreeBytesError::Raw(raw)) => Err(DecodeMMRBytesError::Peaks(DecodePeakTreeDynBytesError(raw))),
             Err(DecodePeakTreeBytesError::NonZeroLength(err)) if err.0 == 0 => {
@@ -278,10 +295,10 @@ where T: 'static,
     }
 }
 
-impl<T, P: Ptr> Load for MMR<T, P>
+impl<T, P: Ptr, D: Digest> Load for MMR<T, P, D>
 where T: Load
 {
-    type Blob = MMR<T::Blob, P::Blob>;
+    type Blob = MMR<T::Blob, P::Blob, D>;
     type Ptr = P;
     type Zone = P::Zone;
 
@@ -293,17 +310,18 @@ where T: Load
 }
 
 #[doc(hidden)]
-pub struct MMRSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
-    peaks: Option<PeakTreeSavePoll<Q, T, P>>,
+pub struct MMRSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> {
+    peaks: Option<PeakTreeSavePoll<Q, T, P, D>>,
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SavePoll for MMRSavePoll<Q, T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T, P: Ptr, D: Digest> SavePoll for MMRSavePoll<Q, T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
     type SrcPtr = P::Clean;
     type DstPtr = Q;
-    type DstBlob = MMR<T::DstBlob, Q>;
+    type DstBlob = MMR<T::DstBlob, Q, D>;
 
     fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
         where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
@@ -321,12 +339,13 @@ where P::Zone: AsZone<T::Zone>,
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> Save<Q> for MMR<T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T, P: Ptr, D: Digest> Save<Q> for MMR<T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type DstBlob = MMR<T::DstBlob, Q>;
-    type SavePoll = MMRSavePoll<Q, T, P>;
+    type DstBlob = MMR<T::DstBlob, Q, D>;
+    type SavePoll = MMRSavePoll<Q, T, P, D>;
 
     fn init_save(&self) -> Self::SavePoll {
         MMRSavePoll {
@@ -453,22 +472,23 @@ mod tests {
 
         mmr.try_push(42).unwrap();
         t(&mmr, 1, &[
-            42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0
+            42,
+            42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0
         ]);
 
         mmr.try_push(43).unwrap();
         t(&mmr, 82, &[
-            42, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0
+            42, 43, 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 250, 74, 74, 79, 147, 58, 207, 22, 6, 235, 253, 179, 116, 242, 232, 247, 23, 215, 116, 250, 221, 195, 13, 100, 238, 143, 228, 191, 182, 184, 237, 154, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0
         ]);
 
         mmr.try_push(44).unwrap();
         t(&mmr, 163, &[
-            42, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 83, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0
+            42, 43, 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 44, 250, 74, 74, 79, 147, 58, 207, 22, 6, 235, 253, 179, 116, 242, 232, 247, 23, 215, 116, 250, 221, 195, 13, 100, 238, 143, 228, 191, 182, 184, 237, 154, 2, 0, 0, 0, 0, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 82, 0, 0, 0, 0, 0, 0, 0, 138, 125, 6, 251, 217, 239, 106, 103, 2, 109, 242, 95, 16, 143, 157, 213, 3, 198, 231, 236, 185, 164, 188, 23, 157, 97, 151, 110, 147, 47, 235, 190, 83, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0
         ]);
 
         mmr.try_push(45).unwrap();
         t(&mmr, 244, &[
-            42, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 44, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 83, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 84, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 164, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0
+            42, 43, 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 44, 45, 44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 82, 0, 0, 0, 0, 0, 0, 0, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 83, 0, 0, 0, 0, 0, 0, 0, 250, 74, 74, 79, 147, 58, 207, 22, 6, 235, 253, 179, 116, 242, 232, 247, 23, 215, 116, 250, 221, 195, 13, 100, 238, 143, 228, 191, 182, 184, 237, 154, 2, 0, 0, 0, 0, 0, 0, 0, 164, 244, 200, 22, 32, 194, 203, 252, 168, 252, 91, 233, 88, 222, 38, 115, 86, 146, 146, 86, 1, 152, 121, 190, 253, 18, 48, 244, 155, 44, 213, 159, 84, 0, 0, 0, 0, 0, 0, 0, 79, 64, 109, 199, 230, 180, 200, 195, 102, 189, 161, 26, 69, 87, 71, 112, 6, 153, 86, 6, 222, 176, 115, 211, 60, 242, 180, 8, 244, 74, 221, 110, 164, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0
         ]);
     }
 

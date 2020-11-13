@@ -44,7 +44,7 @@ impl Zone for () {
     type Id = ();
 }
 
-pub trait Ptr : Sized + From<!> {
+pub trait Ptr : Sized {
     type Zone : Zone;
     type Clean : PtrClean<Zone = Self::Zone, Blob = Self::Blob>;
     type Blob : PtrBlob;
@@ -73,7 +73,7 @@ pub trait Ptr : Sized + From<!> {
 }
 
 /// Needs no deallocation; data available.
-pub trait PtrClean : Copy + From<!> {
+pub trait PtrClean : Copy {
     type Zone : Zone;
     type Blob : PtrBlob;
 
@@ -110,7 +110,7 @@ impl<P: PtrClean> Ptr for P {
 }
 
 /// Raw blob.
-pub trait PtrBlob : Copy + Blob + From<!> {
+pub trait PtrBlob : Copy + Blob {
 }
 
 impl<P: PtrBlob> PtrClean for P {
@@ -130,6 +130,7 @@ impl<P: PtrBlob> PtrClean for P {
 }
 
 impl PtrBlob for ! {}
+impl PtrBlob for () {}
 
 pub trait TryGet : Ptr {
     type Error;

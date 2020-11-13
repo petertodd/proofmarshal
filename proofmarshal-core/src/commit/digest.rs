@@ -35,6 +35,37 @@ use hoard::blob::{Bytes, BytesUninit};
 
 use super::*;
 
+pub trait Digest : 'static + Copy {
+    type Hasher : Hasher<Output = Self>;
+}
+
+pub trait Hasher : Default {
+    type Output;
+
+    fn digest(buf: &[u8]) -> Self::Output {
+        let this = Self::default();
+
+        todo!()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Sha256Digest([u8; 32]);
+
+#[derive(Default)]
+pub struct Sha256Hasher {
+}
+
+pub struct Digest32([u8; 32]);
+
+pub struct Digest<T: 'static, D = Sha256Digest> {
+    marker: PhantomData<T>,
+    raw: D,
+}
+
+
+/*
+
 /// Typed 32-byte hash digest.
 #[repr(transparent)]
 pub struct Digest<T = !> {
@@ -264,4 +295,5 @@ mod tests {
         }
     }
 }
+*/
 */

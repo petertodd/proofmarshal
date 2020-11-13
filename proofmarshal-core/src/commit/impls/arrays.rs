@@ -1,13 +1,19 @@
+use std::mem;
+
 use super::*;
 
 impl<T: Commit, const N: usize> Commit for [T; N] {
-    const VERBATIM_LEN: usize = T::VERBATIM_LEN * N;
-    type Committed = [T::Committed; N];
+    type Commitment = [T::Commitment; N];
 
-    fn encode_verbatim(&self, dst: &mut impl WriteVerbatim) {
-        for item in self.iter() {
-            dst.write(item);
+    fn to_commitment(&self) -> Self::Commitment {
+        // FIXME: handle panics
+        let r = MaybeUninit::<[_;N]>::uninit();
+        let mut r: [MaybeUninit<T::Commitment>; N] = unsafe { r.assume_init() };
+        for (item, dst) in self.iter().zip(r.iter_mut()) {
+            let item_commitment = item.to_commitment();
+            unsafe { dst.as_mut_ptr().write(item_commitment) }
         }
+        unsafe { mem::transmute_copy(&r) }
     }
 }
 
@@ -17,12 +23,5 @@ mod tests {
 
     #[test]
     fn test() {
-        /*
-        assert_eq!([true, false, true, false].encode_verbatim(),
-                   &[1,0,1,0]);
-
-        assert_eq!([1u8; 100].encode_verbatim(),
-                   &[1u8; 100][..]);
-        */
     }
 }

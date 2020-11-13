@@ -17,17 +17,22 @@ use hoard::pointee::Pointee;
 use hoard::owned::{IntoOwned, Take, RefOwn, Ref};
 use hoard::bag::Bag;
 
-use crate::commit::{Commit, WriteVerbatim, Digest};
+use crate::commit::{
+    Commit,
+    HashCommit,
+    Digest,
+    sha256::Sha256Digest,
+};
 
 use super::raw;
 
 /// Leaf node in a tree.
 #[repr(transparent)]
-pub struct Leaf<T, P: Ptr> {
-    raw: ManuallyDrop<raw::Node<T, P>>,
+pub struct Leaf<T, P: Ptr = (), D: Digest = Sha256Digest> {
+    raw: ManuallyDrop<raw::Node<T, P, D>>,
 }
 
-impl<T, P: Ptr> Drop for Leaf<T, P> {
+impl<T, P: Ptr, D: Digest> Drop for Leaf<T, P, D> {
     fn drop(&mut self) {
         unsafe {
             self.raw.ptr.dealloc::<T>(())
@@ -35,7 +40,17 @@ impl<T, P: Ptr> Drop for Leaf<T, P> {
     }
 }
 
-impl<T, P: Ptr> Leaf<T, P> {
+impl<T: Commit, P: Ptr, D: Digest> Commit for Leaf<T, P, D> {
+    type Commitment = Leaf<T::Commitment, (), D>;
+
+    fn to_commitment(&self) -> Self::Commitment {
+        let digest = self.value_commit().digest();
+        let raw = raw::Node::new(Some(digest), ());
+        unsafe { Leaf::from_raw(raw) }
+    }
+}
+
+impl<T, P: Ptr, D: Digest> Leaf<T, P, D> {
     pub fn new(value: T) -> Self
         where P: Default,
     {
@@ -43,8 +58,8 @@ impl<T, P: Ptr> Leaf<T, P> {
     }
 }
 
-impl<T, P: Ptr> Leaf<T, P> {
-    pub fn new_unchecked(digest: Option<Digest>, bag: Bag<T, P>) -> Self {
+impl<T, P: Ptr, D: Digest> Leaf<T, P, D> {
+    pub fn new_unchecked(digest: Option<D>, bag: Bag<T, P>) -> Self {
         let (ptr, ()) = bag.into_raw_parts();
         let raw = raw::Node::new(digest, ptr);
 
@@ -53,53 +68,54 @@ impl<T, P: Ptr> Leaf<T, P> {
         }
     }
 
-    pub unsafe fn from_raw(raw: raw::Node<T, P>) -> Self {
+    pub unsafe fn from_raw(raw: raw::Node<T, P, D>) -> Self {
         Self {
             raw: ManuallyDrop::new(raw),
         }
     }
 
-    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, P>) -> &Self {
+    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, P, D>) -> &Self {
         &*(raw as *const _ as *const _)
     }
 
-    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, P>) -> &mut Self {
+    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, P, D>) -> &mut Self {
         &mut *(raw as *mut _ as *mut _)
     }
 
-    pub fn into_raw(self) -> raw::Node<T, P> {
+    pub fn into_raw(self) -> raw::Node<T, P, D> {
         let this = ManuallyDrop::new(self);
         unsafe {
             ptr::read(&*this.raw)
         }
     }
 
-    /*
-    pub fn digest(&self) -> Digest<T::Committed>
+    /// Returns a hash commit to the `T` value, re-hashing if necessary.
+    fn value_commit(&self) -> HashCommit<T::Commitment, D>
         where T: Commit
     {
-        self.try_digest()
-            .map(|digest| digest.cast())
-            .unwrap_or_else(|| self.calc_digest())
+        self.try_value_commit()
+            .unwrap_or_else(|| self.calc_value_commit())
     }
 
-    fn calc_digest(&self) -> Digest<T::Committed>
+    fn calc_value_commit(&self) -> HashCommit<T::Commitment, D>
         where T: Commit
     {
         let value = self.try_get_dirty()
                         .ok().expect("digest missing yet leaf value clean");
-        let digest = value.commit();
-        self.raw.set_digest(digest.cast());
-        digest
+        let hash_commit = HashCommit::new(value);
+        self.raw.set_digest(hash_commit.digest());
+        hash_commit
     }
 
-    pub fn try_digest(&self) -> Option<Digest> {
-        self.raw.digest()
+    /// Returns a hash commit to the `T` value, if available.
+    fn try_value_commit(&self) -> Option<HashCommit<T::Commitment, D>>
+        where T: Commit
+    {
+        self.raw.digest().map(HashCommit::from_digest)
     }
-    */
 }
 
-impl<T, P: Ptr> Leaf<T, P>
+impl<T, P: Ptr, D: Digest> Leaf<T, P, D>
 where T: Load,
       P::Zone: AsZone<T::Zone>,
 {
@@ -132,7 +148,7 @@ where T: Load,
     }
 }
 
-impl<T, P: Ptr> Leaf<T, P> {
+impl<T, P: Ptr, D: Digest> Leaf<T, P, D> {
     pub fn try_get_dirty(&self) -> Result<&T, P::Clean> {
         unsafe {
             self.raw.try_get_dirty(())
@@ -141,8 +157,8 @@ impl<T, P: Ptr> Leaf<T, P> {
     }
 }
 
-impl<T, P: Ptr> fmt::Debug for Leaf<T, P>
-where T: fmt::Debug, P: fmt::Debug
+impl<T, P: Ptr, D: Digest> fmt::Debug for Leaf<T, P, D>
+where T: fmt::Debug, P: fmt::Debug, D: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Leaf")
@@ -172,12 +188,12 @@ where T: Commit
 #[doc(hidden)]
 pub struct DecodeLeafBytesError<Raw: error::Error>(Raw);
 
-impl<T, P: PtrBlob> Blob for Leaf<T, P>
+impl<T, P: PtrBlob, D: Digest> Blob for Leaf<T, P, D>
 where T: Blob,
 {
-    const SIZE: usize = <raw::Node<T, P> as Blob>::SIZE;
+    const SIZE: usize = <raw::Node<T, P, D> as Blob>::SIZE;
 
-    type DecodeBytesError = DecodeLeafBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError>;
+    type DecodeBytesError = DecodeLeafBytesError<<raw::Node<T, P, D> as Blob>::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
@@ -195,10 +211,10 @@ where T: Blob,
     }
 }
 
-impl<T, P: Ptr> Load for Leaf<T, P>
+impl<T, P: Ptr, D: Digest> Load for Leaf<T, P, D>
 where T: Load,
 {
-    type Blob = Leaf<T::Blob, P::Blob>;
+    type Blob = Leaf<T::Blob, P::Blob, D>;
     type Ptr = P;
     type Zone = P::Zone;
 
@@ -213,17 +229,18 @@ where T: Load,
 
 // ----- save impls ---------
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> Save<Q> for Leaf<T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> Save<Q> for Leaf<T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type DstBlob = Leaf<T::DstBlob, Q>;
-    type SavePoll = LeafSavePoll<Q, T, P>;
+    type DstBlob = Leaf<T::DstBlob, Q, D>;
+    type SavePoll = LeafSavePoll<Q, T, P, D>;
 
     fn init_save(&self) -> Self::SavePoll {
         LeafSavePoll {
             marker: PhantomData,
-            digest: Digest::default(), //self.digest().cast(),
+            digest: self.value_commit().digest(),
             state: match self.try_get_dirty() {
                 Ok(dirty) => State::Dirty(dirty.init_save()),
                 Err(p_clean) => State::Clean(p_clean),
@@ -233,9 +250,9 @@ where P::Zone: AsZone<T::Zone>,
 }
 
 #[doc(hidden)]
-pub struct LeafSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
+pub struct LeafSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> {
     marker: PhantomData<fn(T)>,
-    digest: Digest,
+    digest: D,
     state: State<Q, T, P>,
 }
 
@@ -246,8 +263,8 @@ enum State<Q: PtrBlob, T: Save<Q>, P: Ptr> {
     Done(Q),
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> LeafSavePoll<Q, T, P> {
-    pub(crate) fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q> {
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> LeafSavePoll<Q, T, P, D> {
+    pub(crate) fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q, D> {
         match self.state {
             State::Done(q_ptr) => raw::Node::new(Some(self.digest), q_ptr),
             State::Dirty(_) | State::Clean(_) => panic!(),
@@ -255,13 +272,13 @@ impl<Q: PtrBlob, T: Save<Q>, P: Ptr> LeafSavePoll<Q, T, P> {
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SavePoll for LeafSavePoll<Q, T, P>
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> SavePoll for LeafSavePoll<Q, T, P, D>
 where P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
     type SrcPtr = P::Clean;
     type DstPtr = Q;
-    type DstBlob = Leaf<T::DstBlob, Q>;
+    type DstBlob = Leaf<T::DstBlob, Q, D>;
 
     fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
         where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
@@ -312,43 +329,39 @@ mod tests {
         assert_eq!(offset, 1);
         assert_eq!(buf, vec![
             42,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0
         ]);
     }
 
-    /*
     #[test]
-    fn test_commit() {
+    fn value_commit() {
         let n = 42u8;
-        let leaf_n = Leaf::new_in(n, Heap);
+        let n_hash_commit = HashCommit::new(&n);
+        let mut leaf_n = Leaf::<u8, Heap>::new(n);
 
-        assert!(leaf_n.try_digest().is_none());
-        assert_eq!(leaf_n.digest(), n.commit());
-        assert_eq!(leaf_n.try_digest(), Some(n.commit().cast()));
-        assert_eq!(leaf_n.commit(), n.commit());
+        assert!(leaf_n.try_value_commit().is_none());
+        assert_eq!(leaf_n.value_commit(), n_hash_commit);
+        assert_eq!(leaf_n.try_value_commit(), Some(n_hash_commit));
+        assert_eq!(leaf_n.value_commit(), n_hash_commit);
+
+        // Make sure the cached commitment is cleared on write
+        let _ = leaf_n.get_mut();
+        assert!(leaf_n.try_value_commit().is_none());
+
+        // ...and recalculated properly...
+        *leaf_n.get_mut() = 43;
+        assert!(leaf_n.try_value_commit().is_none());
+        assert_eq!(leaf_n.value_commit(), HashCommit::new(&43u8));
     }
 
     #[test]
-    fn test_digest_updated_on_write() {
-        let n = 1u8;
-        let mut leaf_n = Leaf::new_in(n, Heap);
+    fn to_commitment() {
+        let n = 42u8;
+        let n_hash_commit = HashCommit::<u8>::new(&n);
+        let leaf_n = Leaf::<u8, Heap>::new(n);
+        let leaf_hash_commit = HashCommit::<Leaf<u8>>::new(&leaf_n);
 
-        *(leaf_n.get_mut()) = 2;
-
-        assert!(leaf_n.try_digest().is_none());
-        assert_eq!(leaf_n.digest(), 2u8.commit());
-        assert!(leaf_n.try_digest().is_some());
-
-        leaf_n.get_mut();
-        assert!(leaf_n.try_digest().is_none());
-        assert_eq!(leaf_n.digest(), 2u8.commit());
-
-        *(leaf_n.get_mut()) = 3;
-
-        assert!(leaf_n.try_digest().is_none());
-        assert_eq!(leaf_n.digest(), 3u8.commit());
-        assert!(leaf_n.try_digest().is_some());
+        assert_eq!(n_hash_commit.digest(), leaf_hash_commit.digest())
     }
-    */
 }

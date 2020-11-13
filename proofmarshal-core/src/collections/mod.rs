@@ -1,4 +1,4 @@
-pub mod merklesum;
+//pub mod merklesum;
 
 pub mod height;
 pub mod length;

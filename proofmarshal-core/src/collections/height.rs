@@ -6,7 +6,8 @@ use std::cmp;
 
 use thiserror::Error;
 
-use crate::commit::{Commit, WriteVerbatim};
+use crate::impl_commit;
+use crate::commit::Commit;
 use crate::unreachable_unchecked;
 
 /// The height of a perfect binary tree.
@@ -43,6 +44,10 @@ impl<T: ?Sized + ToNonZeroHeight> ToHeight for T {
     }
 }
 
+impl_commit! {
+    Height,
+    NonZeroHeight
+}
 
 // ----- conversions ------
 
@@ -332,6 +337,7 @@ impl Primitive for DummyNonZeroHeight {
 }
 
 // --- Commit impls ----
+/*
 impl Commit for Height {
     const VERBATIM_LEN: usize = 1;
     type Committed = Self;
@@ -349,6 +355,7 @@ impl Commit for NonZeroHeight {
         dst.write(&self.0.get())
     }
 }
+*/
 
 
 macro_rules! impl_cmp_ops {

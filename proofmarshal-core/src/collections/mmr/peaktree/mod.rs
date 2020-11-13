@@ -18,7 +18,7 @@ use hoard::pointee::Pointee;
 use hoard::owned::{IntoOwned, Take, RefOwn, Ref};
 use hoard::bag::Bag;
 
-use crate::commit::{Commit, WriteVerbatim, Digest};
+use crate::commit::{Commit, Digest, HashCommit, Sha256Digest};
 use crate::unreachable_unchecked;
 
 use crate::collections::{
@@ -29,44 +29,44 @@ use crate::collections::{
 };
 
 #[repr(C)]
-pub struct Pair<T, P: Ptr> {
+pub struct Pair<T, P: Ptr, D: Digest = Sha256Digest> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Pair<T, P>>,
+    raw: ManuallyDrop<raw::Pair<T, P, D>>,
     len: InnerLength,
 }
 
 #[repr(C)]
-pub struct PairDyn<T, P: Ptr> {
+pub struct PairDyn<T, P: Ptr, D: Digest = Sha256Digest> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Pair<T, P>>,
+    raw: ManuallyDrop<raw::Pair<T, P, D>>,
     len: InnerLengthDyn,
 }
 
 #[repr(C)]
-pub struct Inner<T, P: Ptr> {
+pub struct Inner<T, P: Ptr, D: Digest = Sha256Digest> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Node<T, P>>,
+    raw: ManuallyDrop<raw::Node<T, P, D>>,
     len: InnerLength,
 }
 
 #[repr(C)]
-pub struct InnerDyn<T, P: Ptr> {
+pub struct InnerDyn<T, P: Ptr, D: Digest = Sha256Digest> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Node<T, P>>,
+    raw: ManuallyDrop<raw::Node<T, P, D>>,
     len: InnerLengthDyn,
 }
 
 #[repr(C)]
-pub struct PeakTree<T, P: Ptr> {
+pub struct PeakTree<T, P: Ptr, D: Digest = Sha256Digest> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Node<T, P>>,
+    raw: ManuallyDrop<raw::Node<T, P, D>>,
     len: NonZeroLength,
 }
 
 #[repr(C)]
-pub struct PeakTreeDyn<T, P: Ptr> {
+pub struct PeakTreeDyn<T, P: Ptr, D: Digest = Sha256Digest> {
     marker: PhantomData<T>,
-    raw: ManuallyDrop<raw::Node<T, P>>,
+    raw: ManuallyDrop<raw::Node<T, P, D>>,
     len: NonZeroLengthDyn,
 }
 
@@ -76,8 +76,8 @@ pub enum Kind<Peak, Inner> {
     Inner(Inner),
 }
 
-impl<T, P: Ptr> From<PerfectTree<T, P>> for PeakTree<T, P> {
-    fn from(peak: PerfectTree<T, P>) -> Self {
+impl<T, P: Ptr, D: Digest> From<PerfectTree<T, P, D>> for PeakTree<T, P, D> {
+    fn from(peak: PerfectTree<T, P, D>) -> Self {
         let len = NonZeroLength::from_height(peak.height());
         let raw = peak.into_raw_node();
         unsafe {
@@ -86,8 +86,8 @@ impl<T, P: Ptr> From<PerfectTree<T, P>> for PeakTree<T, P> {
     }
 }
 
-impl<T, P: Ptr> From<Inner<T, P>> for PeakTree<T, P> {
-    fn from(inner: Inner<T, P>) -> Self {
+impl<T, P: Ptr, D: Digest> From<Inner<T, P, D>> for PeakTree<T, P, D> {
+    fn from(inner: Inner<T, P, D>) -> Self {
         let len = inner.len().into();
         let raw = inner.into_raw_node();
         unsafe {
@@ -96,10 +96,10 @@ impl<T, P: Ptr> From<Inner<T, P>> for PeakTree<T, P> {
     }
 }
 
-impl<T, P: Ptr> PeakTree<T, P>
+impl<T, P: Ptr, D: Digest> PeakTree<T, P, D>
 where T: Load
 {
-    pub(crate) fn try_push_peak(self, peak: PerfectTree<T, P>) -> Result<Self, (Self, PerfectTree<T, P>)>
+    pub(crate) fn try_push_peak(self, peak: PerfectTree<T, P, D>) -> Result<Self, (Self, PerfectTree<T, P, D>)>
         where P: Default + GetMut
     {
         match self.into_kind() {
@@ -120,7 +120,7 @@ where T: Load
         }
     }
 
-    fn merge_peak(self, right: PerfectTree<T, P>) -> PerfectTree<T, P>
+    fn merge_peak(self, right: PerfectTree<T, P, D>) -> PerfectTree<T, P, D>
         where P: Default + GetMut
     {
         match self.into_kind() {
@@ -130,8 +130,8 @@ where T: Load
     }
 }
 
-impl<T, P: Ptr> PeakTree<T, P> {
-    pub fn into_kind(self) -> Kind<PerfectTree<T, P>, Inner<T, P>> {
+impl<T, P: Ptr, D: Digest> PeakTree<T, P, D> {
+    pub fn into_kind(self) -> Kind<PerfectTree<T, P, D>, Inner<T, P, D>> {
         let len = self.len();
         let node = self.into_raw_node();
 
@@ -148,10 +148,10 @@ impl<T, P: Ptr> PeakTree<T, P> {
     }
 }
 
-impl<T, P: Ptr> PeakTree<T, P>
+impl<T, P: Ptr, D: Digest> PeakTree<T, P, D>
 where T: Load
 {
-    pub fn into_get(self, height: Height) -> Option<PerfectTree<T, P>>
+    pub fn into_get(self, height: Height) -> Option<PerfectTree<T, P, D>>
         where P: Get
     {
         match self.into_kind() {
@@ -162,10 +162,10 @@ where T: Load
     }
 }
 
-impl<T, P: Ptr> PeakTreeDyn<T, P>
+impl<T, P: Ptr, D: Digest> PeakTreeDyn<T, P, D>
 where T: Load
 {
-    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, P>>>
+    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, P, D>>>
         where P: Get
     {
         match self.kind() {
@@ -176,12 +176,12 @@ where T: Load
     }
 }
 
-impl<T, P: Ptr> PeakTreeDyn<T, P> {
+impl<T, P: Ptr, D: Digest> PeakTreeDyn<T, P, D> {
     pub fn len(&self) -> NonZeroLength {
         self.len.to_nonzero_length()
     }
 
-    pub fn kind(&self) -> Kind<&PerfectTreeDyn<T, P>, &InnerDyn<T, P>> {
+    pub fn kind(&self) -> Kind<&PerfectTreeDyn<T, P, D>, &InnerDyn<T, P, D>> {
         match self.len().try_into_inner_length() {
             Ok(len) => {
                 let inner = unsafe { InnerDyn::from_raw_node_ref(&self.raw, len) };
@@ -194,7 +194,7 @@ impl<T, P: Ptr> PeakTreeDyn<T, P> {
         }
     }
 
-    pub fn kind_mut(&mut self) -> Kind<&mut PerfectTreeDyn<T, P>, &mut InnerDyn<T, P>> {
+    pub fn kind_mut(&mut self) -> Kind<&mut PerfectTreeDyn<T, P, D>, &mut InnerDyn<T, P, D>> {
         match self.len().try_into_inner_length() {
             Ok(len) => {
                 let inner = unsafe { InnerDyn::from_raw_node_mut(&mut self.raw, len) };
@@ -206,43 +206,24 @@ impl<T, P: Ptr> PeakTreeDyn<T, P> {
             }
         }
     }
-
-    /*
-    pub fn node_digest(&self) -> Digest
-        where T: Commit
-    {
-        match self.kind() {
-            Kind::Peak(peak) => peak.digest().cast(),
-            Kind::Inner(inner) => inner.pair_digest().cast(),
-        }
-    }
-
-    pub fn try_node_digest(&self) -> Option<Digest>
-    {
-        match self.kind() {
-            Kind::Peak(peak) => peak.try_digest(),
-            Kind::Inner(inner) => inner.try_pair_digest(),
-        }
-    }
-    */
 }
 
-impl<T, P: Ptr> Inner<T, P> {
-    pub fn try_join_peaks(left: PerfectTree<T, P>, right: PerfectTree<T, P>)
-        -> Result<Self, (PerfectTree<T, P>, PerfectTree<T, P>)>
+impl<T, P: Ptr, D: Digest> Inner<T, P, D> {
+    pub fn try_join_peaks(left: PerfectTree<T, P, D>, right: PerfectTree<T, P, D>)
+        -> Result<Self, (PerfectTree<T, P, D>, PerfectTree<T, P, D>)>
         where P: Default
     {
         let pair = Pair::try_join_peaks(left, right)?;
         Ok(Self::new(pair))
     }
 
-    pub fn new(pair: Pair<T, P>) -> Self
+    pub fn new(pair: Pair<T, P, D>) -> Self
         where P: Default
     {
         Self::new_unchecked(None, P::alloc(pair))
     }
 
-    pub fn new_unchecked(digest: Option<Digest>, pair: Bag<PairDyn<T, P>, P>) -> Self {
+    pub fn new_unchecked(digest: Option<D>, pair: Bag<PairDyn<T, P, D>, P>) -> Self {
         let (ptr, len) = pair.into_raw_parts();
         let raw = raw::Node::new(digest, ptr);
 
@@ -252,17 +233,17 @@ impl<T, P: Ptr> Inner<T, P> {
     }
 }
 
-impl<T, P: Ptr> Inner<T, P>
+impl<T, P: Ptr, D: Digest> Inner<T, P, D>
 where T: Load
 {
-    fn merge_peak(self, right: PerfectTree<T, P>) -> PerfectTree<T, P>
+    fn merge_peak(self, right: PerfectTree<T, P, D>) -> PerfectTree<T, P, D>
         where P: Default + GetMut
     {
         let pair = self.into_pair();
         pair.merge_peak(right)
     }
 
-    pub(crate) fn try_push_peak(self, peak: PerfectTree<T, P>) -> Result<PeakTree<T, P>, (Self, PerfectTree<T, P>)>
+    pub(crate) fn try_push_peak(self, peak: PerfectTree<T, P, D>) -> Result<PeakTree<T, P, D>, (Self, PerfectTree<T, P, D>)>
         where P: Default + GetMut
     {
         match self.len().push_peak(peak.height()) {
@@ -299,40 +280,7 @@ where T: Load
         }
     }
 
-    /*
-    pub(crate) fn try_push_peak_impl(self, right: PerfectTree<T, P>) -> Result<Self, Option<PeakTree<T, P>>>
-        where P: Default + GetMut
-    {
-        todo!()
-        /*
-        match self.len().push_peak(right.height()) {
-            Ok(new_len) => {
-                let (new_left, new_right) = new_len.split();
-                if new_left == self.len() {
-                } else {
-                }
-            },
-            Err(Some(height)) => {
-                todo!()
-            },
-            Err(None) => Err(None),
-        }
-        */
-
-        /*
-        if self.len().min_height() > right.height() {
-            let pair = Pair::new(self.into(), right.into());
-            Ok(Self::new(pair))
-        } else {
-            let pair = self.into_pair();
-            let pair = pair.try_push_peak_impl(right)?;
-            Ok(Self::new(pair))
-        }
-        */
-    }
-    */
-
-    pub fn into_get(self, height: Height) -> Option<PerfectTree<T, P>>
+    pub fn into_get(self, height: Height) -> Option<PerfectTree<T, P, D>>
         where P: Get
     {
         if self.len().contains(height) {
@@ -342,22 +290,22 @@ where T: Load
         }
     }
 
-    pub fn into_pair(self) -> Pair<T, P>
+    pub fn into_pair(self) -> Pair<T, P, D>
         where P: Get
     {
         let len = self.len();
         let raw = self.into_raw_node();
         unsafe {
-            raw.take::<PairDyn<T, P>>(len)
+            raw.take::<PairDyn<T, P, D>>(len)
                .trust()
         }
     }
 }
 
-impl<T, P: Ptr> InnerDyn<T, P>
+impl<T, P: Ptr, D: Digest> InnerDyn<T, P, D>
 where T: Load
 {
-    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, P>>>
+    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, P, D>>>
         where P: Get
     {
         if self.len().contains(height) {
@@ -371,61 +319,59 @@ where T: Load
         }
     }
 
-    pub fn get_pair(&self) -> Ref<PairDyn<T, P>>
+    pub fn get_pair(&self) -> Ref<PairDyn<T, P, D>>
         where P: Get
     {
         unsafe {
-            self.raw.get::<PairDyn<T, P>>(self.len())
+            self.raw.get::<PairDyn<T, P, D>>(self.len())
                     .trust()
         }
     }
 
-    pub fn get_pair_mut(&mut self) -> &mut PairDyn<T, P>
+    pub fn get_pair_mut(&mut self) -> &mut PairDyn<T, P, D>
         where P: GetMut
     {
         let len = self.len();
         unsafe {
-            self.raw.get_mut::<PairDyn<T, P>>(len)
+            self.raw.get_mut::<PairDyn<T, P, D>>(len)
                     .trust()
         }
     }
 }
 
-impl<T, P: Ptr> InnerDyn<T, P> {
+impl<T, P: Ptr, D: Digest> InnerDyn<T, P, D> {
     pub fn len(&self) -> InnerLength {
         self.len.to_inner_length()
     }
 
-    /*
-    pub fn pair_digest(&self) -> Digest<Pair<T::Committed>>
+    pub fn pair_commit(&self) -> HashCommit<Pair<T::Commitment, (), D>, D>
         where T: Commit
     {
-        self.try_pair_digest()
-            .map(|digest| digest.cast())
-            .unwrap_or_else(|| self.calc_pair_digest())
+        self.try_pair_commit()
+            .unwrap_or_else(|| self.calc_pair_commit())
     }
 
-    fn calc_pair_digest(&self) -> Digest<Pair<T::Committed>>
+    fn calc_pair_commit(&self) -> HashCommit<Pair<T::Commitment, (), D>, D>
         where T: Commit
     {
         let pair = self.try_get_dirty_pair()
                        .ok().expect("digest missing yet inner ptr clean");
-        let digest = pair.commit();
-        self.raw.set_digest(digest.cast());
-        digest
+        let commit = HashCommit::new(pair);
+        self.raw.set_digest(commit.digest());
+        commit
     }
 
-    pub fn try_pair_digest(&self) -> Option<Digest>
+    pub fn try_pair_commit(&self) -> Option<HashCommit<Pair<T::Commitment, (), D>, D>>
+        where T: Commit
     {
-        self.raw.digest()
+        self.raw.digest().map(HashCommit::from_digest)
     }
-    */
 }
 
-impl<T, P: Ptr> Pair<T, P>
+impl<T, P: Ptr, D: Digest> Pair<T, P, D>
 where T: Load
 {
-    fn merge_peak(self, peak: PerfectTree<T, P>) -> PerfectTree<T, P>
+    fn merge_peak(self, peak: PerfectTree<T, P, D>) -> PerfectTree<T, P, D>
         where P: Default + GetMut
     {
         let (left, right) = self.into_split();
@@ -435,10 +381,10 @@ where T: Load
 }
 
 
-impl<T, P: Ptr> Pair<T, P>
+impl<T, P: Ptr, D: Digest> Pair<T, P, D>
 {
-    pub fn try_join_peaks(left: PerfectTree<T, P>, right: PerfectTree<T, P>)
-        -> Result<Self, (PerfectTree<T, P>, PerfectTree<T, P>)>
+    pub fn try_join_peaks(left: PerfectTree<T, P, D>, right: PerfectTree<T, P, D>)
+        -> Result<Self, (PerfectTree<T, P, D>, PerfectTree<T, P, D>)>
     {
         if left.height() > right.height() {
             let expected_len = (1 << left.height().get()) | (1 << right.height().get());
@@ -451,7 +397,7 @@ impl<T, P: Ptr> Pair<T, P>
         }
     }
 
-    pub fn new(left: PeakTree<T, P>, right: PeakTree<T, P>) -> Self {
+    pub fn new(left: PeakTree<T, P, D>, right: PeakTree<T, P, D>) -> Self {
         assert!(left.len().min_height() > right.len().max_height());
         let len = left.len().get() | right.len().get();
         let len = InnerLength::try_from(len.get()).unwrap();
@@ -463,14 +409,14 @@ impl<T, P: Ptr> Pair<T, P>
         }
     }
 
-    pub unsafe fn new_unchecked(left: raw::Node<T, P>, right: raw::Node<T, P>, len: InnerLength) -> Self {
+    pub unsafe fn new_unchecked(left: raw::Node<T, P, D>, right: raw::Node<T, P, D>, len: InnerLength) -> Self {
         Self::from_raw_pair(
             raw::Pair { left, right },
             len
         )
     }
 
-    pub fn into_split(self) -> (PeakTree<T, P>, PeakTree<T, P>) {
+    pub fn into_split(self) -> (PeakTree<T, P, D>, PeakTree<T, P, D>) {
         let (left_len, right_len) = self.len().split();
         let raw = self.into_raw_pair();
 
@@ -481,10 +427,10 @@ impl<T, P: Ptr> Pair<T, P>
     }
 }
 
-impl<T, P: Ptr> Pair<T, P>
+impl<T, P: Ptr, D: Digest> Pair<T, P, D>
 where T: Load
 {
-    pub fn into_get(self, height: Height) -> Option<PerfectTree<T, P>>
+    pub fn into_get(self, height: Height) -> Option<PerfectTree<T, P, D>>
         where P: Get
     {
         if self.len().contains(height) {
@@ -500,10 +446,10 @@ where T: Load
     }
 }
 
-impl<T, P: Ptr> PairDyn<T, P>
+impl<T, P: Ptr, D: Digest> PairDyn<T, P, D>
 where T: Load
 {
-    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, P>>>
+    pub fn get(&self, height: Height) -> Option<Ref<PerfectTreeDyn<T, P, D>>>
         where P: Get
     {
         if self.len().contains(height) {
@@ -519,12 +465,12 @@ where T: Load
     }
 }
 
-impl<T, P: Ptr> PairDyn<T, P> {
+impl<T, P: Ptr, D: Digest> PairDyn<T, P, D> {
     pub fn len(&self) -> InnerLength {
         self.len.to_inner_length()
     }
 
-    pub fn split(&self) -> (&PeakTreeDyn<T, P>, &PeakTreeDyn<T, P>) {
+    pub fn split(&self) -> (&PeakTreeDyn<T, P, D>, &PeakTreeDyn<T, P, D>) {
         let (left_len, right_len) = self.len().split();
         unsafe {
             (PeakTreeDyn::from_raw_node_ref(&self.raw.left, left_len),
@@ -532,7 +478,7 @@ impl<T, P: Ptr> PairDyn<T, P> {
         }
     }
 
-    pub fn split_mut(&mut self) -> (&mut PeakTreeDyn<T, P>, &mut PeakTreeDyn<T, P>) {
+    pub fn split_mut(&mut self) -> (&mut PeakTreeDyn<T, P, D>, &mut PeakTreeDyn<T, P, D>) {
         let (left_len, right_len) = self.len().split();
         let (left, right) = self.raw.split_mut();
         unsafe {
@@ -541,19 +487,19 @@ impl<T, P: Ptr> PairDyn<T, P> {
         }
     }
 
-    pub fn left(&self) -> &PeakTreeDyn<T, P> {
+    pub fn left(&self) -> &PeakTreeDyn<T, P, D> {
         self.split().0
     }
 
-    pub fn left_mut(&mut self) -> &mut PeakTreeDyn<T, P> {
+    pub fn left_mut(&mut self) -> &mut PeakTreeDyn<T, P, D> {
         self.split_mut().0
     }
 
-    pub fn right(&self) -> &PeakTreeDyn<T, P> {
+    pub fn right(&self) -> &PeakTreeDyn<T, P, D> {
         self.split().1
     }
 
-    pub fn right_mut(&mut self) -> &mut PeakTreeDyn<T, P> {
+    pub fn right_mut(&mut self) -> &mut PeakTreeDyn<T, P, D> {
         self.split_mut().1
     }
 
@@ -561,8 +507,8 @@ impl<T, P: Ptr> PairDyn<T, P> {
 
 // --------- conversions from raw -------------
 
-impl<T, P: Ptr> Pair<T, P> {
-    pub unsafe fn from_raw_pair(raw: raw::Pair<T, P>, len: InnerLength) -> Self {
+impl<T, P: Ptr, D: Digest> Pair<T, P, D> {
+    pub unsafe fn from_raw_pair(raw: raw::Pair<T, P, D>, len: InnerLength) -> Self {
         Self {
             marker: PhantomData,
             raw: ManuallyDrop::new(raw),
@@ -570,24 +516,24 @@ impl<T, P: Ptr> Pair<T, P> {
         }
     }
 
-    pub fn into_raw_pair(self) -> raw::Pair<T, P> {
+    pub fn into_raw_pair(self) -> raw::Pair<T, P, D> {
         let this = ManuallyDrop::new(self);
         unsafe { ptr::read(&*this.raw) }
     }
 }
 
-impl<T, P: Ptr> PairDyn<T, P> {
-    pub unsafe fn from_raw_pair_ref(raw: &raw::Pair<T, P>, len: InnerLength) -> &Self {
+impl<T, P: Ptr, D: Digest> PairDyn<T, P, D> {
+    pub unsafe fn from_raw_pair_ref(raw: &raw::Pair<T, P, D>, len: InnerLength) -> &Self {
         &*Self::make_fat_ptr(raw as *const _ as *const _, len)
     }
 
-    pub unsafe fn from_raw_pair_mut(raw: &mut raw::Pair<T, P>, len: InnerLength) -> &mut Self {
+    pub unsafe fn from_raw_pair_mut(raw: &mut raw::Pair<T, P, D>, len: InnerLength) -> &mut Self {
         &mut *Self::make_fat_ptr_mut(raw as *mut _ as *mut _, len)
     }
 }
 
-impl<T, P: Ptr> Inner<T, P> {
-    pub unsafe fn from_raw_node(raw: raw::Node<T, P>, len: InnerLength) -> Self {
+impl<T, P: Ptr, D: Digest> Inner<T, P, D> {
+    pub unsafe fn from_raw_node(raw: raw::Node<T, P, D>, len: InnerLength) -> Self {
         Self {
             marker: PhantomData,
             raw: ManuallyDrop::new(raw),
@@ -595,22 +541,22 @@ impl<T, P: Ptr> Inner<T, P> {
         }
     }
 
-    pub fn into_raw_node(self) -> raw::Node<T, P> {
+    pub fn into_raw_node(self) -> raw::Node<T, P, D> {
         let this = ManuallyDrop::new(self);
         unsafe { ptr::read(&*this.raw) }
     }
 }
 
-impl<T, P: Ptr> InnerDyn<T, P> {
-    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, P>, len: InnerLength) -> &Self {
+impl<T, P: Ptr, D: Digest> InnerDyn<T, P, D> {
+    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, P, D>, len: InnerLength) -> &Self {
         &*Self::make_fat_ptr(raw as *const _ as *const _, len)
     }
 
-    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, P>, len: InnerLength) -> &mut Self {
+    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, P, D>, len: InnerLength) -> &mut Self {
         &mut *Self::make_fat_ptr_mut(raw as *mut _ as *mut _, len)
     }
 
-    pub fn try_get_dirty_pair(&self) -> Result<&PairDyn<T, P>, P::Clean> {
+    pub fn try_get_dirty_pair(&self) -> Result<&PairDyn<T, P, D>, P::Clean> {
         unsafe {
             self.raw.try_get_dirty(self.len())
                     .map(MaybeValid::trust)
@@ -618,8 +564,8 @@ impl<T, P: Ptr> InnerDyn<T, P> {
     }
 }
 
-impl<T, P: Ptr> PeakTree<T, P> {
-    pub unsafe fn from_raw_node(raw: raw::Node<T, P>, len: NonZeroLength) -> Self {
+impl<T, P: Ptr, D: Digest> PeakTree<T, P, D> {
+    pub unsafe fn from_raw_node(raw: raw::Node<T, P, D>, len: NonZeroLength) -> Self {
         Self {
             marker: PhantomData,
             raw: ManuallyDrop::new(raw),
@@ -627,18 +573,18 @@ impl<T, P: Ptr> PeakTree<T, P> {
         }
     }
 
-    pub fn into_raw_node(self) -> raw::Node<T, P> {
+    pub fn into_raw_node(self) -> raw::Node<T, P, D> {
         let this = ManuallyDrop::new(self);
         unsafe { ptr::read(&*this.raw) }
     }
 }
 
-impl<T, P: Ptr> PeakTreeDyn<T, P> {
-    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, P>, len: NonZeroLength) -> &Self {
+impl<T, P: Ptr, D: Digest> PeakTreeDyn<T, P, D> {
+    pub unsafe fn from_raw_node_ref(raw: &raw::Node<T, P, D>, len: NonZeroLength) -> &Self {
         &*Self::make_fat_ptr(raw as *const _ as *const _, len)
     }
 
-    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, P>, len: NonZeroLength) -> &mut Self {
+    pub unsafe fn from_raw_node_mut(raw: &mut raw::Node<T, P, D>, len: NonZeroLength) -> &mut Self {
         &mut *Self::make_fat_ptr_mut(raw as *mut _ as *mut _, len)
     }
 }
@@ -647,7 +593,7 @@ impl<T, P: Ptr> PeakTreeDyn<T, P> {
 
 macro_rules! impl_pointee {
     ($t:ident, $meta_ty:ty) => {
-        impl<T, P: Ptr> Pointee for $t<T, P> {
+        impl<T, P: Ptr, D: Digest> Pointee for $t<T, P, D> {
             type Metadata = $meta_ty;
             type LayoutError = !;
 
@@ -686,28 +632,28 @@ impl_pointee!(PairDyn, InnerLength);
 
 macro_rules! impl_deref {
     ($t:ident => $u:ident) => {
-        impl<T, P: Ptr> Borrow<$u<T, P>> for $t<T, P> {
-            fn borrow(&self) -> &$u<T, P> {
+        impl<T, P: Ptr, D: Digest> Borrow<$u<T, P, D>> for $t<T, P, D> {
+            fn borrow(&self) -> &$u<T, P, D> {
                 unsafe {
                     &*$u::make_fat_ptr(self as *const _ as *const (), self.len)
                 }
             }
         }
 
-        impl<T, P: Ptr> BorrowMut<$u<T, P>> for $t<T, P> {
-            fn borrow_mut(&mut self) -> &mut $u<T, P> {
+        impl<T, P: Ptr, D: Digest> BorrowMut<$u<T, P, D>> for $t<T, P, D> {
+            fn borrow_mut(&mut self) -> &mut $u<T, P, D> {
                 unsafe {
                     &mut *$u::make_fat_ptr_mut(self as *mut _ as *mut (), self.len)
                 }
             }
         }
 
-        unsafe impl<T, P: Ptr> Take<$u<T, P>> for $t<T, P> {
+        unsafe impl<T, P: Ptr, D: Digest> Take<$u<T, P, D>> for $t<T, P, D> {
             fn take_unsized<F, R>(self, f: F) -> R
-                where F: FnOnce(RefOwn<$u<T, P>>) -> R
+                where F: FnOnce(RefOwn<$u<T, P, D>>) -> R
             {
                 let mut this = ManuallyDrop::new(self);
-                let this_dyn: &mut $u<T, P> = this.deref_mut().borrow_mut();
+                let this_dyn: &mut $u<T, P, D> = this.deref_mut().borrow_mut();
 
                 unsafe {
                     f(RefOwn::new_unchecked(this_dyn))
@@ -715,8 +661,8 @@ macro_rules! impl_deref {
             }
         }
 
-        impl<T, P: Ptr> IntoOwned for $u<T, P> {
-            type Owned = $t<T, P>;
+        impl<T, P: Ptr, D: Digest> IntoOwned for $u<T, P, D> {
+            type Owned = $t<T, P, D>;
 
             fn into_owned(self: RefOwn<'_, Self>) -> Self::Owned {
                 let this = RefOwn::leak(self);
@@ -730,15 +676,15 @@ macro_rules! impl_deref {
             }
         }
 
-        impl<T, P: Ptr> Deref for $t<T, P> {
-            type Target = $u<T, P>;
+        impl<T, P: Ptr, D: Digest> Deref for $t<T, P, D> {
+            type Target = $u<T, P, D>;
 
             fn deref(&self) -> &Self::Target {
                 self.borrow()
             }
         }
 
-        impl<T, P: Ptr> DerefMut for $t<T, P> {
+        impl<T, P: Ptr, D: Digest> DerefMut for $t<T, P, D> {
             fn deref_mut(&mut self) -> &mut Self::Target {
                 self.borrow_mut()
             }
@@ -750,6 +696,64 @@ impl_deref!(PeakTree => PeakTreeDyn);
 impl_deref!(Inner => InnerDyn);
 impl_deref!(Pair => PairDyn);
 
+// ------- commit impls ---------
+impl<T, P: Ptr, D: Digest> Commit for PairDyn<T, P, D>
+where T: Commit
+{
+    type Commitment = Pair<T::Commitment, (), D>;
+
+    fn to_commitment(&self) -> Self::Commitment {
+        let left = self.left().to_commitment();
+        let right = self.right().to_commitment();
+
+        Pair::new(left, right)
+    }
+}
+
+impl<T, P: Ptr, D: Digest> Commit for InnerDyn<T, P, D>
+where T: Commit
+{
+    type Commitment = Inner<T::Commitment, (), D>;
+
+    fn to_commitment(&self) -> Self::Commitment {
+        let digest = self.pair_commit().digest();
+        let raw = raw::Node::new(Some(digest), ());
+        unsafe { Inner::from_raw_node(raw, self.len()) }
+    }
+}
+
+impl<T, P: Ptr, D: Digest> Commit for PeakTreeDyn<T, P, D>
+where T: Commit
+{
+    type Commitment = PeakTree<T::Commitment, (), D>;
+
+    fn to_commitment(&self) -> Self::Commitment {
+        match self.kind() {
+            Kind::Peak(peak) => peak.to_commitment().into(),
+            Kind::Inner(inner) => inner.to_commitment().into(),
+        }
+    }
+}
+
+macro_rules! impl_commit_for_sized {
+    ($( $t:ident, )+) => {$(
+        impl<T, P: Ptr, D: Digest> Commit for $t<T, P, D>
+        where T: Commit
+        {
+            type Commitment = $t<T::Commitment, (), D>;
+
+            fn to_commitment(&self) -> Self::Commitment {
+                self.deref().to_commitment()
+            }
+        }
+    )+}
+}
+
+impl_commit_for_sized! {
+    Pair, Inner, PeakTree,
+}
+
+
 // ------- hoard impls ----------
 
 #[derive(Debug, Error)]
@@ -760,12 +764,12 @@ pub enum DecodePeakTreeBytesError<Raw: error::Error, NonZeroLength: error::Error
     NonZeroLength(NonZeroLength),
 }
 
-impl<T, P: Ptr> Blob for PeakTree<T, P>
+impl<T, P: Ptr, D: Digest> Blob for PeakTree<T, P, D>
 where T: 'static,
       P: Blob,
 {
-    const SIZE: usize = <raw::Node<T, P> as Blob>::SIZE + <NonZeroLength as Blob>::SIZE;
-    type DecodeBytesError = DecodePeakTreeBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError, <NonZeroLength as Blob>::DecodeBytesError>;
+    const SIZE: usize = <raw::Node<T, P, D> as Blob>::SIZE + <NonZeroLength as Blob>::SIZE;
+    type DecodeBytesError = DecodePeakTreeBytesError<<raw::Node<T, P, D> as Blob>::DecodeBytesError, <NonZeroLength as Blob>::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
@@ -783,10 +787,10 @@ where T: 'static,
     }
 }
 
-impl<T, P: Ptr> Load for PeakTree<T, P>
+impl<T, P: Ptr, D: Digest> Load for PeakTree<T, P, D>
 where T: Load
 {
-    type Blob = PeakTree<T::Blob, P::Blob>;
+    type Blob = PeakTree<T::Blob, P::Blob, D>;
     type Ptr = P;
     type Zone = P::Zone;
 
@@ -803,14 +807,14 @@ where T: Load
 #[doc(hidden)]
 pub struct DecodePeakTreeDynBytesError<Raw: error::Error>(pub(crate) Raw);
 
-unsafe impl<T, P: Ptr> BlobDyn for PeakTreeDyn<T, P>
+unsafe impl<T, P: Ptr, D: Digest> BlobDyn for PeakTreeDyn<T, P, D>
 where T: 'static,
       P: Blob,
 {
-    type DecodeBytesError = DecodePeakTreeDynBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError>;
+    type DecodeBytesError = DecodePeakTreeDynBytesError<<raw::Node<T, P, D> as Blob>::DecodeBytesError>;
 
     fn try_size(_len: Self::Metadata) -> Result<usize, !> {
-        Ok(<raw::Node<T, P> as Blob>::SIZE)
+        Ok(<raw::Node<T, P, D> as Blob>::SIZE)
     }
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -828,10 +832,10 @@ where T: 'static,
     }
 }
 
-impl<T, P: Ptr> LoadRef for PeakTreeDyn<T, P>
+impl<T, P: Ptr, D: Digest> LoadRef for PeakTreeDyn<T, P, D>
 where T: Load
 {
-    type BlobDyn = PeakTreeDyn<T::Blob, P::Blob>;
+    type BlobDyn = PeakTreeDyn<T::Blob, P::Blob, D>;
     type Ptr = P;
     type Zone = P::Zone;
 
@@ -839,7 +843,7 @@ where T: Load
         -> Result<MaybeValid<Self::Owned>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
         let blob = <Self::BlobDyn as BlobDyn>::decode_bytes(src)?;
-        let owned = PeakTree::<T, P>::load_maybe_valid(blob, zone).trust();
+        let owned = PeakTree::<T, P, D>::load_maybe_valid(blob, zone).trust();
         Ok(MaybeValid::from(owned))
     }
 }
@@ -852,12 +856,12 @@ pub enum DecodeInnerBytesError<Raw: error::Error, NonZeroLength: error::Error> {
     NonZeroLength(NonZeroLength),
 }
 
-impl<T, P: Ptr> Blob for Inner<T, P>
+impl<T, P: Ptr, D: Digest> Blob for Inner<T, P, D>
 where T: 'static,
       P: Blob,
 {
-    const SIZE: usize = <raw::Node<T, P> as Blob>::SIZE + <InnerLength as Blob>::SIZE;
-    type DecodeBytesError = DecodeInnerBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError, <InnerLength as Blob>::DecodeBytesError>;
+    const SIZE: usize = <raw::Node<T, P, D> as Blob>::SIZE + <InnerLength as Blob>::SIZE;
+    type DecodeBytesError = DecodeInnerBytesError<<raw::Node<T, P, D> as Blob>::DecodeBytesError, <InnerLength as Blob>::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
@@ -875,10 +879,10 @@ where T: 'static,
     }
 }
 
-impl<T, P: Ptr> Load for Inner<T, P>
+impl<T, P: Ptr, D: Digest> Load for Inner<T, P, D>
 where T: Load
 {
-    type Blob = Inner<T::Blob, P::Blob>;
+    type Blob = Inner<T::Blob, P::Blob, D>;
     type Ptr = P;
     type Zone = P::Zone;
 
@@ -895,14 +899,14 @@ where T: Load
 #[doc(hidden)]
 pub struct DecodeInnerDynBytesError<Raw: error::Error>(Raw);
 
-unsafe impl<T, P: Ptr> BlobDyn for InnerDyn<T, P>
+unsafe impl<T, P: Ptr, D: Digest> BlobDyn for InnerDyn<T, P, D>
 where T: 'static,
       P: Blob,
 {
-    type DecodeBytesError = DecodeInnerDynBytesError<<raw::Node<T, P> as Blob>::DecodeBytesError>;
+    type DecodeBytesError = DecodeInnerDynBytesError<<raw::Node<T, P, D> as Blob>::DecodeBytesError>;
 
     fn try_size(_len: Self::Metadata) -> Result<usize, !> {
-        Ok(<raw::Node<T, P> as Blob>::SIZE)
+        Ok(<raw::Node<T, P, D> as Blob>::SIZE)
     }
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -920,10 +924,10 @@ where T: 'static,
     }
 }
 
-impl<T, P: Ptr> LoadRef for InnerDyn<T, P>
+impl<T, P: Ptr, D: Digest> LoadRef for InnerDyn<T, P, D>
 where T: Load
 {
-    type BlobDyn = InnerDyn<T::Blob, P::Blob>;
+    type BlobDyn = InnerDyn<T::Blob, P::Blob, D>;
     type Ptr = P;
     type Zone = P::Zone;
 
@@ -931,7 +935,7 @@ where T: Load
         -> Result<MaybeValid<Self::Owned>, <Self::BlobDyn as BlobDyn>::DecodeBytesError>
     {
         let blob = <Self::BlobDyn as BlobDyn>::decode_bytes(src)?;
-        let owned = Inner::<T, P>::load_maybe_valid(blob, zone).trust();
+        let owned = Inner::<T, P, D>::load_maybe_valid(blob, zone).trust();
         Ok(MaybeValid::from(owned))
     }
 }
@@ -944,12 +948,12 @@ pub enum DecodePairBytesError<Raw: error::Error, NonZeroLength: error::Error> {
     NonZeroLength(NonZeroLength),
 }
 
-impl<T, P: Ptr> Blob for Pair<T, P>
+impl<T, P: Ptr, D: Digest> Blob for Pair<T, P, D>
 where T: 'static,
       P: Blob,
 {
-    const SIZE: usize = <raw::Pair<T, P> as Blob>::SIZE + <InnerLength as Blob>::SIZE;
-    type DecodeBytesError = DecodePairBytesError<<raw::Pair<T, P> as Blob>::DecodeBytesError, <InnerLength as Blob>::DecodeBytesError>;
+    const SIZE: usize = <raw::Pair<T, P, D> as Blob>::SIZE + <InnerLength as Blob>::SIZE;
+    type DecodeBytesError = DecodePairBytesError<<raw::Pair<T, P, D> as Blob>::DecodeBytesError, <InnerLength as Blob>::DecodeBytesError>;
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
         dst.write_struct()
@@ -967,10 +971,10 @@ where T: 'static,
     }
 }
 
-impl<T, P: Ptr> Load for Pair<T, P>
+impl<T, P: Ptr, D: Digest> Load for Pair<T, P, D>
 where T: Load
 {
-    type Blob = Pair<T::Blob, P::Blob>;
+    type Blob = Pair<T::Blob, P::Blob, D>;
     type Ptr = P;
     type Zone = P::Zone;
 
@@ -987,14 +991,14 @@ where T: Load
 #[doc(hidden)]
 pub struct DecodePairDynBytesError<Raw: error::Error>(Raw);
 
-unsafe impl<T, P: Ptr> BlobDyn for PairDyn<T, P>
+unsafe impl<T, P: Ptr, D: Digest> BlobDyn for PairDyn<T, P, D>
 where T: 'static,
       P: Blob,
 {
-    type DecodeBytesError = DecodePairDynBytesError<<raw::Pair<T, P> as Blob>::DecodeBytesError>;
+    type DecodeBytesError = DecodePairDynBytesError<<raw::Pair<T, P, D> as Blob>::DecodeBytesError>;
 
     fn try_size(_len: Self::Metadata) -> Result<usize, !> {
-        Ok(<raw::Pair<T, P> as Blob>::SIZE)
+        Ok(<raw::Pair<T, P, D> as Blob>::SIZE)
     }
 
     fn encode_bytes<'a>(&self, dst: BytesUninit<'a, Self>) -> Bytes<'a, Self> {
@@ -1012,10 +1016,10 @@ where T: 'static,
     }
 }
 
-impl<T, P: Ptr> LoadRef for PairDyn<T, P>
+impl<T, P: Ptr, D: Digest> LoadRef for PairDyn<T, P, D>
 where T: Load
 {
-    type BlobDyn = PairDyn<T::Blob, P::Blob>;
+    type BlobDyn = PairDyn<T::Blob, P::Blob, D>;
     type Ptr = P;
     type Zone = P::Zone;
 
@@ -1024,7 +1028,7 @@ where T: Load
     {
         let blob = <Self::BlobDyn as BlobDyn>::decode_bytes(src)?;
 
-        let owned = Pair::<T, P>::load_maybe_valid(blob, zone).trust();
+        let owned = Pair::<T, P, D>::load_maybe_valid(blob, zone).trust();
         Ok(MaybeValid::from(owned))
     }
 }
@@ -1032,37 +1036,37 @@ where T: Load
 // -------- save impls ------------
 
 #[doc(hidden)]
-pub enum PeakTreeDynSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
-    Peak(Box<PerfectTreeDynSavePoll<Q, T, P>>),
-    Inner(Box<InnerDynSavePoll<Q, T, P>>),
+pub enum PeakTreeDynSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> {
+    Peak(Box<PerfectTreeDynSavePoll<Q, T, P, D>>),
+    Inner(Box<InnerDynSavePoll<Q, T, P, D>>),
 }
 
 #[doc(hidden)]
-pub struct PeakTreeSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr>(
-    PeakTreeDynSavePoll<Q, T, P>
+pub struct PeakTreeSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest>(
+    PeakTreeDynSavePoll<Q, T, P, D>
 );
 
 #[doc(hidden)]
-pub struct InnerDynSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
+pub struct InnerDynSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> {
     len: InnerLength,
-    digest: Digest,
-    state: State<Q, T, P>,
+    digest: D,
+    state: State<Q, T, P, D>,
 }
 
-enum State<Q: PtrBlob, T: Save<Q>, P: Ptr> {
+enum State<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> {
     Clean(P::Clean),
-    Dirty(PairDynSavePoll<Q, T, P>),
+    Dirty(PairDynSavePoll<Q, T, P, D>),
     Done(Q),
 }
 
 #[doc(hidden)]
-pub struct PairDynSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr> {
-    left: PeakTreeDynSavePoll<Q, T, P>,
-    right: PeakTreeDynSavePoll<Q, T, P>,
+pub struct PairDynSavePoll<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> {
+    left: PeakTreeDynSavePoll<Q, T, P, D>,
+    right: PeakTreeDynSavePoll<Q, T, P, D>,
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> PeakTreeDynSavePoll<Q, T, P> {
-    fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q> {
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> PeakTreeDynSavePoll<Q, T, P, D> {
+    fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q, D> {
         match self {
             Self::Peak(leaf) => leaf.encode_raw_node_blob(),
             Self::Inner(inner) => inner.encode_raw_node_blob(),
@@ -1070,8 +1074,8 @@ impl<Q: PtrBlob, T: Save<Q>, P: Ptr> PeakTreeDynSavePoll<Q, T, P> {
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> InnerDynSavePoll<Q, T, P> {
-    fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q> {
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> InnerDynSavePoll<Q, T, P, D> {
+    fn encode_raw_node_blob(&self) -> raw::Node<T::DstBlob, Q, D> {
         match self.state {
             State::Done(ptr) => raw::Node::new(Some(self.digest), ptr),
             State::Clean(_) | State::Dirty(_) => panic!(),
@@ -1079,8 +1083,8 @@ impl<Q: PtrBlob, T: Save<Q>, P: Ptr> InnerDynSavePoll<Q, T, P> {
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> PairDynSavePoll<Q, T, P> {
-    fn encode_raw_pair_blob(&self) -> raw::Pair<T::DstBlob, Q> {
+impl<Q: PtrBlob, T: Save<Q>, P: Ptr, D: Digest> PairDynSavePoll<Q, T, P, D> {
+    fn encode_raw_pair_blob(&self) -> raw::Pair<T::DstBlob, Q, D> {
         raw::Pair {
             left: self.left.encode_raw_node_blob(),
             right: self.right.encode_raw_node_blob(),
@@ -1088,13 +1092,14 @@ impl<Q: PtrBlob, T: Save<Q>, P: Ptr> PairDynSavePoll<Q, T, P> {
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRefPoll for PairDynSavePoll<Q, T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T, P: Ptr, D: Digest> SaveRefPoll for PairDynSavePoll<Q, T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
     type SrcPtr = P::Clean;
     type DstPtr = Q;
-    type DstBlob = PairDyn<T::DstBlob, Q>;
+    type DstBlob = PairDyn<T::DstBlob, Q, D>;
 
     fn blob_metadata(&self) -> InnerLength {
         let left_len: usize = self.left.blob_metadata().into();
@@ -1117,13 +1122,14 @@ where P::Zone: AsZone<T::Zone>,
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRefPoll for PeakTreeDynSavePoll<Q, T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T, P: Ptr, D: Digest> SaveRefPoll for PeakTreeDynSavePoll<Q, T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
     type SrcPtr = P::Clean;
     type DstPtr = Q;
-    type DstBlob = PeakTreeDyn<T::DstBlob, Q>;
+    type DstBlob = PeakTreeDyn<T::DstBlob, Q, D>;
 
     fn blob_metadata(&self) -> NonZeroLength {
         match self {
@@ -1148,13 +1154,14 @@ where P::Zone: AsZone<T::Zone>,
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRefPoll for InnerDynSavePoll<Q, T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T, P: Ptr, D: Digest> SaveRefPoll for InnerDynSavePoll<Q, T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
     type SrcPtr = P::Clean;
     type DstPtr = Q;
-    type DstBlob = InnerDyn<T::DstBlob, Q>;
+    type DstBlob = InnerDyn<T::DstBlob, Q, D>;
 
     fn blob_metadata(&self) -> InnerLength {
         self.len
@@ -1166,7 +1173,7 @@ where P::Zone: AsZone<T::Zone>,
         loop {
             self.state = match &mut self.state {
                 State::Clean(p_clean) => {
-                    match saver.save_ptr::<PairDyn<T, P>>(*p_clean, self.len)? {
+                    match saver.save_ptr::<PairDyn<T, P, D>>(*p_clean, self.len)? {
                         Ok(q_ptr) => State::Done(q_ptr),
                         Err(target_poll) => State::Dirty(target_poll),
                     }
@@ -1191,12 +1198,13 @@ where P::Zone: AsZone<T::Zone>,
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRef<Q> for PeakTreeDyn<T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T, P: Ptr, D: Digest> SaveRef<Q> for PeakTreeDyn<T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type DstBlob = PeakTreeDyn<T::DstBlob, Q>;
-    type SaveRefPoll = PeakTreeDynSavePoll<Q, T, P>;
+    type DstBlob = PeakTreeDyn<T::DstBlob, Q, D>;
+    type SaveRefPoll = PeakTreeDynSavePoll<Q, T, P, D>;
 
     fn init_save_ref(&self) -> Self::SaveRefPoll {
         match self.kind() {
@@ -1206,17 +1214,18 @@ where P::Zone: AsZone<T::Zone>,
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRef<Q> for InnerDyn<T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T, P: Ptr, D: Digest> SaveRef<Q> for InnerDyn<T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type DstBlob = InnerDyn<T::DstBlob, Q>;
-    type SaveRefPoll = InnerDynSavePoll<Q, T, P>;
+    type DstBlob = InnerDyn<T::DstBlob, Q, D>;
+    type SaveRefPoll = InnerDynSavePoll<Q, T, P, D>;
 
     fn init_save_ref(&self) -> Self::SaveRefPoll {
         InnerDynSavePoll {
             len: self.len(),
-            digest: Digest::default(),
+            digest: self.pair_commit().digest(),
             state: match self.try_get_dirty_pair() {
                 Ok(pair) => State::Dirty(pair.init_save_ref()),
                 Err(p_clean) => State::Clean(p_clean),
@@ -1225,12 +1234,13 @@ where P::Zone: AsZone<T::Zone>,
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SaveRef<Q> for PairDyn<T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T, P: Ptr, D: Digest> SaveRef<Q> for PairDyn<T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type DstBlob = PairDyn<T::DstBlob, Q>;
-    type SaveRefPoll = PairDynSavePoll<Q, T, P>;
+    type DstBlob = PairDyn<T::DstBlob, Q, D>;
+    type SaveRefPoll = PairDynSavePoll<Q, T, P, D>;
 
     fn init_save_ref(&self) -> Self::SaveRefPoll {
         PairDynSavePoll {
@@ -1240,13 +1250,14 @@ where P::Zone: AsZone<T::Zone>,
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> SavePoll for PeakTreeSavePoll<Q, T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T, P: Ptr, D: Digest> SavePoll for PeakTreeSavePoll<Q, T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
     type SrcPtr = P::Clean;
     type DstPtr = Q;
-    type DstBlob = PeakTree<T::DstBlob, Q>;
+    type DstBlob = PeakTree<T::DstBlob, Q, D>;
 
     fn save_poll<S>(&mut self, saver: &mut S) -> Result<(), S::Error>
         where S: Saver<SrcPtr = Self::SrcPtr, DstPtr = Self::DstPtr>
@@ -1264,12 +1275,13 @@ where P::Zone: AsZone<T::Zone>,
     }
 }
 
-impl<Q: PtrBlob, T: Save<Q>, P: Ptr> Save<Q> for PeakTree<T, P>
-where P::Zone: AsZone<T::Zone>,
+impl<Q: PtrBlob, T, P: Ptr, D: Digest> Save<Q> for PeakTree<T, P, D>
+where T: Commit + Save<Q>,
+      P::Zone: AsZone<T::Zone>,
       P::Clean: From<<T::Ptr as Ptr>::Clean>,
 {
-    type DstBlob = PeakTree<T::DstBlob, Q>;
-    type SavePoll = PeakTreeSavePoll<Q, T, P>;
+    type DstBlob = PeakTree<T::DstBlob, Q, D>;
+    type SavePoll = PeakTreeSavePoll<Q, T, P, D>;
 
     fn init_save(&self) -> Self::SavePoll {
         PeakTreeSavePoll(
@@ -1283,7 +1295,7 @@ where P::Zone: AsZone<T::Zone>,
 
 
 // -------- drop impls ------------
-impl<T, P: Ptr> Drop for PeakTreeDyn<T, P> {
+impl<T, P: Ptr, D: Digest> Drop for PeakTreeDyn<T, P, D> {
     fn drop(&mut self) {
         match self.kind_mut() {
             Kind::Peak(peak) => unsafe { ptr::drop_in_place(peak) },
@@ -1292,28 +1304,28 @@ impl<T, P: Ptr> Drop for PeakTreeDyn<T, P> {
     }
 }
 
-impl<T, P: Ptr> Drop for PeakTree<T, P> {
+impl<T, P: Ptr, D: Digest> Drop for PeakTree<T, P, D> {
     fn drop(&mut self) {
         unsafe { ptr::drop_in_place(self.deref_mut()) }
     }
 }
 
-impl<T, P: Ptr> Drop for InnerDyn<T, P> {
+impl<T, P: Ptr, D: Digest> Drop for InnerDyn<T, P, D> {
     fn drop(&mut self) {
         let len = self.len();
         unsafe {
-            self.raw.ptr.dealloc::<PairDyn<T, P>>(len);
+            self.raw.ptr.dealloc::<PairDyn<T, P, D>>(len);
         }
     }
 }
 
-impl<T, P: Ptr> Drop for Inner<T, P> {
+impl<T, P: Ptr, D: Digest> Drop for Inner<T, P, D> {
     fn drop(&mut self) {
         unsafe { ptr::drop_in_place(self.deref_mut()) }
     }
 }
 
-impl<T, P: Ptr> Drop for PairDyn<T, P> {
+impl<T, P: Ptr, D: Digest> Drop for PairDyn<T, P, D> {
     fn drop(&mut self) {
         unsafe {
             ptr::drop_in_place(self.left_mut());
@@ -1322,7 +1334,7 @@ impl<T, P: Ptr> Drop for PairDyn<T, P> {
     }
 }
 
-impl<T, P: Ptr> Drop for Pair<T, P> {
+impl<T, P: Ptr, D: Digest> Drop for Pair<T, P, D> {
     fn drop(&mut self) {
         unsafe { ptr::drop_in_place(self.deref_mut()) }
     }
@@ -1330,24 +1342,24 @@ impl<T, P: Ptr> Drop for Pair<T, P> {
 
 // -------------- fmt::Debug impls ---------------
 
-impl<T, P: Ptr> fmt::Debug for PeakTree<T, P>
-where T: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr, D: Digest> fmt::Debug for PeakTree<T, P, D>
+where T: fmt::Debug, P: fmt::Debug, D: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind().fmt(f)
     }
 }
 
-impl<T, P: Ptr> fmt::Debug for PeakTreeDyn<T, P>
-where T: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr, D: Digest> fmt::Debug for PeakTreeDyn<T, P, D>
+where T: fmt::Debug, P: fmt::Debug, D: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind().fmt(f)
     }
 }
 
-impl<T, P: Ptr> InnerDyn<T, P>
-where T: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr, D: Digest> InnerDyn<T, P, D>
+where T: fmt::Debug, P: fmt::Debug, D: fmt::Debug,
 {
     fn fmt_debug_impl(&self, name: &'static str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(name)
@@ -1359,24 +1371,24 @@ where T: fmt::Debug, P: fmt::Debug,
     }
 }
 
-impl<T, P: Ptr> fmt::Debug for Inner<T, P>
-where T: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr, D: Digest> fmt::Debug for Inner<T, P, D>
+where T: fmt::Debug, P: fmt::Debug, D: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_debug_impl("Inner", f)
     }
 }
 
-impl<T, P: Ptr> fmt::Debug for InnerDyn<T, P>
-where T: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr, D: Digest> fmt::Debug for InnerDyn<T, P, D>
+where T: fmt::Debug, P: fmt::Debug, D: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_debug_impl("InnerDyn", f)
     }
 }
 
-impl<T, P: Ptr> PairDyn<T, P>
-where T: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr, D: Digest> PairDyn<T, P, D>
+where T: fmt::Debug, P: fmt::Debug, D: fmt::Debug,
 {
     fn fmt_debug_impl(&self, name: &'static str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(name)
@@ -1387,21 +1399,40 @@ where T: fmt::Debug, P: fmt::Debug,
     }
 }
 
-impl<T, P: Ptr> fmt::Debug for Pair<T, P>
-where T: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr, D: Digest> fmt::Debug for Pair<T, P, D>
+where T: fmt::Debug, P: fmt::Debug, D: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_debug_impl("Pair", f)
     }
 }
 
-impl<T, P: Ptr> fmt::Debug for PairDyn<T, P>
-where T: fmt::Debug, P: fmt::Debug,
+impl<T, P: Ptr, D: Digest> fmt::Debug for PairDyn<T, P, D>
+where T: fmt::Debug, P: fmt::Debug, D: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_debug_impl("PairDyn", f)
     }
 }
+
+/*
+// ----- commit impls ----------
+impl<T: Commit, P: Ptr, D: Digest> Commit for PeakTree<T, P, D> {
+    type Commitment = PeakTree<T::Commitment>;
+
+    fn to_commitment(&self) -> Self::Commitment {
+        todo!()
+    }
+}
+
+impl<T: Commit, P: Ptr, D: Digest> Commit for PeakTreeDyn<T, P, D> {
+    type Commitment = PeakTree<T::Commitment>;
+
+    fn to_commitment(&self) -> Self::Commitment {
+        todo!()
+    }
+}
+*/
 
 #[cfg(test)]
 mod tests {
@@ -1436,7 +1467,7 @@ mod tests {
             42, // u8 value
 
             // peak tree, which is a leaf
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // leaf digest
+            42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // leaf digest
             0, 0, 0, 0, 0, 0, 0, 0, // leaf ptr
             1, 0, 0, 0, 0, 0, 0, 0, // len
         ]);
