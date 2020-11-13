@@ -1,8 +1,5 @@
 #![feature(never_type)]
 
-#![feature(maybe_uninit_uninit_array)]
-#![feature(maybe_uninit_extra)]
-#![feature(associated_type_bounds)]
 #![feature(unwrap_infallible)]
 #![feature(arbitrary_self_types)]
 
