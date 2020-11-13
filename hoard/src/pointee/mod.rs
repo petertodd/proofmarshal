@@ -54,7 +54,7 @@ impl<T> Pointee for T {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[error("FIXME")]
 #[non_exhaustive]
 pub struct SliceLayoutError;

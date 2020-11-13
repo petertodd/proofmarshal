@@ -6,3 +6,4 @@ use thiserror::Error;
 pub mod arrays;
 pub mod option;
 pub mod tuples;
+pub mod slices;

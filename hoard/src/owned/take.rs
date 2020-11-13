@@ -29,3 +29,18 @@ unsafe impl<T> Take<T> for T {
         f(own)
     }
 }
+
+unsafe impl<T> Take<[T]> for Vec<T> {
+    fn take_unsized<F, R>(mut self, f: F) -> R
+        where F: FnOnce(RefOwn<[T]>) -> R
+    {
+        let slice: *mut [T] = self.as_mut_slice();
+
+        // SAFETY: by setting the length to zero we ensure that Vec::drop won't drop the slice
+        // contents.
+        unsafe {
+            self.set_len(0);
+            f(RefOwn::new_unchecked(&mut *slice))
+        }
+    }
+}

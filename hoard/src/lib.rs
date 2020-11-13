@@ -2,6 +2,7 @@
 
 #![feature(unwrap_infallible)]
 #![feature(arbitrary_self_types)]
+#![feature(slice_ptr_len)]
 
 #![feature(rustc_attrs)]
 
@@ -30,6 +31,9 @@ pub mod bag;
 pub mod prelude {
     pub use super::{
         bag::Bag,
+        blob::{
+            Blob,
+        },
         pointee::Pointee,
         ptr::{
             Ptr,
@@ -40,6 +44,7 @@ pub mod prelude {
                 Key, KeyMut,
             },
         },
+        primitive::Primitive,
         load::{
             Load, LoadRef,
         },
