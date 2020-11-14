@@ -36,6 +36,7 @@ pub mod prelude {
         },
         pointee::Pointee,
         ptr::{
+            AsZone,
             Ptr,
             TryGet, TryGetMut,
             Get, GetMut,
