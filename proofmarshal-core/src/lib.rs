@@ -14,6 +14,7 @@
 #![allow(dead_code)]
 
 pub mod commit;
+pub mod hashbag;
 
 pub mod collections;
 
