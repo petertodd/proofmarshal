@@ -8,15 +8,16 @@ use std::marker::PhantomData;
 use std::mem::{self, MaybeUninit};
 use std::slice;
 
-use hoard::blob::{Blob, Bytes, BytesUninit};
-use hoard::primitive::Primitive;
+use hoard::prelude::*;
+use hoard::owned::IntoOwned;
+use hoard::blob::{Blob, BlobDyn, Bytes, BytesUninit};
 
 mod impls;
 
 pub mod sha256;
 pub use self::sha256::*;
 
-pub trait Digest : Primitive + Default + AsRef<[u8]> + AsMut<[u8]>
+pub trait Digest : Primitive + Default + AsRef<[u8]> + AsMut<[u8]> + Eq
 {
     type Hasher : Default + Hasher<Output = Self>;
 }
@@ -50,14 +51,22 @@ pub trait Hasher {
         }
     }
 
+    fn hash_commitment<T: Commit>(&mut self, value: &T) {
+        self.hash_blob(&value.to_commitment())
+    }
+
     fn finish(self) -> Self::Output;
 }
 
-
+/// A type for which there exists a canonical fixed-size commitment.
 pub trait Commit {
     type Commitment : 'static + Blob;
 
     fn to_commitment(&self) -> Self::Commitment;
+
+    fn encode_commitment_bytes<'a>(&self, dst: BytesUninit<'a, Self::Commitment>) -> Bytes<'a, Self::Commitment> {
+        Blob::encode_bytes(&self.to_commitment(), dst)
+    }
 
     fn hash_commitment_with<H: Hasher>(&self, mut hasher: H) -> H::Output {
         hasher.hash_blob(&self.to_commitment());
@@ -65,28 +74,31 @@ pub trait Commit {
     }
 }
 
+/// Variable-length commitments.
+pub trait CommitRef {
+    const HASH_COMMITMENT_METADATA: bool;
+    type CommitmentDyn : 'static + ?Sized + BlobDyn;
 
-impl<T: ?Sized + Commit> Commit for &'_ T {
-    type Commitment = T::Commitment;
+    fn commitment_metadata(&self) -> <Self::CommitmentDyn as Pointee>::Metadata;
 
-    fn to_commitment(&self) -> Self::Commitment {
-        (**self).to_commitment()
-    }
+    fn encode_commitment_bytes_dyn<'a>(&self, dst: BytesUninit<'a, Self::CommitmentDyn>) -> Bytes<'a, Self::CommitmentDyn>;
+
+    fn hash_commitment_dyn_with<H: Hasher>(&self, hasher: H) -> H::Output;
 }
 
-impl<T: ?Sized + Commit> Commit for &'_ mut T {
-    type Commitment = T::Commitment;
+impl<T: ?Sized + Commit> CommitRef for T {
+    const HASH_COMMITMENT_METADATA: bool = false;
+    type CommitmentDyn = T::Commitment;
 
-    fn to_commitment(&self) -> Self::Commitment {
-        (**self).to_commitment()
+    fn commitment_metadata(&self) -> <Self::CommitmentDyn as Pointee>::Metadata {
     }
-}
 
-impl<T: ?Sized + Commit> Commit for Box<T> {
-    type Commitment = T::Commitment;
+    fn encode_commitment_bytes_dyn<'a>(&self, dst: BytesUninit<'a, Self::CommitmentDyn>) -> Bytes<'a, Self::CommitmentDyn> {
+        self.encode_commitment_bytes(dst)
+    }
 
-    fn to_commitment(&self) -> Self::Commitment {
-        (**self).to_commitment()
+    fn hash_commitment_dyn_with<H: Hasher>(&self, hasher: H) -> H::Output {
+        self.hash_commitment_with(hasher)
     }
 }
 
@@ -126,19 +138,19 @@ impl_commit! {
 /// // FIXME
 /// ```
 #[repr(transparent)]
-pub struct HashCommit<T, D: Digest = Sha256Digest> {
+pub struct HashCommit<T: ?Sized, D: Digest = Sha256Digest> {
     marker: PhantomData<T>,
     digest: D,
 }
 
-impl<T, D: Digest> Clone for HashCommit<T, D> {
+impl<T: ?Sized, D: Digest> Clone for HashCommit<T, D> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T, D: Digest> Copy for HashCommit<T, D> {}
+impl<T: ?Sized, D: Digest> Copy for HashCommit<T, D> {}
 
-impl<U: ?Sized, T, D: Digest> AsRef<U> for HashCommit<T, D>
+impl<U: ?Sized, T: ?Sized, D: Digest> AsRef<U> for HashCommit<T, D>
 where D: AsRef<U>
 {
     fn as_ref(&self) -> &U {
@@ -146,7 +158,7 @@ where D: AsRef<U>
     }
 }
 
-impl<U: ?Sized, T, D: Digest> AsMut<U> for HashCommit<T, D>
+impl<U: ?Sized, T: ?Sized, D: Digest> AsMut<U> for HashCommit<T, D>
 where D: AsMut<U>
 {
     fn as_mut(&mut self) -> &mut U {
@@ -154,25 +166,32 @@ where D: AsMut<U>
     }
 }
 
-impl<T: 'static + Blob, D: Digest> HashCommit<T, D> {
+impl<T: ?Sized + BlobDyn, D: Digest> HashCommit<T, D> {
     pub fn new<U>(value: &U) -> Self
-        where U: ?Sized + Commit<Commitment=T>
+        where U: ?Sized + CommitRef<CommitmentDyn=T>
     {
-        if T::SIZE <= mem::size_of::<D>() {
+        let metadata = value.commitment_metadata();
+        let size = U::CommitmentDyn::try_size(metadata)
+                                    .expect("valid metadata");
+
+        if size <= mem::size_of::<D>() {
             let mut digest = D::default();
-            let dst = BytesUninit::<T>::try_from(
-                &mut digest.as_mut()[.. T::SIZE]
+            let dst = BytesUninit::<T>::from_bytes(
+                &mut digest.as_mut()[.. size],
+                metadata,
             ).unwrap();
-            value.to_commitment().encode_bytes(dst);
+
+            value.encode_commitment_bytes_dyn(dst);
+
             Self::from_digest(digest)
         } else {
-            let digest = value.hash_commitment_with(D::Hasher::default());
+            let digest = value.hash_commitment_dyn_with(D::Hasher::default());
             Self::from_digest(digest)
         }
     }
 }
 
-impl<T, D: Digest> HashCommit<T, D> {
+impl<T: ?Sized, D: Digest> HashCommit<T, D> {
     pub fn from_digest(digest: D) -> Self {
         Self {
             marker: PhantomData,
@@ -189,38 +208,38 @@ impl<T, D: Digest> HashCommit<T, D> {
     }
 }
 
-impl<T, D: Digest + Default> Default for HashCommit<T, D> {
+impl<T: ?Sized, D: Digest + Default> Default for HashCommit<T, D> {
     fn default() -> Self {
         Self::from_digest(D::default())
     }
 }
 
-impl<T, D: Digest + PartialEq> PartialEq for HashCommit<T, D> {
+impl<T: ?Sized, D: Digest + PartialEq> PartialEq for HashCommit<T, D> {
     fn eq(&self, other: &Self) -> bool {
         self.digest == other.digest
     }
 }
-impl<T, D: Digest + Eq> Eq for HashCommit<T, D> {}
+impl<T: ?Sized, D: Digest + Eq> Eq for HashCommit<T, D> {}
 
-impl<T, D: Digest + fmt::Debug> fmt::Debug for HashCommit<T, D> {
+impl<T: ?Sized, D: Digest + fmt::Debug> fmt::Debug for HashCommit<T, D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.digest.fmt(f)
     }
 }
 
-impl<T, D: Digest + fmt::Display> fmt::Display for HashCommit<T, D> {
+impl<T: ?Sized, D: Digest + fmt::Display> fmt::Display for HashCommit<T, D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.digest.fmt(f)
     }
 }
 
-impl<T, D: Digest + hash::Hash> hash::Hash for HashCommit<T, D> {
+impl<T: ?Sized, D: Digest + hash::Hash> hash::Hash for HashCommit<T, D> {
     fn hash<H: hash::Hasher>(&self, hasher: &mut H) {
         self.digest.hash(hasher)
     }
 }
 
-impl<T: 'static, D: Digest> Primitive for HashCommit<T, D> {
+impl<T: ?Sized + 'static, D: Digest> Primitive for HashCommit<T, D> {
     const BLOB_SIZE: usize = D::BLOB_SIZE;
     type DecodeBytesError = D::DecodeBytesError;
 

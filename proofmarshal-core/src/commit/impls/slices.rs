@@ -1,56 +1,82 @@
 use super::*;
 
-impl<T: Verbatim> Verbatim for [T] {
-    const LEN: usize = 32;
+/*
+impl<T: Commit> CommitRef for [T] {
+    type CommitmentDyn = [T::Commitment];
 
-    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
-        let mut hasher = CommitHasher::new();
-        for item in self.iter() {
-            hasher.write(item);
+    fn encode_commitment_bytes_dyn<'a>(&self, dst: BytesUninit<'a, Self::CommitmentDyn>) -> Bytes<'a, Self::CommitmentDyn> {
+        let mut dst = dst.write_struct();
+        for item in self {
+            dst = dst.write_field(&item.to_commitment());
         }
-        let digest = hasher.finalize();
-        dst.write(&digest);
+        dst.done()
+    }
+
+    fn commitment_metadata(&self) -> usize {
+        self.len()
+    }
+
+    fn hash_commitment_dyn_with<H: Hasher>(&self, mut hasher: H) -> H::Output {
+        for item in self {
+            hasher.hash_commitment(item);
+        }
+        hasher.finish()
     }
 }
 
-impl<T: Commit> Commit for [T] {
-    type Committed = Vec<T>;
-}
+impl<T: Commit> CommitRef for Vec<T> {
+    const HASH_COMMITMENT_METADATA: bool = <[T] as CommitRef>::HASH_COMMITMENT_METADATA;
+    type CommitmentDyn = [T::Commitment];
 
-impl<T: Verbatim> Verbatim for Vec<T> {
-    const LEN: usize = 32;
-    fn encode_verbatim_in(&self, dst: &mut impl WriteVerbatim) {
-        (**self).encode_verbatim_in(dst)
+    fn commitment_metadata(&self) -> usize {
+        self.len()
     }
-}
 
-impl<T: Commit> Commit for Vec<T> {
-    type Committed = Vec<T>;
+    fn encode_commitment_bytes_dyn<'a>(&self, dst: BytesUninit<'a, Self::CommitmentDyn>) -> Bytes<'a, Self::CommitmentDyn> {
+        (**self).encode_commitment_bytes_dyn(dst)
+    }
+
+    fn hash_commitment_dyn_with<H: Hasher>(&self, hasher: H) -> H::Output {
+        (**self).hash_commitment_dyn_with(hasher)
+    }
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
 
     #[test]
-    fn slice_types() {
-        let slice: &[u8] = &[1,2,3];
-        let vec: Vec<u8> = vec![1,2,3];
-        let boxed: Box<[u8]> = vec![1,2,3].into_boxed_slice();
+    fn commit() {
+        fn t<T: Commit>(v: Vec<T>, expected_digest: &[u8]) {
+            let digest_vec = HashCommit::<[T::Commitment]>::new(&v).digest();
+            assert_eq!(digest_vec.as_ref(), expected_digest);
 
-        let slice_commit: Digest<Vec<u8>> = slice.commit();
-        let vec_commit: Digest<Vec<u8>> = vec.commit();
-        let box_commit: Digest<Vec<u8>> = boxed.commit();
+            let slice: &[T] = &v[..];
+            let digest_slice = HashCommit::<[T::Commitment]>::new(slice).digest();
+            assert_eq!(digest_vec, digest_slice);
+        }
 
-        assert_eq!(slice_commit, vec_commit);
-        assert_eq!(slice_commit, box_commit);
-    }
+        // FIXME: what should we do to commit to the length here?
+        t::<()>(
+            vec![],
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
 
-    #[test]
-    fn short_slice() {
-        let slice: &[u8] = &[];
+        t::<()>(
+            vec![(); 32],
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
 
-        assert_eq!(slice.encode_verbatim(),
-                   &[227, 176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36, 39, 174, 65, 228, 100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85]);
+        t::<()>(
+            vec![(); 1000],
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+
+
+        t::<()>(
+            vec![(); 1000],
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
     }
 }
+*/
