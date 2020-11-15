@@ -9,7 +9,7 @@ pub mod impls;
 use crate::pointee::Pointee;
 use crate::owned::IntoOwned;
 
-pub use crate::maybevalid::MaybeValid;
+pub use crate::validate::MaybeValid;
 
 pub trait Blob : 'static + Sized {
     const SIZE: usize;

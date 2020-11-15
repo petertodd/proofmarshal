@@ -5,7 +5,7 @@ use crate::pointee::Pointee;
 use crate::owned::{Ref, IntoOwned};
 use crate::ptr::{Ptr, AsZone};
 
-pub use crate::maybevalid::MaybeValid;
+pub use crate::validate::MaybeValid;
 
 pub mod impls;
 

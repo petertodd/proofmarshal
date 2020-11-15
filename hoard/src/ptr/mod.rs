@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::blob::Blob;
 use crate::pointee::Pointee;
-use crate::maybevalid::MaybeValid;
+use crate::validate::MaybeValid;
 use crate::owned::{Take, IntoOwned, Ref, RefOwn};
 use crate::bag::Bag;
 use crate::load::LoadRef;

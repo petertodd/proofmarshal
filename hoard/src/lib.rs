@@ -15,7 +15,7 @@
 
 pub mod owned;
 
-pub mod maybevalid;
+pub mod validate;
 
 pub mod pointee;
 pub mod blob;
@@ -49,6 +49,6 @@ pub mod prelude {
         load::{
             Load, LoadRef,
         },
-        maybevalid::MaybeValid,
+        validate::MaybeValid,
     };
 }
