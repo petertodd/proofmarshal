@@ -28,6 +28,7 @@ pub mod save;
 pub mod primitive;
 pub mod bag;
 
+/// Common types and traits needed by almost all users of this crate.
 pub mod prelude {
     pub use super::{
         bag::Bag,

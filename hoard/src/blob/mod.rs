@@ -1,3 +1,9 @@
+//! Fast, simple, fixed size, binary serialization.
+//!
+//! Other than having no alignment requirements, blob serialization is essentially identical to how
+//! compilers layout of values in memory: each (sized) type serializes to a fixed size byte array,
+//! with structs simply concatenating together every field.
+
 use std::convert::TryFrom;
 use std::marker::PhantomData;
 
@@ -11,6 +17,7 @@ use crate::owned::IntoOwned;
 
 pub use crate::validate::MaybeValid;
 
+/// A sized type with a fixed-size binary serialization.
 pub trait Blob : 'static + Sized {
     const SIZE: usize;
     type DecodeBytesError : 'static + std::error::Error + Send;
@@ -38,7 +45,9 @@ pub trait Blob : 'static + Sized {
     }
 }
 
-/// Dynamically sized blob.
+/// A type where the size of the binary serialization is determined by pointer metadata.
+///
+/// This trait has a blanket implementation for all `T: Blob`.
 pub unsafe trait BlobDyn : 'static + Pointee + IntoOwned {
     type DecodeBytesError : 'static + std::error::Error + Send;
 

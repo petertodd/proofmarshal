@@ -1,3 +1,5 @@
+//! Copy-on-write pointer functionality, for data that may be stored on disk.
+
 use std::fmt;
 
 use crate::blob::Blob;

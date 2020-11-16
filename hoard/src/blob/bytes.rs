@@ -1,3 +1,5 @@
+//! Byte sizes for blobs.
+
 use std::convert::TryFrom;
 use std::fmt;
 use std::marker::PhantomData;
@@ -9,6 +11,7 @@ use crate::pointee::Pointee;
 
 use super::{Blob, BlobDyn, MaybeValid};
 
+/// A byte slice whose length is guaranteed to be the correct size for a blob.
 pub struct Bytes<'a, T: ?Sized + BlobDyn> {
     marker: PhantomData<&'a [u8]>,
     ptr: *const T,
@@ -30,7 +33,7 @@ impl<'a, T: ?Sized + BlobDyn> Clone for ValidBytes<'a, T> {
 }
 impl<'a, T: ?Sized + BlobDyn> Copy for ValidBytes<'a, T> {}
 
-/// Uninitialized `Bytes`
+/// Uninitialized `Bytes`.
 pub struct BytesUninit<'a, T: ?Sized + BlobDyn> {
     marker: PhantomData<fn(&'a mut [u8]) -> &'a [u8]>,
     ptr: *mut T,

@@ -1,3 +1,5 @@
+//! Saving data in zones.
+
 use std::marker::PhantomData;
 
 use crate::load::*;

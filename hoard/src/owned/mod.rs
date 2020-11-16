@@ -1,3 +1,5 @@
+//! Traits for working with unsized types.
+
 use core::borrow::Borrow;
 use core::ptr;
 use core::mem::ManuallyDrop;

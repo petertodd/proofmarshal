@@ -1,3 +1,5 @@
+//! A `Box` equivalent for data behind zone pointers.
+
 use std::marker::PhantomData;
 use std::fmt;
 use std::any;

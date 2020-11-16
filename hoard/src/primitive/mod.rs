@@ -1,3 +1,5 @@
+//! Serialization of types that never have internal pointers.
+
 use std::marker::PhantomData;
 
 use crate::blob::*;

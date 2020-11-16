@@ -1,3 +1,5 @@
+//! Functionality for working with pointer metadata.
+
 use std::fmt;
 use std::ptr::{self, NonNull};
 

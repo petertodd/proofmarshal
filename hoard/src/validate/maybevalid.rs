@@ -1,6 +1,6 @@
 use crate::owned::{Ref, IntoOwned};
 
-/// A wrapper type for values that may not be fully valid.
+/// A wrapper type representing data that might not be fully valid.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct MaybeValid<T: ?Sized>(T);
@@ -15,6 +15,7 @@ where T: AsRef<U>
 }
 
 impl<T> MaybeValid<T> {
+    /// Wraps a value.
     pub const fn new(inner: T) -> Self {
         MaybeValid(inner)
     }
