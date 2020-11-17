@@ -178,12 +178,13 @@ where T: LoadRef,
     type PtrClean = P::Clean;
     type Zone = P::Zone;
 
-    fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
+    fn load_maybe_valid(blob: MaybeValid<&Self::Blob>, zone: &Self::Zone) -> MaybeValid<Self> {
+        let blob = blob.trust();
         let ptr = P::from_clean(P::Clean::from_blob(blob.ptr, zone));
         let metadata = blob.metadata();
         unsafe {
             Self::from_raw_parts(ptr, metadata)
-        }
+        }.into()
     }
 }
 

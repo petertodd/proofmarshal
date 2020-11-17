@@ -24,12 +24,12 @@ pub trait Load : Sized {
 
     /// Loads a blob using the provided zone, returning a value with the appropriate zones added to
     /// all pointers.
-    fn load(blob: Self::Blob, zone: &Self::Zone) -> Self;
+    fn load(blob: &Self::Blob, zone: &Self::Zone) -> Self {
+        Self::load_maybe_valid(MaybeValid::new(blob), zone).trust()
+    }
 
     /// Loads a blob that may or may not be valid.
-    fn load_maybe_valid(blob: MaybeValid<Self::Blob>, zone: &Self::Zone) -> MaybeValid<Self> {
-        Self::load(blob.trust(), zone).into()
-    }
+    fn load_maybe_valid(blob: MaybeValid<&Self::Blob>, zone: &Self::Zone) -> MaybeValid<Self>;
 
     /// Loads a `Ref` directly from bytes.
     fn load_bytes<'a>(bytes: Bytes<'a, Self::Blob>, zone: &Self::Zone)
@@ -38,7 +38,7 @@ pub trait Load : Sized {
     {
         let blob = <Self::Blob as Blob>::decode_bytes(bytes)?
                                         .trust();
-        let this = Self::load(blob, zone);
+        let this = Self::load(&blob, zone);
 
         Ok(MaybeValid::from(Ref::<Self>::Owned(this)))
     }
@@ -93,7 +93,7 @@ impl<T: Load> LoadRef for T {
     {
         let blob = <T::Blob as Blob>::decode_bytes(bytes)?
                                      .trust();
-        let this = T::load(blob, zone);
+        let this = T::load(&blob, zone);
         Ok(MaybeValid::from(this))
     }
 }

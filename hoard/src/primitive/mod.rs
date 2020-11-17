@@ -35,8 +35,8 @@ impl<T: Primitive> Load for T {
     type Zone = ();
     type Blob = Self;
 
-    fn load(this: Self, _: &()) -> Self {
-        this.into()
+    fn load_maybe_valid(this: MaybeValid<&Self>, _: &()) -> MaybeValid<Self> {
+        this.trust().clone().into()
     }
 }
 
