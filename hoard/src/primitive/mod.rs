@@ -31,7 +31,7 @@ impl<T: Primitive> Blob for T {
 }
 
 impl<T: Primitive> Load for T {
-    type Ptr = !;
+    type PtrClean = !;
     type Zone = ();
     type Blob = Self;
 

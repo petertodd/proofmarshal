@@ -137,11 +137,11 @@ where M: Map<Key = Offset> + AsRef<[u8]>
 
     pub fn try_save<T: ?Sized>(mut self, value: &T) -> Result<(Offset, Vec<u8>), Box<dyn std::error::Error>>
         where T: SaveRef<Offset>,
-              Key<'m, M>: From<<T::Ptr as Ptr>::Clean>,
-              &'m M: AsZone<<T::Ptr as Ptr>::Zone>,
+              Key<'m, M>: From<T::PtrClean>,
+              &'m M: AsZone<<T::PtrClean as PtrClean>::Zone>,
     {
 
-        let wrapper: &mut Wrapper<Self, <T::Ptr as Ptr>::Clean> = Wrapper::new(&mut self);
+        let wrapper: &mut Wrapper<Self, T::PtrClean> = Wrapper::new(&mut self);
 
         let mut poll = value.init_save_ref();
         let offset = wrapper.poll_ref::<T::SaveRefPoll>(&mut poll)?;

@@ -43,7 +43,7 @@ pub trait Saver {
 pub trait Save<DstPtr> : Load {
     type DstBlob : Blob;
 
-    type SavePoll : SavePoll<SrcPtr = <Self::Ptr as Ptr>::Clean, DstPtr = DstPtr, DstBlob = Self::DstBlob>;
+    type SavePoll : SavePoll<SrcPtr = Self::PtrClean, DstPtr = DstPtr, DstBlob = Self::DstBlob>;
 
     fn init_save(&self) -> Self::SavePoll;
 
@@ -74,7 +74,7 @@ pub trait SavePoll {
 pub trait SaveRef<DstPtr> : LoadRef {
     type DstBlob : ?Sized + BlobDyn<Metadata = Self::Metadata>;
 
-    type SaveRefPoll : SaveRefPoll<SrcPtr = <Self::Ptr as Ptr>::Clean, DstPtr = DstPtr, DstBlob = Self::DstBlob>;
+    type SaveRefPoll : SaveRefPoll<SrcPtr = Self::PtrClean, DstPtr = DstPtr, DstBlob = Self::DstBlob>;
 
     fn init_save_ref(&self) -> Self::SaveRefPoll;
 

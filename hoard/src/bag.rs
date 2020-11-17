@@ -175,7 +175,7 @@ impl<T: ?Sized + Pointee, P: Ptr> Load for Bag<T, P>
 where T: LoadRef,
 {
     type Blob = Bag<T::BlobDyn, P::Blob>;
-    type Ptr = P;
+    type PtrClean = P::Clean;
     type Zone = P::Zone;
 
     fn load(blob: Self::Blob, zone: &Self::Zone) -> Self {
@@ -190,7 +190,7 @@ where T: LoadRef,
 impl<Q: PtrBlob, T: ?Sized + SaveRef<Q>, P: Ptr> Save<Q> for Bag<T, P>
 where T: LoadRef,
       P::Zone: AsZone<T::Zone>,
-      P::Clean: From<<T::Ptr as Ptr>::Clean>,
+      P::Clean: From<T::PtrClean>,
 {
     type DstBlob = Bag<T::DstBlob, Q>;
     type SavePoll = BagSavePoll<Q, T, P>;
@@ -252,7 +252,7 @@ where P::Clean: fmt::Debug,
 
 impl<Q: PtrBlob, T: ?Sized + SaveRef<Q>, P: Ptr> SavePoll for BagSavePoll<Q, T, P>
 where P::Zone: AsZone<T::Zone>,
-      P::Clean: From<<T::Ptr as Ptr>::Clean>,
+      P::Clean: From<T::PtrClean>,
 {
     type SrcPtr = P::Clean;
     type DstPtr = Q;

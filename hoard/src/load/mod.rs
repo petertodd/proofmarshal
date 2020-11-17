@@ -5,7 +5,7 @@ use std::task::Poll;
 use crate::blob::{Blob, BlobDyn, Bytes};
 use crate::pointee::Pointee;
 use crate::owned::{Ref, IntoOwned};
-use crate::ptr::{Ptr, AsZone};
+use crate::ptr::{Ptr, PtrClean, AsZone};
 
 pub use crate::validate::MaybeValid;
 
@@ -15,7 +15,9 @@ pub mod impls;
 pub trait Load : Sized {
     /// The `Blob` form of this type.
     type Blob : Blob;
-    type Ptr : Ptr<Zone = Self::Zone>;
+
+    /// Used to access *clean* data referenced by values of this type.
+    type PtrClean : PtrClean<Zone = Self::Zone>;
 
     /// The zone needed by pointers within a value of this type.
     type Zone;
@@ -48,7 +50,9 @@ pub trait Load : Sized {
 pub trait LoadRef : Pointee + IntoOwned {
     /// The dynamically sized, blob form of this type.
     type BlobDyn : ?Sized + BlobDyn + Pointee<Metadata = <Self as Pointee>::Metadata>;
-    type Ptr : Ptr<Zone = Self::Zone>;
+
+    /// The type of *clean* pointer that is present in values of this type.
+    type PtrClean : PtrClean<Zone = Self::Zone>;
 
     /// The zone needed by pointers within a value of this type.
     type Zone;
@@ -73,7 +77,7 @@ pub trait LoadRef : Pointee + IntoOwned {
 
 impl<T: Load> LoadRef for T {
     type BlobDyn = T::Blob;
-    type Ptr = T::Ptr;
+    type PtrClean = T::PtrClean;
     type Zone = T::Zone;
 
     fn load_ref_from_bytes<'a>(bytes: Bytes<'a, Self::BlobDyn>, zone: &Self::Zone)
