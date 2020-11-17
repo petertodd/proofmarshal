@@ -116,46 +116,6 @@ where T: LoadRef,
                     .map(MaybeValid::trust)
         }
     }
-
-/*
-    pub fn take(self) -> T::Owned
-        where Z: Get<P>
-    {
-        let (ptr, metadata, zone) = self.into_raw_parts();
-        unsafe {
-            zone.take_unchecked::<T>(ptr, metadata)
-        }.trust()
-    }
-
-    pub fn try_take(self) -> Result<T::Owned, Z::Error>
-        where Z: TryGet<P>
-    {
-        let (ptr, metadata, zone) = self.into_raw_parts();
-        unsafe {
-            zone.try_take_unchecked::<T>(ptr, metadata)
-                .map(MaybeValid::trust)
-        }
-    }
-
-    pub fn get_mut<'a>(&'a mut self) -> &mut T
-        where Z: GetMut<P>
-    {
-        let metadata = self.metadata();
-        unsafe {
-            self.zone.get_unchecked_mut(&mut self.ptr, metadata)
-        }.trust()
-    }
-
-    pub fn try_get_mut<'a>(&'a mut self) -> Result<&mut T, Z::Error>
-        where Z: TryGetMut<P>
-    {
-        let metadata = self.metadata();
-        unsafe {
-            self.zone.try_get_unchecked_mut(&mut self.ptr, metadata)
-                     .map(MaybeValid::trust)
-        }
-    }
-*/
 }
 
 impl<T: ?Sized + Pointee, P: Ptr> fmt::Debug for Bag<T, P>
